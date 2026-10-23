@@ -7,6 +7,9 @@
 > 关系：[轻应用数据与协作架构方案](./light-apps-architecture.md) 描述的是「行数据整体入库」的 P0 阶段；
 > 本文是**先行的、可独立交付的增量**，两者不冲突：本文的表（table）维度在 P0 落地时映射为
 > `light_app_rows.table_key`，服务层接口与前端契约不变。
+>
+> 另见：[轻应用默认 AI 助手与外部数据导入设计](./light-apps-assistant-and-import-design.md)
+> （助手读表、导入写表，都建立在本文的多表模型之上）。
 
 ---
 

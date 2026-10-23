@@ -8,6 +8,9 @@
 >
 > 相关：[轻应用多 CSV（多数据表）设计](./light-apps-multi-table-design.md) 是一个**先行可交付的增量**
 > （一个应用支持多张表），落地后与本方案的 P0 阶段衔接。
+>
+> 另见：[轻应用默认 AI 助手与外部数据导入设计](./light-apps-assistant-and-import-design.md)
+> （§10 外部数据的落地版本）。
 
 ---
 
