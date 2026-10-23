@@ -248,6 +248,7 @@ async def project_resume_stream(
     thread_id: str,
     decisions: list[dict[str, Any]],
     *,
+    user_id: int | None = None,
     usage_tracker: UsageTracker | None = None,
     history_tracker: TurnHistoryTracker | None = None,
     locale: str | Locale = DEFAULT_LOCALE,
@@ -256,7 +257,7 @@ async def project_resume_stream(
     hitl_ctx: HitlStreamContext | None = None,
 ) -> AsyncIterator[MessageEvent]:
     async for ev in _project_chunks(
-        agent_manager.resume_hitl(agent_id, thread_id, decisions),
+        agent_manager.resume_hitl(agent_id, thread_id, decisions, user_id=user_id),
         agent_manager=agent_manager,
         agent_id=agent_id,
         locale=locale,

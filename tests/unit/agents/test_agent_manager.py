@@ -884,6 +884,13 @@ def test_build_harness_config_includes_cronjob_tools_when_cron_manager_set(
         "cronjob_delete",
         "cronjob_run_now",
         "search_knowledge",
+        "app_list",
+        "app_create",
+        "app_update_schema",
+        "app_write_html",
+        "app_read_data",
+        "app_append_row",
+        "app_delete",
     }
 
 
@@ -894,7 +901,16 @@ def test_build_harness_config_includes_search_knowledge_without_cron(
 
     cfg = manager._build_harness_config(_row(agent_id="AGT001"))
     assert cfg.tools is not None
-    assert {t.name for t in cfg.tools} == {"search_knowledge"}
+    assert {t.name for t in cfg.tools} == {
+        "search_knowledge",
+        "app_list",
+        "app_create",
+        "app_update_schema",
+        "app_write_html",
+        "app_read_data",
+        "app_append_row",
+        "app_delete",
+    }
     assert any(isinstance(item, KnowledgeSearchHintMiddleware) for item in (cfg.middleware or []))
 
 

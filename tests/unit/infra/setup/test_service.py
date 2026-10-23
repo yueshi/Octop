@@ -32,6 +32,10 @@ from octop.infra.utils import posix_compat as pwd
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX service management")
 
+# A non-root account name: unit rendering drops the ``User=`` line when the
+# service owner is root, so these cases must not depend on who runs the tests.
+_SERVICE_OWNER = "octop-service-owner"
+
 
 def _runtime(tmp_path: Path) -> ServiceRuntime:
     octop_bin = tmp_path / "bin" / "octop"
@@ -76,10 +80,16 @@ def test_render_systemd_unit_user_scope(tmp_path: Path) -> None:
     assert "--host" not in unit
 
 
-def test_render_systemd_unit_system_scope(tmp_path: Path) -> None:
-    runtime = _runtime(tmp_path)
+def test_render_systemd_unit_system_scope(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    owner_home = tmp_path / "owner-home"
+    monkeypatch.setattr(
+        service_mod.pwd,
+        "getpwnam",
+        lambda _name: type("Pw", (), {"pw_dir": str(owner_home)})(),
+    )
+    runtime = replace(_runtime(tmp_path), run_as_user=_SERVICE_OWNER)
     unit = render_systemd_unit(runtime, user_unit=False)
-    assert f"User={getpass.getuser()}" in unit
+    assert f"User={_SERVICE_OWNER}" in unit
     assert 'Environment="HOME=' in unit
     assert "WantedBy=multi-user.target" in unit
     assert "OCTOP_SYSTEMD_USER=1" not in unit
@@ -95,15 +105,17 @@ def test_render_systemd_unit_system_scope_uses_runtime_scope_by_default(
     before any system unit existed, so the first install omitted ``User=`` and
     systemd ran the daemon as root.
     """
-    import getpass
-
-    user = getpass.getuser()
-    account_home = Path(pwd.getpwnam(user).pw_dir)
-    runtime = replace(_runtime(tmp_path), run_as_user=user, scope="system")
+    owner_home = tmp_path / "owner-home"
+    monkeypatch.setattr(
+        service_mod.pwd,
+        "getpwnam",
+        lambda _name: type("Pw", (), {"pw_dir": str(owner_home)})(),
+    )
+    runtime = replace(_runtime(tmp_path), run_as_user=_SERVICE_OWNER, scope="system")
 
     unit = render_systemd_unit(runtime)
-    assert f"User={user}" in unit
-    assert f'Environment="HOME={account_home}"' in unit
+    assert f"User={_SERVICE_OWNER}" in unit
+    assert f'Environment="HOME={owner_home}"' in unit
     assert f"Environment=OCTOP_HOME={tmp_path}" in unit
     assert "WorkingDirectory=" not in unit
     assert "WantedBy=multi-user.target" in unit
@@ -451,8 +463,15 @@ def test_stop_service_noop_when_not_installed(tmp_path: Path) -> None:
     stop_service(runtime)
 
 
-def test_restart_service_requires_install(tmp_path: Path) -> None:
+def test_restart_service_requires_install(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     runtime = _runtime(tmp_path)
+    # Point at a path that does not exist: a real host may already have the
+    # unit installed system-wide, which would mask the "not installed" case.
+    monkeypatch.setattr(
+        service_mod,
+        "unit_path",
+        lambda *_args, **_kwargs: tmp_path / "absent" / "octop.service",
+    )
     with pytest.raises(RuntimeError, match="not installed"):
         restart_service(runtime)
 
@@ -897,6 +916,9 @@ def test_write_unit_sudo_path_creates_parent_dir_first(
     # Force the sudo branch regardless of the on-disk state of ~/Library.
     monkeypatch.setattr(service_mod, "_needs_sudo", lambda _p: True)
     monkeypatch.setattr(service_mod, "os", _FakeOs(root=False))
+    # The sudo branch only runs for a non-root installer, so pin the euid
+    # instead of inheriting whoever runs the suite.
+    monkeypatch.setattr(service_mod, "geteuid", lambda: 501)
     monkeypatch.setattr(service_mod, "_run_cmd", _fake_run_cmd)
 
     service_mod._write_unit(runtime)

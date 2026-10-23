@@ -1190,7 +1190,7 @@ class GlobalProcessor:
                 thread_id=thread_id,
                 policies=self._hitl.session_policies,
                 resume=lambda next_decisions: self._agent_manager.resume_hitl(
-                    agent_id, thread_id, next_decisions
+                    agent_id, thread_id, next_decisions, user_id=user_id
                 ),
             ):
                 usage_tracker.observe(chunk)
@@ -1319,11 +1319,12 @@ class GlobalProcessor:
                     agent_id,
                     thread_id,
                     decisions,
+                    user_id=user_id,
                 ),
                 thread_id=thread_id,
                 policies=self._hitl.session_policies,
                 resume=lambda next_decisions: self._agent_manager.resume_hitl(
-                    agent_id, thread_id, next_decisions
+                    agent_id, thread_id, next_decisions, user_id=user_id
                 ),
             ):
                 usage_tracker.observe(chunk)

@@ -51,6 +51,7 @@ const NOT_FOUND_ERROR_CODES = new Set([
   "NOT_FOUND",
   "KNOWLEDGE_NOT_FOUND",
   "SKILL_PACKAGE_NOT_FOUND",
+  "APP_NOT_FOUND",
 ]);
 
 /** True when a failed ``request`` / ``requestBlob`` looks like HTTP 404 / NOT_FOUND. */
@@ -77,8 +78,12 @@ export function apiErrorMessage(
     if (translated !== key) {
       const reason = parsed.details?.reason;
       if (typeof reason === "string" && reason.trim()) {
-        const base = translated.replace(/[。.]\s*$/, "");
-        return `${base}：${reason.trim()}`;
+        const detail = reason.trim();
+        // Localized templates may already interpolate {{reason}}; don't repeat it.
+        if (!translated.includes(detail)) {
+          const base = translated.replace(/[。.]\s*$/, "");
+          return `${base}：${detail}`;
+        }
       }
       // Prefer server detail when it carries more than the generic code message.
       if (

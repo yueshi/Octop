@@ -517,7 +517,13 @@ class TeamManager:
                             fut.cancel()
                         self._expire_hitl(pending_id)
                 resume_pending = pending_id
-                agen = self._agent_manager.resume_hitl(speaker_id, member_tid, decisions)
+                _host, hitl_user_id, _key, _channel = self._room_hitl_view(room_thread_id, payload)
+                agen = self._agent_manager.resume_hitl(
+                    speaker_id,
+                    member_tid,
+                    decisions,
+                    user_id=hitl_user_id or None,
+                )
         except Exception:
             if resume_pending:
                 self._expire_hitl(resume_pending)

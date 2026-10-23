@@ -1642,6 +1642,46 @@ def _ensure_bridge_connections_schema(db: DatabasePool) -> None:
         )
 
 
+def _ensure_light_apps_schema(db: DatabasePool) -> None:
+    """Create the v22 light-app tables when a DB recorded the version without them."""
+    pk = _integer_pk_sql(db)
+    with db.connect() as conn:
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS light_apps (
+              id {pk},
+              app_id TEXT NOT NULL UNIQUE,
+              agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+              owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              name TEXT NOT NULL,
+              description TEXT NOT NULL DEFAULT '',
+              row_count INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_light_apps_owner ON light_apps(owner_user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_light_apps_agent ON light_apps(agent_id)")
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS light_app_collaborators (
+              id {pk},
+              app_id TEXT NOT NULL REFERENCES light_apps(app_id) ON DELETE CASCADE,
+              user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              permission TEXT NOT NULL DEFAULT 'view',
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              UNIQUE(app_id, user_id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_light_app_collab_user "
+            "ON light_app_collaborators(user_id)"
+        )
+
+
 def _repair_legacy_schema(db: DatabasePool) -> None:
     """Idempotent compatibility repairs for local databases from old builds."""
     if _table_exists(db, "users"):
@@ -2106,5 +2146,6 @@ def run_migrations(db: DatabasePool) -> None:
     _ensure_sso_provider_kind_schema(db)
     _ensure_user_role_schema(db)
     _ensure_bridge_connections_schema(db)
+    _ensure_light_apps_schema(db)
     _grant_default_nav_permissions(db)
     _grant_personalization_tab_permissions(db)

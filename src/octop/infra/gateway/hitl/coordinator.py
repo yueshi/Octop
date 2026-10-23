@@ -11,7 +11,10 @@ from octop_gateway.models import MessageEvent
 from octop_harness.slash import SlashCommand
 
 from octop.i18n.domains.slash import tr
-from octop.infra.agents.security.hitl_session import HitlSessionPolicyStore
+from octop.infra.agents.security.hitl_session import (
+    MANDATORY_HITL_TOOLS,
+    HitlSessionPolicyStore,
+)
 from octop.infra.gateway.hitl.format import (
     extract_questions,
     format_ask_card,
@@ -79,9 +82,9 @@ def approve_decisions_if_allowed(
 ) -> list[dict[str, str]] | None:
     """Approve decisions when the thread bypass already covers every action.
 
-    ``ask_user_question`` is never covered. A tool whose ``allowed_decisions``
-    omit ``approve`` is not auto-resumed. Returns ``None`` when the chunk must
-    still be shown to the user.
+    ``ask_user_question`` and mandatory-interrupt tools are never covered. A
+    tool whose ``allowed_decisions`` omit ``approve`` is not auto-resumed.
+    Returns ``None`` when the chunk must still be shown to the user.
     """
     if chunk.get("type") != "hitl_required":
         return None
@@ -99,7 +102,9 @@ def approve_decisions_if_allowed(
         if not isinstance(action, dict):
             return None
         name = action.get("name")
-        if not isinstance(name, str) or not allows(thread_id, name):
+        if not isinstance(name, str) or name in MANDATORY_HITL_TOOLS:
+            return None
+        if not allows(thread_id, name):
             return None
         if not _action_allows_approve(request, name):
             return None
@@ -458,6 +463,7 @@ class HitlChannelCoordinator:
                 record.agent_id,
                 record.thread_id,
                 decisions,
+                user_id=record.user_id,
                 usage_tracker=usage_tracker or UsageTracker(),
                 history_tracker=history_tracker,
                 locale=lang,
@@ -556,6 +562,7 @@ class HitlChannelCoordinator:
                 ctx.agent_id,
                 thread_id,
                 decisions,
+                user_id=ctx.user_id,
                 usage_tracker=tracker,
                 history_tracker=history_tracker,
                 locale=lang,

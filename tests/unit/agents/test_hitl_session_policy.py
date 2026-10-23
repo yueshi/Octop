@@ -109,6 +109,14 @@ def test_wrap_skips_when_thread_allows_all() -> None:
         assert wrapped["execute"]["when"](None) is True
 
 
+def test_wrap_never_skips_mandatory_interrupts() -> None:
+    store = HitlSessionPolicyStore()
+    store.set("thr_1", HitlSessionPolicy(mode="allow_all"))
+    entry = {"allowed_decisions": ["approve", "reject"]}
+    wrapped = apply_session_bypass({"app_delete": entry}, store)
+    assert wrapped == {"app_delete": entry}
+
+
 def test_wrap_skips_execute_from_langgraph_config_without_scope() -> None:
     store = HitlSessionPolicyStore()
     store.set("thr_1", HitlSessionPolicy(mode="allow_all"))
@@ -193,3 +201,8 @@ def test_build_harness_config_skips_interrupt_for_allowed_thread(
         assert write_cfg["when"](None) is False
     with hitl_thread_scope("other"):
         assert write_cfg["when"](None) is True
+
+    # Deleting an app stays mandatory even for an allow-all thread.
+    app_delete = cfg.interrupt_on["app_delete"]
+    assert "when" not in app_delete
+    assert app_delete["allowed_decisions"] == ["approve", "reject"]

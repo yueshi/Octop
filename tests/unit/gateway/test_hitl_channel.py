@@ -470,6 +470,49 @@ async def test_session_auto_approve_resumes_without_yielding_the_card() -> None:
 
 
 @pytest.mark.asyncio
+async def test_session_auto_approve_never_resumes_mandatory_delete() -> None:
+    from octop.infra.agents.security.hitl_session import (
+        HitlSessionPolicy,
+        HitlSessionPolicyStore,
+    )
+    from octop.infra.gateway.hitl.coordinator import iter_with_session_auto_approve
+
+    policies = HitlSessionPolicyStore()
+    policies.set("thr-a", HitlSessionPolicy(mode="allow_all"))
+    resumed: list[list[dict[str, object]]] = []
+
+    async def first_turn():
+        yield {
+            "type": "hitl_required",
+            "request": {
+                "action_requests": [{"name": "app_delete", "args": {"app_id": "app_1"}}],
+                "review_configs": [
+                    {
+                        "action_name": "app_delete",
+                        "allowed_decisions": ["approve", "reject"],
+                    },
+                ],
+            },
+        }
+
+    async def resume(decisions: list[dict[str, object]]):
+        resumed.append(decisions)
+        yield {"type": "token", "content": "should-not-run"}
+
+    chunks = [
+        chunk
+        async for chunk in iter_with_session_auto_approve(
+            first_turn(),
+            thread_id="thr-a",
+            policies=policies,
+            resume=resume,
+        )
+    ]
+    assert [chunk.get("type") for chunk in chunks] == ["hitl_required"]
+    assert resumed == []
+
+
+@pytest.mark.asyncio
 async def test_session_auto_approve_yields_card_when_approve_is_forbidden() -> None:
     from octop.infra.agents.security.hitl_session import (
         HitlSessionPolicy,

@@ -60,6 +60,7 @@ from octop.infra.agents.settings.runtime_limits import (
 from octop.infra.agents.settings.runtime_limits import (
     resolve_context_max_tokens as config_context_max_tokens,
 )
+from octop.infra.agents.tool_scope import tool_scope
 from octop.infra.backend.docker_spec import (
     enrich_docker_backend_spec,
     inject_docker_global_environment,
@@ -1894,8 +1895,15 @@ class AgentManager:
         agent_id: str,
         thread_id: str,
         decisions: list[dict[str, Any]],
+        *,
+        user_id: int | None = None,
     ) -> AsyncIterator[Any]:
-        """Resume a paused HITL interrupt for *thread_id*."""
+        """Resume a paused HITL interrupt for *thread_id*.
+
+        ``user_id`` is the acting user who approved the paused call; the resume
+        invocation carries no request ``configurable``, so tools read it from
+        :func:`tool_scope` instead.
+        """
         if self._harness_manager is None:
             raise self._unavailable_error(agent_id)
         async with (
@@ -1905,6 +1913,7 @@ class AgentManager:
             self._apply_pending_bootstrap_graph_refresh(agent_id)
             with (
                 hitl_thread_scope(thread_id),
+                tool_scope(agent_id, user_id),
                 turn_model_scope(self._stream_model_label(agent_id, {}, thread_id)),
             ):
                 async for chunk in self._harness_manager.resume_hitl(
@@ -3800,6 +3809,20 @@ class AgentManager:
                 paths=self.paths,
             )
 
+        app_tools: list[Any] = []
+        if not team_host:
+            from octop.infra.apps.service import AppService  # noqa: PLC0415
+            from octop.infra.apps.tools import build_app_tools  # noqa: PLC0415
+
+            app_tools = build_app_tools(
+                AppService(
+                    app_repo=self._repos.light_app_repo,
+                    agent_repo=self._repos.agent_repo,
+                    user_repo=self._repos.user_repo,
+                    workspaces=self,
+                )
+            )
+
         from octop_harness.plugins import PluginRegistry, build_plugin_tools  # noqa: PLC0415
 
         from octop.infra.agents.plugins.plugin_tool_defaults import (  # noqa: PLC0415
@@ -3844,7 +3867,12 @@ class AgentManager:
             plugin_tools,
             reserved={
                 str(getattr(t, "name", ""))
-                for t in [*(cron_tools or []), *knowledge_tools, *mobile_tools]
+                for t in [
+                    *(cron_tools or []),
+                    *knowledge_tools,
+                    *mobile_tools,
+                    *app_tools,
+                ]
             },
         )
         self._plugin_tool_labels[row.agent_id] = {
@@ -3901,6 +3929,7 @@ class AgentManager:
             merged_tools.extend(cron_tools)
         merged_tools.extend(knowledge_tools)
         merged_tools.extend(mobile_tools)
+        merged_tools.extend(app_tools)
         merged_tools.extend(plugin_tools)
         # agent_list / ask_agent: PeerAgentMiddleware (team_enabled=True), not config.tools.
 
@@ -4065,6 +4094,16 @@ class AgentManager:
         interrupt_on = apply_session_bypass(applied.interrupt_on, self._hitl_session_store)
         if interrupt_on is not applied.interrupt_on:
             applied = replace(applied, interrupt_on=interrupt_on)
+        if not team_host:
+            # Deleting an app destroys its data; keep approval mandatory even
+            # when the thread chose an allow-all HITL bypass.
+            applied = replace(
+                applied,
+                interrupt_on={
+                    **(applied.interrupt_on or {}),
+                    "app_delete": {"allowed_decisions": ["approve", "reject"]},
+                },
+            )
         if applied.model_retry_enabled:
             factory = (
                 self._harness_manager.shared_factory if self._harness_manager is not None else None

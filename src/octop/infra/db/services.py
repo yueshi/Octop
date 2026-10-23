@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from octop.config import OctopConfig
 from octop.infra.db.pool import DatabasePool
 from octop.infra.db.repos.agents import AgentRepo
+from octop.infra.db.repos.apps import LightAppRepo
 from octop.infra.db.repos.audit import AuditRepo
 from octop.infra.db.repos.backends import BackendRepo
 from octop.infra.db.repos.bridge_connections import BridgeConnectionRepo
@@ -59,6 +60,7 @@ class RepoBundle:
     skill_package_repo: SkillPackageRepo
     published_expert_repo: PublishedExpertRepo
     knowledge_repo: KnowledgeRepo
+    light_app_repo: LightAppRepo
     voice_provider_repo: VoiceProviderRepo
     care_push_repo: CarePushRepo
     proactive_care_config_repo: ProactiveCareConfigRepo
@@ -89,6 +91,7 @@ class RepoBundle:
             skill_package_repo=SkillPackageRepo(db),
             published_expert_repo=PublishedExpertRepo(db),
             knowledge_repo=KnowledgeRepo(db),
+            light_app_repo=LightAppRepo(db),
             voice_provider_repo=VoiceProviderRepo(db),
             care_push_repo=CarePushRepo(db),
             proactive_care_config_repo=ProactiveCareConfigRepo(db),
@@ -189,6 +192,10 @@ class SharedServices:
     @property
     def knowledge_repo(self) -> KnowledgeRepo:
         return self.repos.knowledge_repo
+
+    @property
+    def light_app_repo(self) -> LightAppRepo:
+        return self.repos.light_app_repo
 
     @property
     def voice_provider_repo(self) -> VoiceProviderRepo:

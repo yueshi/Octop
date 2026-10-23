@@ -70,6 +70,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "description": "Create and configure AI agents; start, stop, and inspect runtime status.",
     },
     {
+        "name": "apps",
+        "description": "Light apps built by agents: single-file HTML UIs backed by a validated CSV table, with owner/collaborator access control.",
+    },
+    {
         "name": "chat",
         "description": "Dashboard chat: WebSocket streaming, threads, conversation history, trajectory ledger, and text-push toasts.",
     },

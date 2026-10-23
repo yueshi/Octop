@@ -3,6 +3,8 @@ import { Navigate, useLocation } from "react-router-dom";
 
 // Lazy-loaded pages — Common
 const ExpertsPage = lazy(() => import("../pages/Experts"));
+const AppsPage = lazy(() => import("../pages/Apps"));
+const AppDetailPage = lazy(() => import("../pages/Apps/Detail"));
 const CronJobsPage = lazy(() => import("../pages/Control/CronJobs"));
 const ConnectorsPage = lazy(() => import("../pages/Agent/Connectors"));
 const SkillPackagesPage = lazy(() => import("../pages/SkillPackages"));
@@ -48,6 +50,7 @@ export interface RouteConfig {
 
 export const pathToKey: Record<string, string> = {
   "/chat": "chat",
+  "/apps": "apps",
   // Common
   "/experts": "experts",
   "/tasks": "tasks",
@@ -137,6 +140,7 @@ export function isPersonalizationPath(pathname: string): boolean {
 export function resolveSelectedKey(pathname: string): string {
   if (pathToKey[pathname]) return pathToKey[pathname];
   if (pathname.startsWith("/chat/")) return "chat";
+  if (pathname.startsWith("/apps/")) return "apps";
   if (pathname.startsWith("/workbench/")) return "workbench";
   if (pathname.startsWith("/remote-desktop/")) return "remote-desktop";
   if (pathname.startsWith("/personalization/")) return "personalization";
@@ -150,6 +154,8 @@ export const routeConfigs: RouteConfig[] = [
   { path: "/chat/:agentId/:threadId", element: null, useWrapper: true },
 
   // Common
+  { path: "/apps", element: <AppsPage /> },
+  { path: "/apps/:appId", element: <AppDetailPage /> },
   { path: "/experts", element: <ExpertsPage /> },
   { path: "/tasks", element: <CronJobsPage /> },
   { path: "/connectors", element: <ConnectorsPage /> },

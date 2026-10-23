@@ -8,6 +8,7 @@ from typing import Any
 
 from octop_harness.security.models import SecurityPolicy
 
+from octop.infra.agents.security.hitl_session import MANDATORY_HITL_TOOLS
 from octop.infra.db.repos.settings import SettingsRepo
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,29 @@ class SecuritySettingsStore:
         return resolved
 
     def harness_policy(self) -> SecurityPolicy:
-        return self.load()
+        """Policy handed to ``HarnessAgentManager`` at boot.
+
+        ``SecurityPolicy.apply_to_config`` *replaces* ``interrupt_on`` with
+        ``resolve_interrupt_on()`` every time the harness registers or rebuilds
+        an agent. Any interrupt Octop adds after that point (the mandatory
+        ``app_delete`` gate, connector write approvals) is therefore lost.
+        Mandatory gates must live in the policy itself so they survive that
+        re-application even when admin HITL is off.
+        """
+        policy = self.load()
+        resolved = policy.resolve_interrupt_on() or {}
+        missing = MANDATORY_HITL_TOOLS - resolved.keys()
+        if not missing:
+            return policy
+        data = policy.to_dict()
+        data["hitl"] = {
+            **data["hitl"],
+            "enabled": True,
+            # Materialize the effective tool list: "default" is expanded inside
+            # resolve_interrupt_on, which would otherwise drop the extra tools.
+            "tools": sorted({*resolved, *missing}),
+        }
+        return SecurityPolicy.from_dict(data)
 
 
 def tool_execution_may_pause(policy: SecurityPolicy) -> bool:

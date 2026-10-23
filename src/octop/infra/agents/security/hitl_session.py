@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 HitlSessionMode = Literal["ask", "allow_all", "allow_tools"]
 
 _ASK_USER_TOOL_NAME = "ask_user_question"
+# Tools whose approval must never be skipped by a per-thread bypass.
+MANDATORY_HITL_TOOLS = frozenset({"app_delete"})
 _MAX_TOOLS = 64
 _MAX_TOOL_NAME = 128
 _CURRENT_HITL_THREAD: ContextVar[str | None] = ContextVar(
@@ -250,7 +252,7 @@ def apply_session_bypass(
         return interrupt_on
     out: dict[str, Any] = {}
     for name, cfg in interrupt_on.items():
-        if name == _ASK_USER_TOOL_NAME:
+        if name == _ASK_USER_TOOL_NAME or name in MANDATORY_HITL_TOOLS:
             out[name] = cfg
             continue
         entry = dict(cfg) if isinstance(cfg, dict) else {}
@@ -274,6 +276,7 @@ def apply_session_bypass(
 
 
 __all__ = [
+    "MANDATORY_HITL_TOOLS",
     "HitlSessionMode",
     "HitlSessionPolicy",
     "HitlSessionPolicyStore",

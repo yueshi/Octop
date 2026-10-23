@@ -33,6 +33,33 @@ def test_save_round_trip() -> None:
     assert '"enabled": false' in raw or '"enabled": false' in raw.replace(" ", "")
 
 
+def test_harness_policy_always_interrupts_mandatory_tools() -> None:
+    repo = MagicMock()
+    repo.get.return_value = None
+    store = SecuritySettingsStore(settings_repo=repo)
+
+    # Admin HITL is off: only the mandatory deletion gate survives.
+    policy = store.harness_policy()
+    assert policy.hitl.enabled is True
+    assert policy.resolve_interrupt_on() == {
+        "app_delete": {"allowed_decisions": ["approve", "reject"]}
+    }
+
+    # Admin HITL on with the default tool set keeps those tools and adds the gate.
+    repo.get.return_value = '{"hitl": {"enabled": true, "tools": "default"}}'
+    policy = store.harness_policy()
+    tools = set(policy.resolve_interrupt_on() or {})
+    assert {"bash", "write_file", "app_delete"} <= tools
+
+    # Custom tool lists are preserved without duplicating the gate.
+    repo.get.return_value = (
+        '{"hitl": {"enabled": true, "tools": ["app_delete"],'
+        ' "allowed_decisions": ["approve", "reject"]}}'
+    )
+    policy = store.harness_policy()
+    assert policy.hitl.tools == ["app_delete"]
+
+
 def test_tool_execution_may_pause() -> None:
     assert tool_execution_may_pause(SecurityPolicy.defaults()) is False
     assert tool_execution_may_pause(SecurityPolicy.from_dict({"hitl": {"enabled": True}})) is True
