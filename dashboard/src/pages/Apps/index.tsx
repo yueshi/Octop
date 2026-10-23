@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Button,
   Card,
@@ -8,9 +8,19 @@ import {
   Space,
   Spin,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
-import { AppWindow, MessageSquareText } from "lucide-react";
+import {
+  AppWindow,
+  Bot,
+  Clock,
+  Database,
+  FileCode,
+  MessageSquareText,
+  Table2,
+  User,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { message } from "../../utils/antdMessage";
@@ -19,6 +29,7 @@ import { appsApi, type AppSummary } from "../../api/modules/apps";
 import PageShell from "../../layouts/PageShell";
 import { apiErrorMessage } from "../../utils/apiError";
 import { formatServerDateTime } from "../../utils/formatMessageTime";
+import { formatBytes } from "../../utils/formatBytes";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
 
 const { Text, Paragraph } = Typography;
@@ -30,6 +41,34 @@ function permissionLabel(
   if (permission === "edit_structure") return t("apps.editStructure");
   if (permission === "edit_data") return t("apps.editData");
   return t("apps.viewOnly");
+}
+
+function MetaItem({
+  icon,
+  children,
+  title,
+}: {
+  icon: ReactNode;
+  children: ReactNode;
+  title?: string;
+}) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        fontSize: 12,
+        color: "var(--fn-text-tertiary)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ display: "inline-flex", alignItems: "center" }}>
+        {icon}
+      </span>
+      {title ? <Tooltip title={title}>{children}</Tooltip> : children}
+    </span>
+  );
 }
 
 export default function AppsPage() {
@@ -90,39 +129,101 @@ export default function AppsPage() {
               <Card
                 hoverable
                 onClick={() => navigate(`/apps/${app.app_id}`)}
-                styles={{ body: { padding: 16 } }}
+                styles={{ body: { padding: 0 } }}
+                style={{
+                  overflow: "hidden",
+                  height: "100%",
+                  borderColor: "var(--fn-color-brand-border)",
+                }}
               >
-                <Space
-                  align="start"
-                  style={{ width: "100%", justifyContent: "space-between" }}
+                <div
+                  style={{
+                    padding: "14px 16px 10px",
+                    background:
+                      "linear-gradient(180deg, var(--fn-color-brand-bg) 0%, transparent 100%)",
+                    boxShadow: "inset 0 3px 0 var(--fn-color-brand)",
+                  }}
                 >
-                  <Text strong style={{ fontSize: 15 }}>
-                    {app.name}
-                  </Text>
-                  {app.permission !== "edit_structure" && (
-                    <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-                      {permissionLabel(app.permission, t)}
-                    </Tag>
-                  )}
-                </Space>
-                <Paragraph
-                  type="secondary"
-                  ellipsis={{ rows: 2 }}
-                  style={{ margin: "6px 0 12px", minHeight: 44 }}
+                  <Space
+                    align="start"
+                    style={{ width: "100%", justifyContent: "space-between" }}
+                  >
+                    <Text strong style={{ fontSize: 15 }}>
+                      {app.name}
+                    </Text>
+                    <Space size={4} style={{ marginInlineEnd: 0 }}>
+                      {!app.has_html && (
+                        <Tag color="warning" style={{ marginInlineEnd: 0 }}>
+                          {t("apps.noInterface")}
+                        </Tag>
+                      )}
+                      {app.permission !== "edit_structure" && (
+                        <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+                          {permissionLabel(app.permission, t)}
+                        </Tag>
+                      )}
+                    </Space>
+                  </Space>
+                  <Paragraph
+                    type="secondary"
+                    ellipsis={{ rows: 2 }}
+                    style={{ margin: "6px 0 0", minHeight: 44 }}
+                  >
+                    {app.description || "—"}
+                  </Paragraph>
+                </div>
+                <div
+                  style={{
+                    borderTop: "1px solid var(--fn-color-brand-border)",
+                    background: "var(--fn-color-brand-bg)",
+                    padding: "8px 16px 10px",
+                  }}
                 >
-                  {app.description || "—"}
-                </Paragraph>
-                <Space size={8} wrap>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {app.agent_name || app.agent_id}
-                  </Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    · {t("apps.rows", { count: app.row_count })}
-                  </Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    · {formatServerDateTime(app.updated_at, timeZone)}
-                  </Text>
-                </Space>
+                  <Space size={12} wrap style={{ marginBottom: 4 }}>
+                    <MetaItem
+                      icon={<User size={12} color="var(--fn-color-brand)" />}
+                    >
+                      {t("apps.createdBy", { name: app.owner_username || "—" })}
+                    </MetaItem>
+                    <MetaItem
+                      icon={<Bot size={12} color="var(--fn-color-info)" />}
+                    >
+                      {app.agent_name || app.agent_id}
+                    </MetaItem>
+                  </Space>
+                  <Space size={12} wrap>
+                    <MetaItem
+                      icon={
+                        <FileCode size={12} color="var(--fn-color-warning)" />
+                      }
+                      title={t("apps.interfaceFile")}
+                    >
+                      {t("apps.interfaceSize", {
+                        size: formatBytes(app.html_bytes),
+                      })}
+                    </MetaItem>
+                    <MetaItem
+                      icon={
+                        <Database size={12} color="var(--fn-color-success)" />
+                      }
+                      title={t("apps.dataFile")}
+                    >
+                      {t("apps.dataSize", {
+                        size: formatBytes(app.data_bytes),
+                      })}
+                    </MetaItem>
+                  </Space>
+                  <Space size={12} wrap style={{ marginTop: 4 }}>
+                    <MetaItem
+                      icon={<Table2 size={12} color="var(--fn-color-info)" />}
+                    >
+                      {t("apps.rows", { count: app.row_count })}
+                    </MetaItem>
+                    <MetaItem icon={<Clock size={12} />}>
+                      {formatServerDateTime(app.updated_at, timeZone)}
+                    </MetaItem>
+                  </Space>
+                </div>
               </Card>
             </Col>
           ))}

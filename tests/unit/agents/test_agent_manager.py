@@ -20,6 +20,8 @@ from octop.config import OctopConfig
 from octop.i18n.domains.agents import NO_MODELS_CONFIGURED, format_agent_start_error
 from octop.infra.agents.experts.catalog import default_library_root
 from octop.infra.agents.manager import AgentManager, _memory_extract_settings
+from octop.infra.apps.prompt import light_app_system_prompt
+from octop.infra.apps.tools import APP_TOOL_NAMES
 from octop.infra.backend.resolver import default_agent_backend_spec
 from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import SqlitePool
@@ -1078,7 +1080,66 @@ def test_build_harness_config_keeps_system_prompt_after_bootstrap(
         config_json=json.dumps({"backend": _fs_backend(ws)}),
     )
     cfg = manager._build_harness_config(row)
+    # The light-app rules are appended to the persona, not swapped for it.
+    assert cfg.system_prompt is not None
+    assert cfg.system_prompt.startswith("MBTI persona prompt")
+    assert light_app_system_prompt("zh") in cfg.system_prompt
+
+
+def test_build_harness_config_adds_light_app_prompt_for_bootstrapped_agent(
+    manager: AgentManager,
+) -> None:
+    from dataclasses import replace
+
+    agent_id = "AGT_APPS"
+    ws = manager._paths.ensure_agent_workspace(agent_id)
+    (ws / ".bootstrapped").write_text("", encoding="utf-8")
+    row = replace(
+        _row(agent_id=agent_id),
+        config_json=json.dumps({"backend": _fs_backend(ws)}),
+    )
+    cfg = manager._build_harness_config(row)
+    assert cfg.system_prompt is not None
+    assert "octopApp" in cfg.system_prompt
+
+
+def test_build_harness_config_skips_light_app_prompt_when_app_tools_disabled(
+    manager: AgentManager,
+) -> None:
+    from dataclasses import replace
+
+    agent_id = "AGT_NOAPP"
+    ws = manager._paths.ensure_agent_workspace(agent_id)
+    (ws / ".bootstrapped").write_text("", encoding="utf-8")
+    row = replace(
+        _row(agent_id=agent_id),
+        system_prompt="MBTI persona prompt",
+        config_json=json.dumps(
+            {"backend": _fs_backend(ws), "tools_disabled": list(APP_TOOL_NAMES)},
+        ),
+    )
+    cfg = manager._build_harness_config(row)
     assert cfg.system_prompt == "MBTI persona prompt"
+
+
+def test_build_harness_config_keeps_light_app_prompt_when_one_app_tool_disabled(
+    manager: AgentManager,
+) -> None:
+    from dataclasses import replace
+
+    agent_id = "AGT_PART"
+    ws = manager._paths.ensure_agent_workspace(agent_id)
+    (ws / ".bootstrapped").write_text("", encoding="utf-8")
+    row = replace(
+        _row(agent_id=agent_id),
+        system_prompt="MBTI persona prompt",
+        config_json=json.dumps(
+            {"backend": _fs_backend(ws), "tools_disabled": ["app_delete"]},
+        ),
+    )
+    cfg = manager._build_harness_config(row)
+    assert cfg.system_prompt is not None
+    assert light_app_system_prompt("zh") in cfg.system_prompt
 
 
 def test_bootstrap_complete_defers_graph_refresh(manager: AgentManager) -> None:

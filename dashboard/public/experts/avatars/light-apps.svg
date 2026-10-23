@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="light-apps">
+  <defs>
+    <linearGradient id="bg-light-apps" x1="16" y1="6" x2="112" y2="122" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E0F2FE"/>
+      <stop offset="1" stop-color="#BAE6FD"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="32" fill="url(#bg-light-apps)"/>
+  <!-- shoulders -->
+  <path d="M24 118 Q26 92 48 86 Q64 82 80 86 Q102 92 104 118 Z" fill="#0EA5E9"/>
+  <path d="M48 86 Q64 95 80 86 L78 118 H50 Z" fill="#0284C7" opacity="0.25"/>
+  <!-- hair back -->
+  <path d="M30 56 Q28 28 64 22 Q100 28 98 56 Q92 34 64 32 Q36 34 30 56Z" fill="#1F2937"/>
+  <!-- neck -->
+  <rect x="56" y="84" width="16" height="14" rx="6" fill="#F2C7A0"/>
+  <!-- head -->
+  <ellipse cx="64" cy="62" rx="27" ry="29" fill="#F2C7A0"/>
+  <ellipse cx="37" cy="64" rx="5" ry="7" fill="#F2C7A0"/>
+  <ellipse cx="91" cy="64" rx="5" ry="7" fill="#F2C7A0"/>
+  <!-- face -->
+  <ellipse cx="53" cy="60" rx="3.1" ry="3.7" fill="#1F2937"/>
+  <ellipse cx="75" cy="60" rx="3.1" ry="3.7" fill="#1F2937"/>
+  <circle cx="54.2" cy="58.8" r="1.1" fill="#fff" opacity="0.95"/>
+  <circle cx="76.2" cy="58.8" r="1.1" fill="#fff" opacity="0.95"/>
+  <path d="M47 52 Q53 49 59 52" fill="none" stroke="#1F2937" stroke-width="2" stroke-linecap="round" opacity="0.45"/>
+  <path d="M69 52 Q75 49 81 52" fill="none" stroke="#1F2937" stroke-width="2" stroke-linecap="round" opacity="0.45"/>
+  <path d="M64 62 Q66 67 62 69" fill="none" stroke="#C08457" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+  <path d="M53 73 Q64 80 75 73" fill="none" stroke="#0369A1" stroke-width="2.4" stroke-linecap="round"/>
+  <!-- app window card -->
+  <g transform="translate(70,74)">
+    <rect x="0" y="0" width="42" height="32" rx="6" fill="#FFFFFF" stroke="#0284C7" stroke-width="2"/>
+    <path d="M0 9 H42" stroke="#0284C7" stroke-width="2"/>
+    <circle cx="6" cy="4.5" r="1.6" fill="#0284C7" opacity="0.7"/>
+    <circle cx="12" cy="4.5" r="1.6" fill="#0284C7" opacity="0.5"/>
+    <rect x="5" y="14" width="22" height="4" rx="2" fill="#0EA5E9" opacity="0.75"/>
+    <rect x="5" y="22" width="32" height="4" rx="2" fill="#0EA5E9" opacity="0.45"/>
+  </g>
+</svg>

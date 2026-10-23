@@ -212,6 +212,63 @@ async def test_write_and_read_html(world: World) -> None:
     _assert_code(exc, ErrorCode.APP_HTML_INVALID)
 
 
+async def test_file_stats_track_the_workspace_files(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    assert row.html_bytes == 0
+    assert row.data_bytes > 0
+
+    await world.service.write_html(row, "<h1>Hello</h1>")
+    row = world.service.get(app_id)
+    assert row.html_bytes == len("<h1>Hello</h1>")
+
+    await world.service.append_row(row, {"title": "A", "qty": "1"})
+    row = world.service.get(app_id)
+    assert row.data_bytes > 0
+    view = world.service.view(row, "edit_structure")
+    assert view.has_html is True
+    assert view.html_bytes == row.html_bytes
+    assert view.data_bytes == row.data_bytes
+
+
+async def test_list_files_reports_the_app_workspace_files(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.service.write_html(row, "<h1>Hello</h1>")
+
+    files = await world.service.list_files(row)
+    assert [item.name for item in files] == [
+        "app.html",
+        "data.csv",
+        "schema.json",
+        "manifest.json",
+    ]
+    by_name = {item.name: item for item in files}
+    assert by_name["app.html"].size == len("<h1>Hello</h1>")
+    assert by_name["data.csv"].size and by_name["data.csv"].size > 0
+    assert by_name["data.csv"].path == f"apps/{app_id}/data.csv"
+
+
+async def test_list_views_backfills_the_cached_interface_size(world: World) -> None:
+    """Apps written before the size columns existed still report their UI."""
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.service.write_html(row, "<h1>Hello</h1>")
+    # Simulate an app created before the file-size columns existed.
+    world.repo.set_file_stats(app_id, html_bytes=0, data_bytes=0)
+    assert world.service.get(app_id).html_bytes == 0
+
+    views = await world.service.list_views_with_stats(world.alice_id, is_admin=False)
+    assert [view.app_id for view in views] == [app_id]
+    assert views[0].html_bytes == len("<h1>Hello</h1>")
+    assert views[0].data_bytes > 0
+    assert views[0].has_html is True
+    # The repaired sizes are cached, so later listings do not read the workspace.
+    stored = world.service.get(app_id)
+    assert stored.html_bytes == len("<h1>Hello</h1>")
+    assert stored.data_bytes == views[0].data_bytes
+
+
 async def test_permissions_and_collaborators(world: World) -> None:
     app_id = await _create(world)
     row = world.service.get(app_id)

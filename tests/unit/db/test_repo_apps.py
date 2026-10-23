@@ -55,6 +55,17 @@ def test_run_migrations_repairs_missing_light_app_tables(db: SqlitePool) -> None
     assert {"light_apps", "light_app_collaborators"} <= names
 
 
+def test_run_migrations_adds_file_size_columns_to_v22_databases(db: SqlitePool) -> None:
+    """A database that already recorded v22 predates the file-size columns."""
+    with db.transaction() as conn:
+        conn.execute("ALTER TABLE light_apps DROP COLUMN html_bytes")
+        conn.execute("ALTER TABLE light_apps DROP COLUMN data_bytes")
+    run_migrations(db)
+    with db.connect() as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(light_apps)")}
+    assert {"html_bytes", "data_bytes"} <= columns
+
+
 def test_create_get_and_lists(db: SqlitePool, ids: dict[str, object]) -> None:
     repo = LightAppRepo(db)
     alice = int(ids["alice"])

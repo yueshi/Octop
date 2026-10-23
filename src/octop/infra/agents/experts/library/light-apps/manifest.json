@@ -1,0 +1,83 @@
+{
+  "id": "light-apps",
+  "label": {
+    "zh": "小应 · 轻应用专家",
+    "en": "App · Light App Builder"
+  },
+  "description": {
+    "zh": "轻应用专家「小应」— 把一句话需求变成能直接用的单页小应用：待办清单、记账表、打卡板、投票页、小看板。负责定字段、写自包含的 HTML 界面、灌入数据；数据存在应用自己的 CSV 里，随时能改、能分享、能继续长大。",
+    "en": "Light app expert 'App' — turns a one-line request into a working single-page tool: todo lists, expense trackers, habit boards, voting pages, mini dashboards. It defines the fields, writes the self-contained HTML and seeds the rows; the data lives in the app's own CSV and stays editable, shareable and growable."
+  },
+  "welcome_message": {
+    "zh": "说说你想要的小工具，我把它做成能用的应用",
+    "en": "Tell me which small tool you need — I'll build it as a working app"
+  },
+  "icon_name": "list-todo",
+  "color": "#0ea5e9",
+  "prompt_files": [
+    "SOUL.md",
+    "AGENTS.md"
+  ],
+  "quick_prompts": [
+    {
+      "title": {
+        "zh": "待办清单",
+        "en": "Todo list"
+      },
+      "description": {
+        "zh": "可勾选、可加条目的小应用",
+        "en": "A checklist app you can tick items off in"
+      },
+      "prompt": {
+        "zh": "帮我做一个待办清单应用：字段是「事项（必填）」「负责人」「截止日期（日期）」「是否完成（布尔）」，界面要能新增、勾选完成、按负责人筛选。\n\n",
+        "en": "Build me a todo list app: fields \"task (required)\", \"owner\", \"due date (date)\" and \"done (boolean)\". The UI should add items, tick them off and filter by owner.\n\n"
+      },
+      "color": "#e8f4ff",
+      "icon_name": "list-todo"
+    },
+    {
+      "title": {
+        "zh": "记账表",
+        "en": "Expense tracker"
+      },
+      "description": {
+        "zh": "记录开销并算总额的小应用",
+        "en": "Log spending and total it up"
+      },
+      "prompt": {
+        "zh": "帮我做一个记账应用：字段是「日期（日期，必填）」「项目（文本，必填）」「类别（枚举：餐饮/交通/办公/其他）」「金额（数字，必填）」，界面要显示总额和按类别的合计，并能追加新记录。\n\n",
+        "en": "Build me an expense tracker app: fields \"date (date, required)\", \"item (text, required)\", \"category (enum: food/transport/office/other)\" and \"amount (number, required)\". Show the total and the per-category totals, and allow adding new records.\n\n"
+      },
+      "color": "#dcfce7",
+      "icon_name": "table"
+    },
+    {
+      "title": {
+        "zh": "投票页",
+        "en": "Voting page"
+      },
+      "description": {
+        "zh": "收集大家打分的小应用",
+        "en": "Collect ratings from a group"
+      },
+      "prompt": {
+        "zh": "帮我做一个打分投票应用：字段是「选项（文本，必填）」「评分（整数，1-5）」「备注（文本）」，界面要列出所有选项和平均分，允许追加新的打分。\n\n",
+        "en": "Build me a rating app: fields \"option (text, required)\", \"rating (integer, 1-5)\" and \"comment (text)\". List every option with its average score and let people add new ratings.\n\n"
+      },
+      "color": "#f3e8ff",
+      "icon_name": "activity"
+    }
+  ],
+  "task_examples": {
+    "zh": [
+      "帮我做一个读书清单应用：字段是「书名（必填）」「作者」「状态（枚举：在读/读完/想读）」「评分（整数，1-5）」，界面要能加书、按状态筛选。",
+      "帮我做一个健身打卡应用：字段是「日期（必填）」「项目（必填）」「时长（整数，分钟）」「备注」，界面显示本月累计次数和总时长。",
+      "帮我把现有的待办做成一个应用：字段是「事项（必填）」「截止日期（日期）」「是否完成（布尔）」，先把我给的这几条录进去。"
+    ],
+    "en": [
+      "Build me a reading list app: fields \"title (required)\", \"author\", \"status (enum: reading/finished/wishlist)\" and \"rating (integer, 1-5)\". The UI should add books and filter by status.",
+      "Build me a workout tracker app: fields \"date (required)\", \"activity (required)\", \"duration (integer, minutes)\" and \"note\". Show this month's session count and total minutes.",
+      "Turn my todo list into an app: fields \"task (required)\", \"due date (date)\" and \"done (boolean)\" — and load the items I give you into it."
+    ]
+  }
+}

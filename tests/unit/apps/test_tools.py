@@ -14,7 +14,7 @@ from octop_harness.backends import BackendWorkspace
 
 from octop.infra.agents.tool_scope import tool_scope
 from octop.infra.apps.service import AppService
-from octop.infra.apps.tools import APP_DELETE_TOOL_NAME, build_app_tools
+from octop.infra.apps.tools import APP_DELETE_TOOL_NAME, APP_TOOL_NAMES, build_app_tools
 from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.agents import AgentRepo
@@ -100,6 +100,9 @@ def test_build_app_tools_names(world: World) -> None:
         "app_append_row",
         APP_DELETE_TOOL_NAME,
     }
+    # The manager decides whether to inject the light-app prompt from this
+    # list, so it must stay in sync with the registered tools.
+    assert tuple(tool.name for tool in build_app_tools(world.service)) == APP_TOOL_NAMES
 
 
 async def test_tool_lifecycle(world: World) -> None:

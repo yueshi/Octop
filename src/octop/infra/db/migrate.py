@@ -1656,11 +1656,17 @@ def _ensure_light_apps_schema(db: DatabasePool) -> None:
               name TEXT NOT NULL,
               description TEXT NOT NULL DEFAULT '',
               row_count INTEGER NOT NULL DEFAULT 0,
+              html_bytes INTEGER NOT NULL DEFAULT 0,
+              data_bytes INTEGER NOT NULL DEFAULT 0,
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL
             )
             """
         )
+        # v22 is still unreleased: the file-size columns fold into it, and
+        # the ALTERs cover databases that already recorded version 22.
+        _ensure_column(db, "light_apps", "html_bytes", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(db, "light_apps", "data_bytes", "INTEGER NOT NULL DEFAULT 0")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_light_apps_owner ON light_apps(owner_user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_light_apps_agent ON light_apps(agent_id)")
         conn.execute(

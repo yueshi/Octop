@@ -3810,9 +3810,10 @@ class AgentManager:
             )
 
         app_tools: list[Any] = []
+        light_app_tools_enabled = False
         if not team_host:
             from octop.infra.apps.service import AppService  # noqa: PLC0415
-            from octop.infra.apps.tools import build_app_tools  # noqa: PLC0415
+            from octop.infra.apps.tools import APP_TOOL_NAMES, build_app_tools  # noqa: PLC0415
 
             app_tools = build_app_tools(
                 AppService(
@@ -3822,6 +3823,11 @@ class AgentManager:
                     workspaces=self,
                 )
             )
+            # The app tools are only reachable when the user kept them on for
+            # this agent; the prompt rules follow the tools, not the catalog.
+            # One disabled tool does not hide the rest, so the rules stay as
+            # long as a single app tool is still callable.
+            light_app_tools_enabled = bool(set(APP_TOOL_NAMES) - tools_disabled_set(cfg))
 
         from octop_harness.plugins import PluginRegistry, build_plugin_tools  # noqa: PLC0415
 
@@ -3954,6 +3960,19 @@ class AgentManager:
         if not team_host and not bootstrap_marker_exists(ws):
             system_prompt = None
             memory = ()
+        elif light_app_tools_enabled:
+            # The app tools only make sense with their rules in view: a
+            # sandboxed single-file HTML, the octopApp SDK, and an approval
+            # step the model cannot skip.
+            from octop.infra.apps.prompt import append_light_app_system_prompt  # noqa: PLC0415
+            from octop.infra.utils.locale import locale_from_user_row  # noqa: PLC0415
+
+            system_prompt = append_light_app_system_prompt(
+                system_prompt,
+                locale=locale_from_user_row(
+                    self._repos.user_repo.get(row.user_id) if row.user_id else None
+                ),
+            )
 
         mcp_server_configs: dict[str, Any] = {}
         if not team_host:

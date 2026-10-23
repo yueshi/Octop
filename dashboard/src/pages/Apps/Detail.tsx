@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
+  Descriptions,
+  Drawer,
   Empty,
   Form,
   Input,
@@ -15,6 +17,8 @@ import {
 import {
   ArrowLeft,
   Edit3,
+  FileCode,
+  Info,
   MessageSquareText,
   Plus,
   Share2,
@@ -24,9 +28,12 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
 import { message } from "../../utils/antdMessage";
 
-import { appsApi, type AppDetail } from "../../api/modules/apps";
+import { appsApi, type AppDetail, type AppFile } from "../../api/modules/apps";
 import PageShell from "../../layouts/PageShell";
 import { apiErrorMessage, isNotFoundApiError } from "../../utils/apiError";
+import { formatBytes } from "../../utils/formatBytes";
+import { formatServerDateTime } from "../../utils/formatMessageTime";
+import { useServerTimezone } from "../../hooks/useServerTimezone";
 import { APP_CSP } from "./appCsp";
 
 const { Text } = Typography;
@@ -105,6 +112,7 @@ export default function AppDetailPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { appId = "" } = useParams<{ appId: string }>();
+  const timeZone = useServerTimezone();
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const [detail, setDetail] = useState<AppDetail | null>(null);
@@ -119,6 +127,9 @@ export default function AppDetailPage() {
   const [shareLoading, setShareLoading] = useState(false);
   const [savingShare, setSavingShare] = useState(false);
   const [shares, setShares] = useState<ShareDraft[]>([]);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [files, setFiles] = useState<AppFile[]>([]);
+  const [filesLoading, setFilesLoading] = useState(false);
 
   const loadDetail = useCallback(async () => {
     setLoading(true);
@@ -277,6 +288,20 @@ export default function AppDetailPage() {
     }
   };
 
+  const openInfo = async () => {
+    setInfoOpen(true);
+    setFilesLoading(true);
+    try {
+      const data = await appsApi.files(appId);
+      setFiles(data.files);
+    } catch (err) {
+      message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
+      setFiles([]);
+    } finally {
+      setFilesLoading(false);
+    }
+  };
+
   const submitShare = async () => {
     const payload = shares
       .filter((item) => item.username.trim())
@@ -338,6 +363,13 @@ export default function AppDetailPage() {
           <Tag style={{ marginInlineEnd: 0 }}>
             {permissionLabel(detail.permission, t)}
           </Tag>
+          <Button
+            type="text"
+            icon={<Info size={16} />}
+            onClick={() => void openInfo()}
+          >
+            {t("apps.info")}
+          </Button>
           <Button
             type="text"
             icon={<ArrowLeft size={16} />}
@@ -518,6 +550,86 @@ export default function AppDetailPage() {
           )}
         </div>
       </Modal>
+
+      <Drawer
+        title={t("apps.infoTitle")}
+        open={infoOpen}
+        onClose={() => setInfoOpen(false)}
+        width={420}
+      >
+        {detail && (
+          <Descriptions column={1} size="small" bordered>
+            <Descriptions.Item label={t("apps.createdByLabel")}>
+              {detail.owner_username || "—"}
+            </Descriptions.Item>
+            <Descriptions.Item label={t("apps.agentLabel")}>
+              {detail.agent_name || detail.agent_id}
+            </Descriptions.Item>
+            <Descriptions.Item label={t("apps.permissionLabel")}>
+              {permissionLabel(detail.permission, t)}
+            </Descriptions.Item>
+            <Descriptions.Item label={t("apps.rowsLabel")}>
+              {t("apps.rows", { count: detail.row_count })}
+            </Descriptions.Item>
+            <Descriptions.Item label={t("apps.createdAt")}>
+              {formatServerDateTime(detail.created_at, timeZone)}
+            </Descriptions.Item>
+            <Descriptions.Item label={t("apps.updatedAt")}>
+              {formatServerDateTime(detail.updated_at, timeZone)}
+            </Descriptions.Item>
+            <Descriptions.Item label={t("apps.appId")}>
+              <Text code copyable={{ text: detail.app_id }}>
+                {detail.app_id}
+              </Text>
+            </Descriptions.Item>
+          </Descriptions>
+        )}
+
+        <div style={{ marginTop: 20 }}>
+          <Text strong>{t("apps.filesTitle")}</Text>
+          {filesLoading ? (
+            <div style={{ padding: 24, textAlign: "center" }}>
+              <Spin />
+            </div>
+          ) : (
+            <Space
+              direction="vertical"
+              size={8}
+              style={{ width: "100%", marginTop: 8 }}
+            >
+              {files.map((file) => (
+                <div
+                  key={file.name}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    padding: "8px 10px",
+                    border: "1px solid rgba(5, 5, 5, 0.06)",
+                    borderRadius: 6,
+                    background: "#fafafa",
+                  }}
+                >
+                  <Space size={8} style={{ minWidth: 0 }}>
+                    <FileCode size={14} />
+                    <Text style={{ fontSize: 13 }}>{file.name}</Text>
+                  </Space>
+                  <Text
+                    type="secondary"
+                    style={{ fontSize: 12, whiteSpace: "nowrap" }}
+                  >
+                    {formatBytes(file.size)}
+                  </Text>
+                </div>
+              ))}
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {t("apps.filesHint")}
+              </Text>
+            </Space>
+          )}
+        </div>
+      </Drawer>
     </PageShell>
   );
 }

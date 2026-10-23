@@ -19,8 +19,8 @@ import json
 import logging
 import threading
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import dataclass, replace
+from typing import Any, Protocol
 
 from octop_harness.backends import BackendWorkspace
 
@@ -115,6 +115,12 @@ class AppRecord(Protocol):
     def row_count(self) -> int: ...
 
     @property
+    def html_bytes(self) -> int: ...
+
+    @property
+    def data_bytes(self) -> int: ...
+
+    @property
     def created_at(self) -> int: ...
 
     @property
@@ -132,8 +138,15 @@ class AppView:
     owner_username: str
     permission: str
     row_count: int
+    html_bytes: int
+    data_bytes: int
     created_at: int
     updated_at: int
+
+    @property
+    def has_html(self) -> bool:
+        """Whether the agent has written the app UI yet."""
+        return self.html_bytes > 0
 
 
 @dataclass(frozen=True)
@@ -144,8 +157,24 @@ class ShareView:
     permission: str
 
 
+@dataclass(frozen=True)
+class AppFile:
+    """One file of an app's workspace directory."""
+
+    name: str
+    path: str
+    size: int | None = None
+
+
 def _invalid(code: ErrorCode, reason: str, **details: object) -> OctopError:
     return OctopError(code, reason, details={**details})
+
+
+def _entry_field(entry: Any, key: str) -> Any:
+    """Read a field from an ``ls`` entry (mapping or object, per backend)."""
+    if isinstance(entry, Mapping):
+        return entry.get(key)
+    return getattr(entry, key, None)
 
 
 class AppService:
@@ -223,6 +252,8 @@ class AppService:
             owner_username=owner_names[row.owner_user_id],
             permission=permission,
             row_count=row.row_count,
+            html_bytes=row.html_bytes,
+            data_bytes=row.data_bytes,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
@@ -233,6 +264,56 @@ class AppService:
             self.view(row, permission, owners=owners)
             for row, permission in self.list_for_user(user_id, is_admin=is_admin)
         ]
+
+    async def list_views_with_stats(self, user_id: int, *, is_admin: bool) -> list[AppView]:
+        """List views, backfilling the cached file sizes for apps that predate them.
+
+        Apps written before the file-size columns existed carry cached sizes of
+        zero even though their files are on disk; listing the app directory
+        once repairs the cache instead of showing them as "no interface yet".
+        """
+        out: list[AppView] = []
+        for view in self.list_views(user_id, is_admin=is_admin):
+            if view.html_bytes and view.data_bytes:
+                out.append(view)
+                continue
+            row = self.get(view.app_id)
+            html_bytes, data_bytes = await self._file_stats(row)
+            out.append(
+                replace(view, html_bytes=html_bytes, data_bytes=data_bytes)
+                if (html_bytes, data_bytes) != (view.html_bytes, view.data_bytes)
+                else view,
+            )
+        return out
+
+    async def _file_stats(self, row: AppRecord) -> tuple[int, int]:
+        """Cached (html_bytes, data_bytes), refreshed from the workspace when unknown."""
+        ws = await self._workspace(row.agent_id)
+        sizes = await self._dir_sizes(ws, row.app_id)
+        html_bytes = sizes.get(FILE_HTML, 0)
+        data_bytes = sizes.get(FILE_DATA, 0)
+        if html_bytes != row.html_bytes or data_bytes != row.data_bytes:
+            self._app_repo.set_file_stats(
+                row.app_id,
+                html_bytes=html_bytes,
+                data_bytes=data_bytes,
+            )
+        return html_bytes, data_bytes
+
+    async def _dir_sizes(self, ws: BackendWorkspace, app_id: str) -> dict[str, int]:
+        """File sizes of the app directory, keyed by file name."""
+        result = await ws.als(app_dir(app_id))
+        entries = list(getattr(result, "entries", None) or []) if result is not None else []
+        sizes: dict[str, int] = {}
+        for entry in entries:
+            if _entry_field(entry, "is_dir"):
+                continue
+            path = str(_entry_field(entry, "path") or "").replace("\\", "/")
+            name = path.rsplit("/", 1)[-1]
+            size = _entry_field(entry, "size")
+            if name and size is not None:
+                sizes[name] = int(size)
+        return sizes
 
     def list_for_agent(self, agent_id: str, owner_user_id: int) -> list[LightAppRow]:
         return self._app_repo.list_for_agent(agent_id, owner_user_id)
@@ -411,10 +492,16 @@ class AppService:
         )
         try:
             await ws.awrite_text(app_path(app_id, FILE_SCHEMA), schema.to_json())
-            await ws.awrite_text(app_path(app_id, FILE_DATA), render_csv(schema, []))
+            empty_csv = render_csv(schema, [])
+            await ws.awrite_text(app_path(app_id, FILE_DATA), empty_csv)
             await ws.awrite_text(
                 app_path(app_id, FILE_MANIFEST),
                 self._manifest_text(row, schema.version),
+            )
+            self._app_repo.set_file_stats(
+                app_id,
+                html_bytes=0,
+                data_bytes=len(empty_csv.encode("utf-8")),
             )
         except Exception:
             self._app_repo.delete(app_id)
@@ -479,19 +566,38 @@ class AppService:
         ws = await self._workspace(row.agent_id)
         return await ws.aexists(app_path(row.app_id, FILE_HTML))
 
+    async def list_files(self, row: AppRecord) -> list[AppFile]:
+        """List the app's workspace files with their sizes.
+
+        The four app files are known, so the listing stays stable even on
+        backends that report no size.
+        """
+        ws = await self._workspace(row.agent_id)
+        sizes = await self._dir_sizes(ws, row.app_id)
+        return [
+            AppFile(
+                name=name,
+                path=app_path(row.app_id, name),
+                size=sizes.get(name),
+            )
+            for name in (FILE_HTML, FILE_DATA, FILE_SCHEMA, FILE_MANIFEST)
+        ]
+
     async def write_html(self, row: AppRecord, html: str) -> int:
         content = validate_html(html)
+        size = len(content.encode("utf-8"))
         async with _lock_for(row.app_id):
             self._require_live(row.app_id)
             ws = await self._workspace(row.agent_id)
             await ws.awrite_text(app_path(row.app_id, FILE_HTML), content)
             self._app_repo.touch(row.app_id)
+            self._app_repo.set_file_stats(row.app_id, html_bytes=size)
             try:
                 schema_version = (await self._read_schema(ws, row.app_id)).version
             except OctopError:
                 schema_version = 1
             await self._refresh_manifest(ws, row.app_id, schema_version)
-        return len(content.encode("utf-8"))
+        return size
 
     async def read_schema(self, row: AppRecord) -> Schema:
         async with _lock_for(row.app_id):
@@ -548,6 +654,10 @@ class AppService:
                 )
             await self._write_atomic(ws, row.app_id, {FILE_DATA: csv_text})
             self._app_repo.set_row_count(row.app_id, len(rows))
+            self._app_repo.set_file_stats(
+                row.app_id,
+                data_bytes=len(csv_text.encode("utf-8")),
+            )
             await self._refresh_manifest(ws, row.app_id, schema.version)
             return len(rows) - 1, normalized
 
@@ -564,15 +674,20 @@ class AppService:
                     ErrorCode.APP_SCHEMA_INVALID,
                     "new columns cannot be required while the app already has rows",
                 )
+            csv_text = render_csv(new_schema, rows)
             await self._write_atomic(
                 ws,
                 row.app_id,
                 {
                     FILE_SCHEMA: new_schema.to_json(),
-                    FILE_DATA: render_csv(new_schema, rows),
+                    FILE_DATA: csv_text,
                 },
             )
             self._app_repo.touch(row.app_id)
+            self._app_repo.set_file_stats(
+                row.app_id,
+                data_bytes=len(csv_text.encode("utf-8")),
+            )
             await self._refresh_manifest(ws, row.app_id, new_schema.version)
             return new_schema
 

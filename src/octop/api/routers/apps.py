@@ -43,8 +43,23 @@ class AppSummary(BaseModel):
     owner_username: str = ""
     permission: str = Field(description="Caller's permission: view, edit_data or edit_structure.")
     row_count: int
+    html_bytes: int = Field(default=0, description="Size of the generated app.html in bytes.")
+    data_bytes: int = Field(default=0, description="Size of the app's data.csv in bytes.")
+    has_html: bool = Field(default=False, description="Whether the agent has written the UI yet.")
     created_at: int
     updated_at: int
+
+
+class AppFileOut(BaseModel):
+    name: str = Field(description="File name inside the app directory.")
+    path: str = Field(description="Workspace-relative path of the file.")
+    size: int | None = Field(
+        default=None, description="File size in bytes, when the backend reports it."
+    )
+
+
+class AppFilesResponse(BaseModel):
+    files: list[AppFileOut]
 
 
 class AppListResponse(BaseModel):
@@ -127,7 +142,12 @@ def _columns(schema: Schema) -> list[AppColumn]:
 
 
 def _summary(service: AppService, row: AppRecord, permission: str) -> AppSummary:
-    return AppSummary(**asdict(service.view(row, permission)))
+    view = service.view(row, permission)
+    return AppSummary(**asdict(view), has_html=view.has_html)
+
+
+def _summary_from_view(view: Any) -> AppSummary:
+    return AppSummary(**asdict(view), has_html=view.has_html)
 
 
 def _row_access(
@@ -155,8 +175,8 @@ async def list_apps(
     service = _service(server)
     return AppListResponse(
         apps=[
-            AppSummary(**asdict(view))
-            for view in service.list_views(user.id, is_admin=user.is_admin)
+            _summary_from_view(view)
+            for view in await service.list_views_with_stats(user.id, is_admin=user.is_admin)
         ]
     )
 
@@ -175,7 +195,9 @@ async def get_app(
     schema = await service.read_schema(row)
     base = _summary(service, row, permission)
     return AppDetail(
-        **base.model_dump(),
+        # The detail view checks the workspace directly: the cached size is a
+        # hint for list views, the file itself is the truth.
+        **base.model_dump(exclude={"has_html"}),
         columns=_columns(schema),
         has_html=await service.has_html(row),
     )
@@ -209,6 +231,27 @@ async def get_app_html(
             "Content-Security-Policy": "sandbox",
             "X-Content-Type-Options": "nosniff",
         },
+    )
+
+
+@router.get(
+    "/{app_id}/files",
+    response_model=AppFilesResponse,
+    summary="List app files",
+    description=(
+        "Lists the files that make up the app (interface, data table, schema and "
+        "manifest) with their sizes, so the owner can see where the app lives."
+    ),
+)
+async def list_app_files(
+    app_id: str,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> AppFilesResponse:
+    service, row, _permission = _row_access(server, user, app_id, "view")
+    files = await service.list_files(row)
+    return AppFilesResponse(
+        files=[AppFileOut(name=item.name, path=item.path, size=item.size) for item in files],
     )
 
 
@@ -269,7 +312,7 @@ async def update_app(
     schema = await service.read_schema(row)
     base = _summary(service, row, permission)
     return AppDetail(
-        **base.model_dump(),
+        **base.model_dump(exclude={"has_html"}),
         columns=_columns(schema),
         has_html=await service.has_html(row),
     )

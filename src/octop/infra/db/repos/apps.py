@@ -32,6 +32,8 @@ class LightAppRow:
     name: str
     description: str
     row_count: int
+    html_bytes: int
+    data_bytes: int
     created_at: int
     updated_at: int
 
@@ -45,6 +47,8 @@ class LightAppRow:
             name=str(r["name"]),
             description=str(r["description"] or ""),
             row_count=int(r["row_count"]),
+            html_bytes=int(r["html_bytes"] or 0),
+            data_bytes=int(r["data_bytes"] or 0),
             created_at=int(r["created_at"]),
             updated_at=int(r["updated_at"]),
         )
@@ -184,6 +188,24 @@ class LightAppRepo:
                     "UPDATE light_apps SET row_count = ? WHERE app_id = ?",
                     (row_count, app_id),
                 )
+
+    def set_file_stats(
+        self,
+        app_id: str,
+        *,
+        html_bytes: int | None = None,
+        data_bytes: int | None = None,
+    ) -> None:
+        """Cache the on-disk size of the app files the dashboard shows."""
+        fields, params = partial_updates([("html_bytes", html_bytes), ("data_bytes", data_bytes)])
+        if not fields:
+            return
+        params.append(app_id)
+        with self._db.transaction() as conn:
+            conn.execute(
+                f"UPDATE light_apps SET {', '.join(fields)} WHERE app_id = ?",
+                params,
+            )
 
     def touch(self, app_id: str) -> None:
         with self._db.transaction() as conn:

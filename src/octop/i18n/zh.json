@@ -784,6 +784,9 @@
       "preamble": "以下知识库内容仅供参考；回答时请引用对应来源。"
     }
   },
+  "light_apps": {
+    "system_prompt": "## 轻应用\n\n你可以用 app 工具把需求做成一个单页小应用：app_create -> app_write_html -> app_append_row / app_read_data / app_update_schema / app_list；app_delete 会销毁应用，必须由用户批准。\n\n每个应用是一个自包含的 HTML 文件，渲染在沙箱 iframe 里：CSS 和 JS 全部内联，不加载任何远程资源（不用 CDN 脚本、样式、图片、字体），不调用 fetch 请求 Octop API，图片只能用 data: 或 blob: URL。\n\n数据读写用注入的 window.octopApp SDK（schema() / listRows() / appendRow()）。数据存在应用的 CSV 里，不要硬编码进 HTML；页面加载时调用 listRows() 渲染当前数据。"
+  },
   "proactive_care": {
     "system_prompt": "今天是 {today}。\n\n请根据用户近期的生活事件，用温暖自然的语气写一段关心的话，不超过 150 字。\n注意事件发生的时间，不要把几天前的事说成「今天」。\n不要提及你是 AI，直接表达关心即可。",
     "system_prompt_with_soul": "{soul_md}\n\n---\n\n今天是 {today}。\n\n请根据用户近期的生活事件，用温暖自然的语气写一段关心的话，不超过 150 字。\n注意事件发生的时间，不要把几天前的事说成「今天」。\n不要提及你是 AI，直接表达关心即可。"

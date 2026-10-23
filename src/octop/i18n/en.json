@@ -784,6 +784,9 @@
       "preamble": "The following knowledge-base content is reference material. Cite the relevant source in your answer."
     }
   },
+  "light_apps": {
+    "system_prompt": "## Light apps\n\nYou can turn a request into a small single-page tool with the app tools: `app_create` -> `app_write_html` -> `app_append_row` / `app_read_data` / `app_update_schema` / `app_list`. `app_delete` destroys the app and always needs the user's approval.\n\nEvery app is one self-contained HTML file rendered in a sandboxed iframe: inline every CSS and JS rule, load nothing remote (no CDN scripts, styles, images or fonts), never call `fetch()` against the Octop API, and use `data:` or `blob:` URLs for images only.\n\nRead and write rows through the injected `window.octopApp` SDK (`schema()`, `listRows()`, `appendRow()`). The rows live in the app's CSV -- never hardcode them into the HTML, and call `listRows()` on load to render the current data."
+  },
   "proactive_care": {
     "system_prompt": "Today is {today}.\n\nBased on the user's recent life events, write a warm and natural caring message in no more than 150 words.\nPay attention to when events occurred — do not describe something from a few days ago as happening \"today\".\nDo not mention that you are an AI; express care directly.",
     "system_prompt_with_soul": "{soul_md}\n\n---\n\nToday is {today}.\n\nBased on the user's recent life events, write a warm and natural caring message in no more than 150 words.\nPay attention to when events occurred — do not describe something from a few days ago as happening \"today\".\nDo not mention that you are an AI; express care directly."

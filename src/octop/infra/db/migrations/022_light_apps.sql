@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS light_apps (
   name            TEXT NOT NULL,
   description     TEXT NOT NULL DEFAULT '',
   row_count       INTEGER NOT NULL DEFAULT 0,
+  html_bytes      INTEGER NOT NULL DEFAULT 0,
+  data_bytes      INTEGER NOT NULL DEFAULT 0,
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL
 );

@@ -50,6 +50,16 @@ async def test_owner_app_flow(
     assert [item["app_id"] for item in apps] == [app_id]
     assert apps[0]["permission"] == "edit_structure"
     assert apps[0]["owner_username"] == "alice"
+    assert apps[0]["has_html"] is False
+    assert apps[0]["html_bytes"] == 0
+    assert apps[0]["data_bytes"] > 0
+
+    r = await client.get(f"/api/apps/{app_id}/files", headers=alice_auth)
+    assert r.status_code == 200
+    files = {item["name"]: item for item in r.json()["files"]}
+    assert set(files) == {"app.html", "data.csv", "schema.json", "manifest.json"}
+    assert files["data.csv"]["size"] > 0
+    assert files["data.csv"]["path"] == f"apps/{app_id}/data.csv"
 
     r = await client.get(f"/api/apps/{app_id}", headers=alice_auth)
     assert r.status_code == 200
@@ -63,6 +73,10 @@ async def test_owner_app_flow(
     assert r.text == ""
 
     await _service(srv).write_html(_service(srv).get(app_id), "<h1>Hi</h1>")
+    r = await client.get("/api/apps", headers=alice_auth)
+    assert r.json()["apps"][0]["has_html"] is True
+    assert r.json()["apps"][0]["html_bytes"] == len("<h1>Hi</h1>")
+
     r = await client.get(f"/api/apps/{app_id}/html", headers=alice_auth)
     assert r.status_code == 200
     assert r.text == "<h1>Hi</h1>"

@@ -15,6 +15,17 @@ from octop.infra.db.repos.apps import LightAppRow
 
 APP_DELETE_TOOL_NAME = "app_delete"
 
+APP_TOOL_NAMES: tuple[str, ...] = (
+    "app_list",
+    "app_create",
+    "app_update_schema",
+    "app_write_html",
+    "app_read_data",
+    "app_append_row",
+    APP_DELETE_TOOL_NAME,
+)
+"""Names of the built-in light-app tools, in the order they are registered."""
+
 _COLUMNS_HELP = (
     "Column definitions. Each item: "
     '{"name": "snake_case identifier", "label": "display label", '

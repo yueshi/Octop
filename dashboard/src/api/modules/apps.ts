@@ -20,13 +20,21 @@ export interface AppSummary {
   owner_username: string;
   permission: AppPermission;
   row_count: number;
+  html_bytes: number;
+  data_bytes: number;
+  has_html: boolean;
   created_at: number;
   updated_at: number;
 }
 
 export interface AppDetail extends AppSummary {
   columns: AppColumn[];
-  has_html: boolean;
+}
+
+export interface AppFile {
+  name: string;
+  path: string;
+  size: number | null;
 }
 
 export interface AppRowsResponse {
@@ -62,6 +70,9 @@ export const appsApi = {
     const blob = await requestBlob(`/apps/${encodeId(appId)}/html`);
     return blob.text();
   },
+
+  files: (appId: string) =>
+    request<{ files: AppFile[] }>(`/apps/${encodeId(appId)}/files`),
 
   rows: (appId: string, limit = 200, offset = 0) =>
     request<AppRowsResponse>(
