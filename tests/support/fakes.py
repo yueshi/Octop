@@ -17,6 +17,7 @@ from deepagents.backends.protocol import (
     LsResult,
     ReadResult,
 )
+from langchain_core.messages import AIMessage
 from octop_gateway.channel import BaseChannel
 from octop_gateway.models import InboundMessage, MessageEvent
 from octop_harness.backends.workspace import BackendWorkspace
@@ -29,6 +30,30 @@ def fake_bin_path(name: str) -> str:
     valid on Windows CI (uses ``pathlib`` / ``os.sep``).
     """
     return str(Path("fake-bin") / name)
+
+
+class FakeAssistantLLM:
+    """Scripted bound-LLM double for the light-app assistant loop.
+
+    Each ``ainvoke`` pops one scripted item: a message to return or an
+    exception to raise. Empty script answers with an empty message.
+    """
+
+    def __init__(self) -> None:
+        self.script: list[Any] = []
+        self.calls: list[list[Any]] = []
+
+    def bind_tools(self, _tools: Any) -> FakeAssistantLLM:
+        return self
+
+    async def ainvoke(self, messages: list[Any]) -> Any:
+        self.calls.append(list(messages))
+        if not self.script:
+            return AIMessage(content="")
+        item = self.script.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
 
 
 class FakeHarnessAgent:
@@ -62,12 +87,15 @@ class FakeHarnessAgent:
             self._workspace_dir = Path(tempfile.mkdtemp(prefix="octop-fake-ws-"))
             self._backend = _FakeBackend()
             self._workspace = BackendWorkspace(self._backend, self._workspace_dir)
+        self._assistant_llm = FakeAssistantLLM()
         self.config = SimpleNamespace(
             mcp_server_configs={},
             skills_disabled=frozenset(),
             tools_disabled=frozenset(),
             skill_package_roots=None,
+            pick_default_model_ref=lambda: "fake-model",
         )
+        self.model_factory = SimpleNamespace(get=lambda ref: self._assistant_llm)
         self._mcp_tools: list[Any] = []
         self._mcp_tool_name_set: frozenset[str] = frozenset()
         self._thread_messages: dict[str, list[Any]] = {}

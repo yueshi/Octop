@@ -15,6 +15,7 @@ from octop.infra.apps.models import (
     validate_name,
     validate_permission,
     validate_row,
+    validate_table_key,
 )
 from octop.infra.errors import ErrorCode, OctopError
 
@@ -192,3 +193,13 @@ def test_validate_name() -> None:
     with pytest.raises(OctopError) as exc:
         validate_name("   ")
     _assert_code(exc, ErrorCode.APP_NAME_INVALID)
+
+
+def test_validate_table_key() -> None:
+    assert validate_table_key(" orders ") == "orders"
+    assert validate_table_key("_private2") == "_private2"
+    assert validate_table_key("main") == "main"  # reserved words only
+    for key in ("", "1bad", "bad key", "a-b", "x" * 65, "Tables", "data"):
+        with pytest.raises(OctopError) as exc:
+            validate_table_key(key)
+        _assert_code(exc, ErrorCode.APP_SCHEMA_INVALID)

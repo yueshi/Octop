@@ -6,12 +6,13 @@
 
 | 工具 | 作用 | 关键约束 |
 | --- | --- | --- |
-| `app_list` | 列出本 agent 拥有的应用 | 只返回你自己的应用 |
-| `app_create` | 建应用并定义字段 | 1-50 个字段；名称 ≤100 字 |
-| `app_update_schema` | 追加字段 | 只能加不能改；已有数据时不能加必填字段 |
+| `app_list` | 列出本 agent 拥有的应用 | 只返回你自己的应用；每项带表清单 |
+| `app_create` | 建应用并定义字段 | 1-50 个字段；名称 ≤100 字；同时创建主表 `main` |
+| `app_add_table` | 给应用新增一张附加表 | key 应用内唯一；每个应用最多 12 张表；建了不能删 |
+| `app_update_schema` | 追加字段 | 只能加不能改；已有数据时不能加必填字段；可传 `table` |
 | `app_write_html` | 写完整界面 | 整页覆盖；必须自包含单文件 |
-| `app_read_data` | 读一页数据 | `limit` 1-500，`offset` 分页 |
-| `app_append_row` | 追加一行 | 未知字段、类型不符会被拒 |
+| `app_read_data` | 读一页数据 | `limit` 1-500，`offset` 分页；可传 `table` |
+| `app_append_row` | 追加一行 | 未知字段、类型不符会被拒；可传 `table` |
 | `app_delete` | 删除应用 | 需要用户批准 |
 
 工具都返回 JSON 字符串：成功是结果对象，失败是 `{"error": "..."}`。出错先读 error 再改参数，别瞎试。
@@ -76,14 +77,20 @@
 宿主会在页面里注入 `window.octopApp`：
 
 ```js
-// 列定义 → { columns: [{ name, label, type, required, values }] }
-const { columns } = await octopApp.schema();
+// 表清单 → { tables: [{ table_key, label, row_count, is_main }] }
+const { tables } = await octopApp.tables();
 
-// 读数据 → { columns, rows, total, limit, offset }，rows 是 [{ 列名: 值 }]
+// 列定义 → { table, columns: [{ name, label, type, required, values }] }
+const { columns } = await octopApp.schema();            // 主表
+const orderColumns = await octopApp.schema('orders');   // 指定表
+
+// 读数据 → { table, columns, rows, total, limit, offset }，rows 是 [{ 列名: 值 }]
 const { rows, total } = await octopApp.listRows({ limit: 200, offset: 0 });
+const orders = await octopApp.listRows({ table: 'orders', limit: 200 });
 
-// 追加一行 → { row_index, row }
+// 追加一行 → { row_index, row, table }
 const saved = await octopApp.appendRow({ title: '写周报', done: false });
+const order = await octopApp.appendRow({ item: '纸杯' }, { table: 'orders' });
 ```
 
 要点：
@@ -92,6 +99,7 @@ const saved = await octopApp.appendRow({ title: '写周报', done: false });
 - `appendRow` 成功后把新行本地加进列表，不要整页刷新。
 - 追加失败会 reject（必填没填、枚举值不合法），catch 住给用户一句人话提示。
 - 只有有编辑权限的查看者能追加；只读的人看到的是列表，追加入口要禁用。
+- `schema()` / `listRows()` / `appendRow()` 的 `table` 都缺省为 `main`，只有多表应用才需要传。
 
 ### 第 4 步 · `app_append_row` 灌初始数据
 
@@ -101,12 +109,48 @@ const saved = await octopApp.appendRow({ title: '写周报', done: false });
 { "app_id": "app_xxxxxx", "row": { "title": "写周报", "owner": "小林", "due_date": "2026-10-24", "done": false } }
 ```
 
+多表应用往附加表灌数据时再加 `"table": "orders"`，缺省写主表。
+
 取值会被按列类型校验和归一化：整数要 `3`，数字要 `3.5`，布尔要 `true` / `false`（也接受 `1` / `0` / `yes` / `no`），
 日期要 `YYYY-MM-DD`，时间要 ISO-8601，枚举必须落在声明的 `values` 里。
 
 ### 第 5 步 · `app_read_data` 核对
 
 交付前读一遍数据，确认条数、字段、取值都对。
+
+## 多表：什么时候拆表
+
+一个应用可以有多张表。`app_create` 建的是主表 `main`；需要另一组完全不同的字段时，用
+`app_add_table` 加一张附加表：
+
+```json
+{
+  "app_id": "app_xxxxxx",
+  "key": "orders",
+  "label": "订单",
+  "columns": [
+    { "name": "item", "label": "商品", "type": "string", "required": true },
+    { "name": "amount", "label": "金额", "type": "number" }
+  ]
+}
+```
+
+判断标准：
+
+- **该拆**：不同实体、字段集明显不同——待办和项目、账单和成员、订单和商品。
+- **不该拆**：同一实体换个分类。用 `enum` 列 + 界面筛选，别按分类建表。
+
+约束：
+
+- `key` 用 snake_case（`orders`、`members`），`label` 给人看；保留字 `app` / `data` / `schema` /
+  `manifest` / `tables` 不能用。
+- 主表 `main` 永远存在，不能重复创建；表建了不能删，字段只能加不能改——拆之前想清楚。
+- 每个应用最多 12 张表（含主表）。
+- 往附加表读写时带 `table`：`app_read_data(app_id, table="orders")`、
+  `app_append_row(app_id, row, table="orders")`、`app_update_schema(app_id, columns, table="orders")`。
+
+界面上有多张表时，用 `octopApp.tables()` 渲染 tab / 下拉切换器；切表后重新
+`schema(key)` + `listRows({ table: key })`，不要缓存别的表的数据当当前表用。
 
 ## 沙箱红线
 

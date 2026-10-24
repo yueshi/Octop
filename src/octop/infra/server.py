@@ -23,6 +23,7 @@ from octop.infra.agents.experts.catalog import ExpertCatalog, default_library_ro
 from octop.infra.agents.manager import AgentManager
 from octop.infra.agents.plugins.manager import PluginManager
 from octop.infra.agents.subagents.catalog import SubagentCatalog, default_package_root
+from octop.infra.apps.scheduler import AppSourceScheduler, build_scheduler, build_source_service
 from octop.infra.cron.manager import CronManager
 from octop.infra.db.factory import open_database, should_defer_control_plane_db
 from octop.infra.db.migrate import run_migrations
@@ -289,6 +290,7 @@ class AppRuntime:
     cron_manager: CronManager
     user_manager: UserManager
     proactive_scheduler: ProactiveCareScheduler
+    source_scheduler: AppSourceScheduler | None = None
     trajectory_service: TrajectoryService | None = None
     history_archive: Any | None = None
     bridge_manager: Any | None = None
@@ -313,6 +315,13 @@ class AppRuntime:
             from octop.infra.history.trajectory.store import TrajectoryStore  # noqa: PLC0415
 
             self.trajectory_service.replace_store(TrajectoryStore(services.trajectory_event_repo))
+        if self.source_scheduler is not None:
+            self.source_scheduler.replace_persistence(
+                repo=services.light_app_repo,
+                service=build_source_service(
+                    services=services, workspaces=self.agent_registry, config=config
+                ),
+            )
 
 
 class OctopServer:
@@ -634,12 +643,18 @@ class OctopServer:
             token_signer=_sign_user_token,
         )
 
+        source_scheduler = build_scheduler(
+            services=self.services, workspaces=registry, config=config
+        )
+        source_scheduler.start()
+
         self.app_runtime = AppRuntime(
             agent_registry=registry,
             gateway=gateway,
             cron_manager=cron_mgr,
             user_manager=user_mgr,
             proactive_scheduler=proactive_scheduler,
+            source_scheduler=source_scheduler,
             trajectory_service=trajectory_service,
             history_archive=history_archive,
             bridge_manager=bridge_mgr,
@@ -746,6 +761,8 @@ class OctopServer:
             await agently_auth.close()
             if self.app_runtime is not None:
                 rt = self.app_runtime
+                if rt.source_scheduler is not None:
+                    await rt.source_scheduler.shutdown()
                 await rt.proactive_scheduler.shutdown()
                 await rt.cron_manager.shutdown()
                 await rt.gateway.shutdown()

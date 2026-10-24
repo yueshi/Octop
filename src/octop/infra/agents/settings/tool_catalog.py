@@ -99,10 +99,12 @@ BUILTIN_TOOL_CATALOG: tuple[BuiltinToolEntry, ...] = (
     # Light apps
     BuiltinToolEntry("app_list", "apps"),
     BuiltinToolEntry("app_create", "apps"),
+    BuiltinToolEntry("app_add_table", "apps"),
     BuiltinToolEntry("app_update_schema", "apps"),
     BuiltinToolEntry("app_write_html", "apps"),
     BuiltinToolEntry("app_read_data", "apps"),
     BuiltinToolEntry("app_append_row", "apps"),
+    BuiltinToolEntry("app_import_rows", "apps"),
     BuiltinToolEntry("app_delete", "apps"),
 )
 

@@ -94,10 +94,12 @@ def test_build_app_tools_names(world: World) -> None:
     assert names == {
         "app_list",
         "app_create",
+        "app_add_table",
         "app_update_schema",
         "app_write_html",
         "app_read_data",
         "app_append_row",
+        "app_import_rows",
         APP_DELETE_TOOL_NAME,
     }
     # The manager decides whether to inject the light-app prompt from this
@@ -154,6 +156,64 @@ async def test_tool_lifecycle(world: World) -> None:
         deleted = json.loads(await delete.ainvoke({"app_id": app_id}))
         assert deleted == {"deleted": app_id}
         assert json.loads(await list_tool.ainvoke({})) == {"apps": []}
+
+
+async def test_multi_table_tools(world: World) -> None:
+    tools = build_app_tools(world.service)
+    create = _tool_by_name(tools, "app_create")
+    add_table = _tool_by_name(tools, "app_add_table")
+    append = _tool_by_name(tools, "app_append_row")
+    read_data = _tool_by_name(tools, "app_read_data")
+    list_tool = _tool_by_name(tools, "app_list")
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        created = json.loads(await create.ainvoke({"name": "Shop", "columns": COLUMNS}))
+        app_id = created["app_id"]
+
+        added = json.loads(
+            await add_table.ainvoke(
+                {
+                    "app_id": app_id,
+                    "key": "orders",
+                    "label": "Orders",
+                    "columns": [{"name": "item", "type": "string", "required": True}],
+                }
+            )
+        )
+        assert added["table"] == "orders"
+        assert added["label"] == "Orders"
+
+        duplicate = json.loads(
+            await add_table.ainvoke({"app_id": app_id, "key": "orders", "columns": [{"name": "x"}]})
+        )
+        assert "already exists" in duplicate["error"]
+
+        rejected = json.loads(
+            await add_table.ainvoke({"app_id": app_id, "key": "main", "columns": [{"name": "x"}]})
+        )
+        assert "already exists" in rejected["error"]
+
+        appended = json.loads(
+            await append.ainvoke({"app_id": app_id, "row": {"item": "cup"}, "table": "orders"})
+        )
+        assert appended["table"] == "orders"
+        assert appended["row"] == {"item": "cup"}
+
+        read = json.loads(await read_data.ainvoke({"app_id": app_id, "table": "orders"}))
+        assert read["total"] == 1
+        assert read["rows"] == [{"item": "cup"}]
+
+        main = json.loads(await read_data.ainvoke({"app_id": app_id}))
+        assert main["table"] == "main"
+        assert main["total"] == 0
+
+        listed = json.loads(await list_tool.ainvoke({}))
+        tables = listed["apps"][0]["tables"]
+        assert [item["table_key"] for item in tables] == ["main", "orders"]
+        assert tables[1]["row_count"] == 1
+
+        missing = json.loads(await read_data.ainvoke({"app_id": app_id, "table": "nope"}))
+        assert "unknown table" in missing["error"]
 
 
 async def test_tools_reject_non_owner(world: World) -> None:

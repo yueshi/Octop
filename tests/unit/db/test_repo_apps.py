@@ -153,3 +153,112 @@ def test_collaborators_replace_and_delete_cascade(db: SqlitePool, ids: dict[str,
             (row.app_id,),
         ).fetchone()[0]
     assert count == 0
+
+
+def test_source_crud_and_run_state(db: SqlitePool, ids: dict[str, object]) -> None:
+    repo = LightAppRepo(db)
+    app = repo.create(
+        agent_id=str(ids["agent_id"]),
+        owner_user_id=int(ids["alice"]),
+        name="Tracker",
+    )
+
+    inserted = repo.insert_source(
+        source_id="src_1",
+        app_id=app.app_id,
+        table_key="main",
+        kind="workspace_file",
+        mode="append",
+        schedule_seconds=60,
+        params_json='{"path": "inbound/imports/a.csv"}',
+        mapping_json='{"name": "title"}',
+        created_by=int(ids["alice"]),
+    )
+    assert inserted.source_id == "src_1"
+    assert inserted.last_run_at is None and inserted.last_status is None
+    assert repo.get_source(app.app_id, "src_1") == inserted
+    assert repo.list_sources(app.app_id) == [inserted]
+
+    # A table holds at most one binding at the DB level too.
+    from sqlite3 import IntegrityError
+
+    with pytest.raises(IntegrityError):
+        repo.insert_source(
+            source_id="src_2",
+            app_id=app.app_id,
+            table_key="main",
+            kind="workspace_file",
+            mode="append",
+            schedule_seconds=0,
+            params_json="{}",
+            mapping_json="{}",
+            created_by=int(ids["alice"]),
+        )
+
+    repo.set_source_run_state(
+        "src_1", status="ok", run_at=1000, row_count=7, next_run_at=1060, fail_count=0
+    )
+    refreshed = repo.get_source(app.app_id, "src_1")
+    assert refreshed is not None
+    assert refreshed.last_status == "ok"
+    assert refreshed.last_run_at == 1000
+    assert refreshed.last_row_count == 7
+    assert refreshed.next_run_at == 1060
+    assert refreshed.fail_count == 0
+
+    repo.set_source_run_state(
+        "src_1", status="error", run_at=2000, error="boom", next_run_at=2060, fail_count=1
+    )
+    refreshed = repo.get_source(app.app_id, "src_1")
+    assert refreshed is not None
+    assert refreshed.last_status == "error" and refreshed.last_error == "boom"
+    assert refreshed.fail_count == 1
+
+    # Due when next_run_at passes; the claim pushes it forward atomically.
+    assert repo.list_due_sources(now=2059) == []
+    assert repo.claim_source("src_1", now=2060, schedule_seconds=60) is True
+    assert repo.claim_source("src_1", now=2060, schedule_seconds=60) is False
+    assert repo.list_due_sources(now=2119) == []
+    assert [item.source_id for item in repo.list_due_sources(now=2120)] == ["src_1"]
+
+    # Update resets run state.
+    updated = repo.update_source(
+        app.app_id,
+        "src_1",
+        table_key="main",
+        kind="workspace_file",
+        mode="replace",
+        schedule_seconds=0,
+        params_json='{"path": "inbound/imports/b.csv"}',
+        mapping_json="{}",
+    )
+    assert updated.mode == "replace"
+    assert updated.last_status is None and updated.last_run_at is None
+    assert updated.next_run_at is None and updated.fail_count == 0
+    assert repo.list_due_sources(now=10**9) == []
+
+    assert repo.delete_source(app.app_id, "src_1") is True
+    assert repo.delete_source(app.app_id, "src_1") is False
+    assert repo.list_sources(app.app_id) == []
+
+
+def test_source_delete_cascades_with_app(db: SqlitePool, ids: dict[str, object]) -> None:
+    repo = LightAppRepo(db)
+    app = repo.create(
+        agent_id=str(ids["agent_id"]),
+        owner_user_id=int(ids["alice"]),
+        name="Tracker",
+    )
+    repo.insert_source(
+        source_id="src_1",
+        app_id=app.app_id,
+        table_key="main",
+        kind="external",
+        mode="append",
+        schedule_seconds=0,
+        params_json='{"instance_id": "i1", "tool": "search"}',
+        mapping_json="{}",
+        created_by=int(ids["alice"]),
+    )
+    repo.delete(app.app_id)
+    assert repo.list_sources(app.app_id) == []

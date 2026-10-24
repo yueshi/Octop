@@ -1686,6 +1686,90 @@ def _ensure_light_apps_schema(db: DatabasePool) -> None:
             "CREATE INDEX IF NOT EXISTS idx_light_app_collab_user "
             "ON light_app_collaborators(user_id)"
         )
+        # v22 is still unreleased: the table registry folds into it, and the
+        # CREATE covers databases that already recorded version 22.
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS light_app_tables (
+              id {pk},
+              app_id TEXT NOT NULL REFERENCES light_apps(app_id) ON DELETE CASCADE,
+              table_key TEXT NOT NULL,
+              label TEXT NOT NULL DEFAULT '',
+              row_count INTEGER NOT NULL DEFAULT 0,
+              data_bytes INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              UNIQUE(app_id, table_key)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_light_app_tables_app ON light_app_tables(app_id)"
+        )
+        # Apps created before the registry existed only have the implicit main
+        # table; register it so per-table counts and totals keep working.
+        conn.execute(
+            """
+            INSERT INTO light_app_tables(
+              app_id, table_key, label, row_count, data_bytes, created_at, updated_at
+            )
+            SELECT a.app_id, 'main', '', a.row_count, a.data_bytes, a.created_at, a.updated_at
+            FROM light_apps a
+            WHERE NOT EXISTS (
+              SELECT 1 FROM light_app_tables t
+              WHERE t.app_id = a.app_id AND t.table_key = 'main'
+            )
+            """
+        )
+        # v22 is still unreleased: the assistant history folds into it too.
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS light_app_assistant_messages (
+              id {pk},
+              app_id TEXT NOT NULL REFERENCES light_apps(app_id) ON DELETE CASCADE,
+              user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              role TEXT NOT NULL,
+              content TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_light_app_assistant "
+            "ON light_app_assistant_messages(app_id, user_id, id)"
+        )
+        # v22 is still unreleased: data-source bindings fold into it too.
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS light_app_sources (
+              id {pk},
+              source_id TEXT NOT NULL UNIQUE,
+              app_id TEXT NOT NULL REFERENCES light_apps(app_id) ON DELETE CASCADE,
+              table_key TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              mode TEXT NOT NULL DEFAULT 'append',
+              schedule_seconds INTEGER NOT NULL DEFAULT 0,
+              params_json TEXT NOT NULL DEFAULT '{{}}',
+              mapping_json TEXT NOT NULL DEFAULT '{{}}',
+              next_run_at INTEGER,
+              fail_count INTEGER NOT NULL DEFAULT 0,
+              last_run_at INTEGER,
+              last_status TEXT,
+              last_error TEXT,
+              last_row_count INTEGER,
+              created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              UNIQUE(app_id, table_key)
+            )
+            """
+        )
+        # ...and the auto-sync columns cover databases that already recorded 22.
+        _ensure_column(db, "light_app_sources", "next_run_at", "INTEGER")
+        _ensure_column(db, "light_app_sources", "fail_count", "INTEGER NOT NULL DEFAULT 0")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_light_app_sources_app ON light_app_sources(app_id)"
+        )
 
 
 def _repair_legacy_schema(db: DatabasePool) -> None:

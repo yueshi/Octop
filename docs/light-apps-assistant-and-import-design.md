@@ -1,6 +1,6 @@
 # 轻应用：默认 AI 助手 + 外部数据导入设计
 
-> 状态：设计稿，未实施（2026-10-23）
+> 状态：已实施 —— M1 多表、M2 助手、M3 手动导入、M4 外部数据源、M5 自动同步全部落地（2026-10-24；遗留：`append` 模式无去重键、助手无应用内 SDK 入口）
 >
 > 范围：`feature/light-apps` 分支上的轻应用能力
 >
@@ -68,28 +68,29 @@ Dashboard 应用详情页
    ▼
 POST /api/apps/{app_id}/assistant   （SSE 流式返回）
    │  校验 JWT + 应用 view 权限
+   │  prepare()：解析所属 Agent + 默认模型（未运行/无模型 → 普通 HTTP 错误）
    │  组装：系统提示（应用名 + 表结构摘要）+ 会话历史 + 用户问题
-   │  注入 app_tables / app_query_rows 两个只读工具
+   │  注入 app_tables / app_query_rows 两个只读工具（bind_tools）
    ▼
-AgentManager → HarnessAgent（该应用的 Agent，带受限工具集）
+bind_tools 后的 LLM 循环（infra/apps/assistant.py，最多 4 轮）
    │  模型可能先调 app_query_rows 拉数据再回答
    ▼
-SSE token 流 → Dashboard 助手面板逐字显示
-```
+SSE token 流 → Dashboard 助手面板显示回答
 
-**为什么走 Agent 而不是直接调 LLM**：助手需要「先查数据再回答」（多轮工具调用），
-直接 `ainvoke_text` 做不到；而复用 Agent 基础设施能自动继承模型路由、重试、
-用量统计与轨迹记录。限制工具集即可拿到安全边界。
+> 实施记录（2026-10-24）：未走完整 harness graph，而是解析所属 Agent 的
+> 默认模型后直接跑一个受限 bind_tools 循环（`AppAssistant`）。工具只读、
+> 只绑本应用，安全边界一致；代价是不记录轨迹，用量改为循环内自行按
+> `usage_metadata` 累计并写入 `usage_repo`（source=app_assistant）。
 
 ### 2.4 会话与历史
 
 | 项 | 决定 |
 |----|------|
-| 存储 | 复用现有线程表，`thread_id` 由 `app_id + user_id` 派生（如同 `session_key_from_message`） |
-| 清理 | 随应用删除一并清理；应用删除时按 `app_id` 前缀找出线程并删除 |
-| 上下文裁剪 | 沿用 Agent 既有历史裁剪策略，不额外实现 |
+| 存储 | 专用表 `light_app_assistant_messages`（v22 迁移，随多表 DDL 一起落地），按 `(app_id, user_id)` 隔离；**未**复用线程表 |
+| 清理 | repo 插入时裁剪到最近 200 条；应用删除时按 `app_id` 清空 |
+| 上下文裁剪 | 每次提问回放最近 12 条历史消息作为上下文 |
 
-### 2.5 SDK 入口（可选，供应用作者内嵌）
+### 2.5 SDK 入口（可选，供应用作者内嵌）— 未实施
 
 ```js
 // 应用 HTML 内自行渲染聊天框时可用
@@ -107,22 +108,26 @@ const answer = await octopApp.ask("帮我看看这周的趋势");
 | POST | `/api/apps/{app_id}/assistant` | SSE 流式问答；body `{question, thread_id?}` |
 | GET | `/api/apps/{app_id}/assistant/history` | 取该用户在此应用的会话历史（用于面板重开时回填） |
 
-SSE 事件沿用 `api/routers/chat/sse.py` 的 `format_sse`，事件名 `token` / `done` / `error`。
+SSE 沿用 `api/routers/chat/sse.py` 的 `format_sse`，事件名统一为 `chunk`，
+事件类型放在 data 载荷的 `type` 字段：`token` / `tool` / `done` / `error`
+（与 chat 流的 dashboard 解析约定一致）。
 
 ### 2.7 失败与降级
 
 | 情况 | 行为 |
 |------|------|
-| 应用所属 Agent 未运行 | 助手面板显示「Agent 未启动，无法使用助手」，不报错 |
-| 没有可用模型 | 面板隐藏助手入口 |
-| 模型调用失败 | SSE `error` 事件，面板显示可重试提示 |
+| 应用所属 Agent 未运行 | `prepare()` 抛出 Agent 可用性错误（如 `AGENT_NOT_RUNNING`），POST 返回普通 HTTP 错误，面板显示后端本地化消息 |
+| 没有可用模型 | 同上（`INTERNAL_ERROR`），后续可再隐藏面板入口 |
+| 模型调用失败 | SSE `error` 事件（本地化文案），面板显示可重试提示 |
+| 工具轮数超限 | 最多 4 轮，超出发 `error` 事件提示换更具体的问法 |
 | 表数据为空 | 助手正常回答「这张表还没有数据」，不报错 |
 
 ### 2.8 用量与成本
 
 助手调用消耗 Agent 的模型额度，因此：
 
-- 助手调用计入 Agent 的用量统计（走 Agent 既有链路，自动获得）；
+- 助手调用计入 Agent 的用量统计：循环内按 `usage_metadata` 累计，
+  回答完成后写 `usage_repo.record(..., source="app_assistant")`；
 - 面板上标注「消耗 Agent 额度」；
 - 单次会话最大轮数与超时沿用 Agent 既有上限，不另设。
 
@@ -134,9 +139,9 @@ SSE 事件沿用 `api/routers/chat/sse.py` 的 `format_sse`，事件名 `token` 
 
 | 类型 | 标识 | 来源 | 落地方式 |
 |------|------|------|------|
-| 上传文件 | `upload` | Dashboard 上传 CSV / Excel | 上传到应用所属 Agent 工作区 `inbound/`，再导入 |
-| 工作区文件 | `workspace_file` | Agent 工作区里已有的 CSV / Excel | 按工作区相对路径读取 |
-| 外部数据源 | `external` | MCP 连接器暴露的只读查询工具 | 调用工具取回结构化结果 |
+| 上传文件 | `upload` | Dashboard 上传 CSV / Excel | ✅ 已实施：`POST /api/apps/{app_id}/upload` 经 `BackendWorkspace` 落到 `inbound/imports/`（不需要 Agent 在运行，沿用 `max_upload_bytes` 上限） |
+| 工作区文件 | `workspace_file` | Agent 工作区里已有的 CSV / Excel | ✅ 已实施：按工作区相对路径读取；拒绝任何含隐藏段（`.` 开头，含 `.octop`）的路径，且要求 edit_structure |
+| 外部数据源 | `external` | MCP 连接器暴露的只读查询工具 | ✅ 已实施（2026-10-24）：仅支持进程内 gateway 连接器（`mcp_mode=gateway`）；`GatewayToolRunner` 绑定时与运行时双重校验 `readOnlyHint is not False`，凭据经 `ConnectorService.decrypt` 解密后调 `call_gateway_tool`，输出按 `result_path` 点路径提取记录 |
 
 三者统一落到**多表模型的一张表**：导入 = 往某张表灌数据。
 
@@ -151,15 +156,15 @@ SSE 事件沿用 `api/routers/chat/sse.py` 的 `format_sse`，事件名 `token` 
 
 ### 3.3 表单结构（控制面）
 
-新表 `light_app_sources`（折进未发布的 v22 迁移）：
+新表 `light_app_sources`（✅ 已折入 v22 迁移；每张表至多一个绑定，DB 层 `UNIQUE(app_id, table_key)` 兜底）：
 
 ```
 id, source_id(公开字符串), app_id → light_apps(app_id),
-key(机器名), label,
-kind(upload|workspace_file|external),
+table_key,                            -- 目标表（UNIQUE(app_id, table_key)，每表一个绑定）
+kind(workspace_file|external),        -- upload 是一次性动作，不建绑定
 mode(append|replace),                 -- 导入语义
 schedule_seconds(0=仅手动),
-params_json,                          -- 外部源的服务器/工具/参数
+params_json,                          -- workspace_file: {path}; external: {instance_id, tool, args?, result_path?}
 mapping_json,                         -- 源列 → 表列 的映射
 last_run_at, last_status, last_error, last_row_count,
 created_by, created_at, updated_at
@@ -182,7 +187,14 @@ mode=append → 追加到该表；mode=replace → 覆盖该表
 ```
 
 校验失败的行**跳过并计数**，不阻断整批导入；结果回给调用方：
-`{imported, skipped, errors}`。
+`{imported, skipped, errors}`（最多报 5 条错误明细）。
+
+实施记录（2026-10-24）：
+- 列映射默认按同名列自动映射；`mapping` 显式指定「源列 → 表列」，未知目标列报 `APP_SCHEMA_INVALID`；
+- 权限：`append` 要 edit_data；`replace` 与 `workspace_file` 源要 edit_structure（所有者/管理员）；
+- `replace` 时若**所有**行都校验失败则报错不动表，避免坏映射把表清空；
+- 行数（20k）与 CSV 体积（5MB）上限沿用现有 `MAX_ROWS` / `MAX_CSV_BYTES`；
+- 解析支持 CSV/TSV/JSON/.xlsx/.xls，文本解码 utf-8-sig → gb18030 回退（`infra/apps/importer.py`）。
 
 ### 3.5 文件格式支持
 
@@ -214,12 +226,20 @@ mode=append → 追加到该表；mode=replace → 覆盖该表
 | 失败退避 | 失败后 `next_run_at` 指数退避，最大间隔封顶 |
 | 影响面 | 同步只改目标表，不动其他表 |
 
+实施记录（2026-10-24，M5 已落地）：
+- 调度器 `infra/apps/scheduler.py`：`AppSourceScheduler` 单协程循环（30s 扫描），`start()` / `shutdown()` / `tick(now)`（tick 公开供测试）；由 `infra/server.py` 在启动时构建并拉起，`stop()` 关停，向导热切换 DB 经 `replace_persistence` 重绑。
+- 列：`next_run_at`（NULL=到期即跑）+ `fail_count` 折入未发布的 v22 迁移；`update_source` 重置两者。
+- 领取即租约：`claim_source` 是条件 UPDATE（`COALESCE(next_run_at,0) <= now` 才置为 `now + schedule_seconds`），无独立租约列；进程崩溃最多丢一个周期。
+- 退避：`run_source` 统一记账（手动/自动同路）——成功 `next_run_at = run_at + schedule_seconds`、`fail_count = 0`；失败 `next_run_at = run_at + min(schedule · 2^(fail_count-1), 24h)`。
+- `append` 去重（`source_key`）未做——与手动导入行为一致（append 就是重复灌入），需要幂等请用 replace 模式。
+- Dashboard：info 抽屉每张表显示绑定状态（kind/路径或工具、周期、上次同步、行数、成功/失败 Tag），绑定对话框（工作区文件路径 或 连接器实例+只读工具+参数 JSON+result_path+列映射 JSON），立即同步 / 删除绑定；周期预设 5min/30min/1h/6h/1d。
+
 ### 3.8 Agent 工具
 
 | 工具 | 作用 |
 |------|------|
-| `app_import_rows(app_id, table, source)` | 手动导入：读工作区文件或外部源，灌进指定表 |
-| `app_bind_source(app_id, table, kind, params, mode, schedule_seconds?)` | 绑定自动同步源 |
+| `app_import_rows(app_id, path, table?, mode?, mapping?)` | ✅ 已实施：读工作区文件（CSV/TSV/JSON/Excel）灌进指定表 |
+| `app_bind_source(app_id, table, kind, params, mode, schedule_seconds?)` | 未实施（绑定走 HTTP API；M5 加自动同步时再评估） |
 
 「删除源」暂不提供（与删表一样，涉及破坏性，先留 HTTP 侧或后续再加）。
 
@@ -227,19 +247,22 @@ mode=append → 追加到该表；mode=replace → 覆盖该表
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/apps/{app_id}/tables/{key}/import` | 手动导入（body：源描述） |
-| GET | `/api/apps/{app_id}/sources` | 列出绑定 |
-| PUT | `/api/apps/{app_id}/sources/{source_id}` | 新建/更新绑定 |
-| DELETE | `/api/apps/{app_id}/sources/{source_id}` | 删除绑定 |
-| POST | `/api/apps/{app_id}/upload` | 上传待导入文件（落到 Agent 工作区 `inbound/`） |
+| POST | `/api/apps/{app_id}/tables/{key}/import` | ✅ 已实施：手动导入（body：`{kind, path, mode, mapping?}`） |
+| POST | `/api/apps/{app_id}/upload` | ✅ 已实施：上传待导入文件（multipart，落到 `inbound/imports/`，返回 path） |
+| GET | `/api/apps/{app_id}/sources` | ✅ 已实施（view 权限） |
+| PUT | `/api/apps/{app_id}/sources/{source_id}` | ✅ 已实施（edit_structure；每表一个绑定；external 绑定时校验连接器与只读工具） |
+| DELETE | `/api/apps/{app_id}/sources/{source_id}` | ✅ 已实施（edit_structure，204） |
+| POST | `/api/apps/{app_id}/sources/{source_id}/run` | ✅ 已实施（edit_data；失败记入 last_status/last_error 后抛错） |
+| GET | `/api/apps/{app_id}/source-tools?instance_id=` | ✅ 已实施（edit_structure；binding 对话框的工具清单，含 read_only 标记） |
 
 ### 3.10 Dashboard
 
 | 功能 | 说明 |
 |------|------|
-| 应用详情页「数据」区 | 每张表显示行数、列数、最近导入时间；可触发手动导入 |
-| 导入对话框 | 选源（上传文件 / 工作区文件 / 外部数据源）→ 选目标表 → 预览映射 → 确认 |
-| 外部源绑定对话框 | 选连接器与工具 → 配参数 → 选周期 |
+| 应用详情页「数据」区 | ✅ 每张表显示行数；有 edit_data 权限时显示「导入」按钮 |
+| 导入对话框 | ✅ 已实施（上传文件 → 选目标表 → 追加/覆盖 → 结果提示）；映射预览未做（同名列自动映射，`mapping` 参数留给 API 调用方） |
+| 工作区文件 / 外部数据源导入 | 工作区文件 ✅（HTTP 导入 + `app_import_rows` 工具）；外部源经 API 绑定/运行 ✅ |
+| 外部源绑定对话框 | ✅ 已实施（M5）：info 抽屉每表数据源状态行 + 绑定对话框 + 立即同步/删除 |
 
 ---
 
@@ -265,10 +288,10 @@ mode=append → 追加到该表；mode=replace → 覆盖该表
 | 阶段 | 内容 | 人日 | 依赖 |
 |------|------|------|------|
 | M1 | 多表模型（另一文档） | 8–12 | — |
-| M2 | 助手面板 + `app_ask` 只读工具 + SSE 端点 | 5–7 | M1（助手要按表读数据） |
-| M3 | 手动导入（上传 / 工作区文件 / CSV·Excel·JSON 解析） | 4–6 | M1 |
-| M4 | 外部数据源（MCP 只读调用 + 映射） | 4–6 | M3 |
-| M5 | 自动同步（绑定 + 周期任务 + 租约 + 退避） | 3–5 | M4 |
+| M2 | 助手面板 + SSE 端点 + 只读工具（`app_tables`/`app_query_rows` 随会话注入；`app_ask` 应用内 SDK 入口未做） | 已实施 2026-10-24 | M1（助手要按表读数据） |
+| M3 | 手动导入（上传 / 工作区文件 / CSV·Excel·JSON 解析） | 已实施 2026-10-24（映射预览未做） | M1 |
+| M4 | 外部数据源（MCP 只读调用 + 映射） | 已实施 2026-10-24（仅进程内 gateway 连接器） | M3 |
+| M5 | 自动同步（绑定 + 周期任务 + 租约 + 退避） | 已实施 2026-10-24（`append` 去重未做） | M4 |
 
 M2 与 M3 可并行。M1 是三者共同前提。
 

@@ -888,10 +888,12 @@ def test_build_harness_config_includes_cronjob_tools_when_cron_manager_set(
         "search_knowledge",
         "app_list",
         "app_create",
+        "app_add_table",
         "app_update_schema",
         "app_write_html",
         "app_read_data",
         "app_append_row",
+        "app_import_rows",
         "app_delete",
     }
 
@@ -907,10 +909,12 @@ def test_build_harness_config_includes_search_knowledge_without_cron(
         "search_knowledge",
         "app_list",
         "app_create",
+        "app_add_table",
         "app_update_schema",
         "app_write_html",
         "app_read_data",
         "app_append_row",
+        "app_import_rows",
         "app_delete",
     }
     assert any(isinstance(item, KnowledgeSearchHintMiddleware) for item in (cfg.middleware or []))

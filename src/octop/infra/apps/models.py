@@ -20,8 +20,16 @@ from octop.infra.errors import ErrorCode, OctopError
 
 APP_ID_RE = re.compile(r"^app_[0-9A-Za-z]{6,32}$")
 COLUMN_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+TABLE_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
+MAIN_TABLE_KEY = "main"
+"""Key of the table every app starts with (``schema.json`` + ``data.csv``)."""
+
+RESERVED_TABLE_KEYS = frozenset({"app", "data", "schema", "manifest", "tables"})
+"""Table keys that would collide with an app file name."""
 
 MAX_APPS_PER_OWNER = 50
+MAX_TABLES_PER_APP = 12
 MAX_COLUMNS = 50
 MAX_NAME_LEN = 100
 MAX_LABEL_LEN = 100
@@ -74,6 +82,23 @@ def validate_description(raw: str) -> str:
             f"description must be at most {MAX_DESCRIPTION_LEN} characters",
         )
     return description
+
+
+def validate_table_key(raw: str) -> str:
+    """Validate a table key: snake-ish identifier that is safe as a file name."""
+    key = raw.strip()
+    if not TABLE_KEY_RE.fullmatch(key):
+        raise _invalid(
+            ErrorCode.APP_SCHEMA_INVALID,
+            f"invalid table key: {raw!r}; use letters, digits and underscores, "
+            "starting with a letter or underscore",
+        )
+    if key.lower() in RESERVED_TABLE_KEYS:
+        raise _invalid(
+            ErrorCode.APP_SCHEMA_INVALID,
+            f"table key is reserved: {key!r}",
+        )
+    return key
 
 
 @dataclass(frozen=True)

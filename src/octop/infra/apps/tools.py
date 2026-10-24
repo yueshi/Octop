@@ -10,7 +10,8 @@ from langgraph.config import get_config
 from pydantic import Field
 
 from octop.infra.agents.tool_scope import current_tool_scope
-from octop.infra.apps.service import AppService
+from octop.infra.apps.models import MAIN_TABLE_KEY
+from octop.infra.apps.service import AppService, AppTableView
 from octop.infra.db.repos.apps import LightAppRow
 
 APP_DELETE_TOOL_NAME = "app_delete"
@@ -18,10 +19,12 @@ APP_DELETE_TOOL_NAME = "app_delete"
 APP_TOOL_NAMES: tuple[str, ...] = (
     "app_list",
     "app_create",
+    "app_add_table",
     "app_update_schema",
     "app_write_html",
     "app_read_data",
     "app_append_row",
+    "app_import_rows",
     APP_DELETE_TOOL_NAME,
 )
 """Names of the built-in light-app tools, in the order they are registered."""
@@ -34,17 +37,23 @@ _COLUMNS_HELP = (
     "Up to 50 columns; names must start with a letter or underscore."
 )
 
+_TABLE_HELP = (
+    "Which table to use. Every app has a main table named 'main'; "
+    "tables created with app_add_table use their own key. "
+    "Omit it to read or write the main table."
+)
+
 _HTML_HELP = (
     "Complete single-file HTML with inline CSS/JS. It renders inside a sandboxed "
     "iframe (scripts allowed, no same-origin access and no network fetch). "
     "Inside the page use the injected `window.octopApp` SDK: "
-    "`await octopApp.schema()` returns the column definitions; "
-    "`await octopApp.listRows({limit, offset})` returns {rows, total}; "
-    "`await octopApp.appendRow({column: value})` adds a row when the viewer has "
-    "edit permission. Remote scripts/styles/images/fonts are blocked, so keep "
-    "CSS/JS inline and use data: or blob: URLs for images; relative URLs and "
-    "fetch() to the Octop API are not allowed. Call octopApp.listRows() on load "
-    "to render current data."
+    "`await octopApp.schema(table)` returns the column definitions; "
+    "`await octopApp.listRows({table, limit, offset})` returns {rows, total}; "
+    "`await octopApp.appendRow({column: value}, {table})` adds a row when the "
+    "viewer has edit permission. Remote scripts/styles/images/fonts are blocked, "
+    "so keep CSS/JS inline and use data: or blob: URLs for images; relative URLs "
+    "and fetch() to the Octop API are not allowed. Call octopApp.listRows() on "
+    "load to render current data."
 )
 
 
@@ -90,6 +99,15 @@ def _summary(row: LightAppRow) -> dict[str, Any]:
     }
 
 
+def _table_summary(table: AppTableView) -> dict[str, Any]:
+    return {
+        "table_key": table.table_key,
+        "label": table.label,
+        "row_count": table.row_count,
+        "is_main": table.is_main,
+    }
+
+
 def build_app_tools(service: AppService) -> list[StructuredTool]:
     """Return built-in light-app tools (wired via ``HarnessAgentConfig.tools``)."""
 
@@ -99,7 +117,17 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
             if not service.is_agent_owner(agent_id, user_id):
                 return _ok({"apps": []})
             rows = service.list_for_agent(agent_id, user_id)
-            return _ok({"apps": [_summary(row) for row in rows]})
+            return _ok(
+                {
+                    "apps": [
+                        {
+                            **_summary(row),
+                            "tables": [_table_summary(table) for table in service.list_tables(row)],
+                        }
+                        for row in rows
+                    ]
+                }
+            )
         except Exception as exc:
             return _err(exc)
 
@@ -143,14 +171,19 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                 )
             ),
         ],
+        table: Annotated[
+            str,
+            Field(description=_TABLE_HELP),
+        ] = MAIN_TABLE_KEY,
     ) -> str:
         try:
             agent_id, user_id = _tool_ctx()
             row = _get_owned(service, app_id, agent_id, user_id)
-            schema = await service.add_columns(row, columns)
+            schema = await service.add_columns(row, columns, table=table)
             return _ok(
                 {
                     "app_id": row.app_id,
+                    "table": table,
                     "version": schema.version,
                     "columns": schema.to_dict()["columns"],
                 }
@@ -170,18 +203,68 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
         except Exception as exc:
             return _err(exc)
 
-    async def app_read_data(
+    async def app_add_table(
         app_id: Annotated[str, Field(description="App id returned by app_create/app_list.")],
-        limit: Annotated[int, Field(description="Maximum rows to return (1-500).")] = 100,
-        offset: Annotated[int, Field(description="Rows to skip, for paging.")] = 0,
+        key: Annotated[
+            str,
+            Field(
+                description=(
+                    "Machine key for the new table, e.g. 'orders'. Use letters, digits "
+                    "and underscores; 'main' is taken."
+                )
+            ),
+        ],
+        columns: Annotated[
+            list[dict[str, Any]],
+            Field(description="Column definitions for the new table. " + _COLUMNS_HELP),
+        ],
+        label: Annotated[
+            str,
+            Field(description="Display name for the table (optional)."),
+        ] = "",
     ) -> str:
         try:
             agent_id, user_id = _tool_ctx()
             row = _get_owned(service, app_id, agent_id, user_id)
-            schema, rows, total = await service.read_rows(row, limit=limit, offset=offset)
+            table = await service.create_table(
+                row,
+                table_key=key,
+                label=label,
+                columns=columns,
+            )
             return _ok(
                 {
                     "app_id": row.app_id,
+                    "table": table.table_key,
+                    "label": table.label,
+                    "columns": columns,
+                }
+            )
+        except Exception as exc:
+            return _err(exc)
+
+    async def app_read_data(
+        app_id: Annotated[str, Field(description="App id returned by app_create/app_list.")],
+        limit: Annotated[int, Field(description="Maximum rows to return (1-500).")] = 100,
+        offset: Annotated[int, Field(description="Rows to skip, for paging.")] = 0,
+        table: Annotated[
+            str,
+            Field(description=_TABLE_HELP),
+        ] = MAIN_TABLE_KEY,
+    ) -> str:
+        try:
+            agent_id, user_id = _tool_ctx()
+            row = _get_owned(service, app_id, agent_id, user_id)
+            schema, rows, total = await service.read_rows(
+                row,
+                limit=limit,
+                offset=offset,
+                table=table,
+            )
+            return _ok(
+                {
+                    "app_id": row.app_id,
+                    "table": table,
                     "columns": schema.to_dict()["columns"],
                     "rows": rows,
                     "total": total,
@@ -203,12 +286,77 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                 )
             ),
         ],
+        table: Annotated[
+            str,
+            Field(description=_TABLE_HELP),
+        ] = MAIN_TABLE_KEY,
     ) -> str:
         try:
             agent_id, user_id = _tool_ctx()
             app = _get_owned(service, app_id, agent_id, user_id)
-            index, stored = await service.append_row(app, row)
-            return _ok({"app_id": app.app_id, "row_index": index, "row": stored})
+            index, stored = await service.append_row(app, row, table=table)
+            return _ok(
+                {
+                    "app_id": app.app_id,
+                    "table": table,
+                    "row_index": index,
+                    "row": stored,
+                }
+            )
+        except Exception as exc:
+            return _err(exc)
+
+    async def app_import_rows(
+        app_id: Annotated[str, Field(description="App id returned by app_create/app_list.")],
+        path: Annotated[
+            str,
+            Field(
+                description=(
+                    "Workspace-relative path of the file to import "
+                    "(CSV/TSV/JSON/.xlsx/.xls), e.g. inbound/exports/report.csv. "
+                    "Hidden files (starting with a dot) are rejected."
+                )
+            ),
+        ],
+        table: Annotated[
+            str,
+            Field(description=_TABLE_HELP),
+        ] = MAIN_TABLE_KEY,
+        mode: Annotated[
+            str,
+            Field(
+                description="'append' adds rows after the existing ones; 'replace' overwrites the table."
+            ),
+        ] = "append",
+        mapping: Annotated[
+            dict[str, str] | None,
+            Field(
+                description=(
+                    "Optional source-column -> table-column map. Default: columns "
+                    "with the same name map automatically; others are ignored."
+                )
+            ),
+        ] = None,
+    ) -> str:
+        try:
+            agent_id, user_id = _tool_ctx()
+            app = _get_owned(service, app_id, agent_id, user_id)
+            result = await service.import_from_file(
+                app,
+                path=path,
+                table=table,
+                mode=mode,
+                mapping=mapping,
+            )
+            return _ok(
+                {
+                    "app_id": app.app_id,
+                    "table": table,
+                    "imported": result.imported,
+                    "skipped": result.skipped,
+                    "errors": result.errors,
+                }
+            )
         except Exception as exc:
             return _err(exc)
 
@@ -243,6 +391,15 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
             ),
         ),
         StructuredTool.from_function(
+            coroutine=app_add_table,
+            name="app_add_table",
+            description=(
+                "Add another table (its own CSV and columns) to an existing lightweight "
+                "app. Use it when one app needs several datasets, e.g. a todo list and a "
+                "list of projects."
+            ),
+        ),
+        StructuredTool.from_function(
             coroutine=app_update_schema,
             name="app_update_schema",
             description=(
@@ -272,6 +429,15 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
             description=(
                 "Append one validated row to a lightweight app. Values are coerced to the "
                 "column type; enums must match one of their declared values."
+            ),
+        ),
+        StructuredTool.from_function(
+            coroutine=app_import_rows,
+            name="app_import_rows",
+            description=(
+                "Import rows from a workspace file (CSV/TSV/JSON/.xlsx/.xls) into a "
+                "lightweight app table. Rows that fail validation are skipped and "
+                "counted. Use it to bulk-load data the user provided or exported."
             ),
         ),
         StructuredTool.from_function(
