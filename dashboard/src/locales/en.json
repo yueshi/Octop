@@ -1,6 +1,6 @@
 {
   "app": {
-    "pageTitle": "Octop - An intelligent partner that understands you, helps you, and grows with you"
+    "pageTitle": "智总管 - An intelligent partner that understands you, helps you, and grows with you"
   },
   "layout": {
     "collapsePanel": "Collapse panel",
@@ -589,7 +589,7 @@
   },
   "setupWizard": {
     "title": "Setup Wizard",
-    "subtitle": "Welcome to Octop",
+    "subtitle": "Welcome to 智总管",
     "stepPassword": "Set Password",
     "stepMigrate": "Migrate OpenClaw",
     "stepScene": "Scene",
@@ -5792,7 +5792,7 @@
     "submit": "Sign in",
     "forgotPassword": "Forgot password?",
     "forgotPasswordTitle": "Reset password",
-    "forgotPasswordHelp": "Ask an administrator to reset it under Users. If you manage this host, run the command below on the machine where Octop is installed, using the same OS account that runs the service.",
+    "forgotPasswordHelp": "Ask an administrator to reset it under Users. If you manage this host, run the command below on the machine where 智总管 is installed, using the same OS account that runs the service.",
     "forgotPasswordCommand": "octop user passwd <username> --password <new-password>",
     "forgotPasswordHint": "You can omit --password to enter it interactively. New password: at least 8 characters with letters and digits.",
     "forgotPasswordLinux": "Open Terminal, then run the command above. If octop is not found:",
@@ -7094,7 +7094,7 @@
     "later": "Later",
     "addToHomeScreen": "Add to Home Screen",
     "close": "Close",
-    "installAsAppDesc": "Install Octop as an app for one-tap access anytime.",
+    "installAsAppDesc": "Install 智总管 as an app for one-tap access anytime.",
     "iosStep1Prefix": "Tap the",
     "iosStep1Suffix": "Share button in the bottom toolbar",
     "iosStep2": "Scroll down and tap \"Add to Home Screen\"",
@@ -7103,9 +7103,9 @@
     "desktopGuideDesc": "One-click install is not ready in this browser yet. Follow the steps below, or refresh the page and use the install button in the header.",
     "desktopStep1Prefix": "Look for the",
     "desktopStep1Suffix": "install icon on the right of the address bar and click it",
-    "desktopStep2": "Or open the browser menu and choose \"{{action}} Octop\"",
+    "desktopStep2": "Or open the browser menu and choose \"{{action}} 智总管\"",
     "desktopStep3": "After confirming, launch it any time from your desktop or dock",
-    "desktopHint": "Browsers only offer installation over HTTPS; if you access Octop via a LAN IP, HTTPS is required.",
+    "desktopHint": "Browsers only offer installation over HTTPS; if you access 智总管 via a LAN IP, HTTPS is required.",
     "menuActionApply": "Install",
     "menuActionInstall": "Install",
     "installApp": "Install app",

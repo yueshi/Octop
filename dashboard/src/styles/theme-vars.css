@@ -370,7 +370,8 @@ html[data-theme="dark"] {
 
 /* ===================================================================
    Brand palettes — override only brand-tinted tokens
-   Default / data-palette="rose" uses the light/dark blocks above.
+   Default is teal (#0D9488); the base light/dark blocks hold rose
+   for html[data-palette="rose"].
    =================================================================== */
 
 /* ---------- TECH (#4B74FA) ---------- */
@@ -515,7 +516,7 @@ html[data-palette="indigo"][data-theme="dark"] {
   --fn-sidebar-item-active-text: #818cf8;
 }
 
-/* ---------- TEAL (#0D9488) ---------- */
+/* ---------- TEAL (#0D9488) — brand default ---------- */
 html[data-palette="teal"]:not([data-theme="dark"]) {
   --fn-bg-hover: rgba(13, 148, 136, 0.04);
   --fn-bg-active: rgba(13, 148, 136, 0.08);

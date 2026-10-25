@@ -52,7 +52,7 @@ _HTML_HELP = (
     "`await octopApp.appendRow({column: value}, {table})` adds a row when the "
     "viewer has edit permission. Remote scripts/styles/images/fonts are blocked, "
     "so keep CSS/JS inline and use data: or blob: URLs for images; relative URLs "
-    "and fetch() to the Octop API are not allowed. Call octopApp.listRows() on "
+    "and fetch() to the platform API are not allowed. Call octopApp.listRows() on "
     "load to render current data."
 )
 

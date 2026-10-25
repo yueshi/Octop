@@ -273,7 +273,7 @@ export default function LoginPage() {
           src={
             isDark ? "/logo_horizontal_white.png" : "/logo_horizontal_dark.png"
           }
-          alt="Octop"
+          alt="智总管"
           style={{
             height: 48,
             width: "auto",

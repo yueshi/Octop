@@ -1,6 +1,6 @@
 {
   "app": {
-    "pageTitle": "Octop - 懂你、帮你、陪你成长的智能伙伴"
+    "pageTitle": "智总管 - 懂你、帮你、陪你成长的智能伙伴"
   },
   "layout": {
     "collapsePanel": "收起面板",
@@ -589,7 +589,7 @@
   },
   "setupWizard": {
     "title": "设置向导",
-    "subtitle": "欢迎使用 Octop",
+    "subtitle": "欢迎使用智总管",
     "stepPassword": "设置密码",
     "stepMigrate": "迁移 OpenClaw",
     "stepScene": "应用场景",
@@ -5792,7 +5792,7 @@
     "submit": "登录",
     "forgotPassword": "忘记密码？",
     "forgotPasswordTitle": "重置密码",
-    "forgotPasswordHelp": "请联系管理员在「用户」页重置。若你维护本机，在安装了 Octop 的电脑上，用运行服务的同一账户执行：",
+    "forgotPasswordHelp": "请联系管理员在「用户」页重置。若你维护本机，在安装了智总管的电脑上，用运行服务的同一账户执行：",
     "forgotPasswordCommand": "octop user passwd <用户名> --password <新密码>",
     "forgotPasswordHint": "可省略 --password，改为交互输入。新密码至少 8 位，需同时包含字母和数字。",
     "forgotPasswordLinux": "打开「终端」后执行上面的命令。若提示找不到 octop，改用：",
@@ -7094,7 +7094,7 @@
     "later": "稍后更新",
     "addToHomeScreen": "添加到主屏幕",
     "close": "关闭",
-    "installAsAppDesc": "将 Octop 安装为 App，随时一键打开。",
+    "installAsAppDesc": "将智总管安装为 App，随时一键打开。",
     "iosStep1Prefix": "点击底部工具栏的",
     "iosStep1Suffix": "分享按钮",
     "iosStep2": "向下滚动，点击「添加到主屏幕」",
@@ -7103,7 +7103,7 @@
     "desktopGuideDesc": "浏览器尚未准备好一键安装。请按以下方式操作，或刷新页面后再点 Header 中的安装按钮。",
     "desktopStep1Prefix": "查看地址栏右侧的",
     "desktopStep1Suffix": "安装图标并点击",
-    "desktopStep2": "或打开浏览器菜单，选择「{{action}} Octop」/ Install Octop",
+    "desktopStep2": "或打开浏览器菜单，选择「{{action}} 智总管」",
     "desktopStep3": "确认安装后，可从桌面或程序坞一键打开",
     "desktopHint": "通过局域网 IP 访问时需使用 HTTPS，否则浏览器不会提供安装选项。",
     "menuActionApply": "应用",

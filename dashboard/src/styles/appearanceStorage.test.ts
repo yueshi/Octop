@@ -85,6 +85,7 @@ describe("appearanceStorage", () => {
       preference: "light",
       palette: "custom",
       customColor: "#00aa55",
+      brandEpoch: 2,
     });
   });
 
@@ -100,7 +101,31 @@ describe("appearanceStorage", () => {
       preference: "dark",
       palette: "amber",
       customColor: DEFAULT_CUSTOM_COLOR.toLowerCase(),
+      brandEpoch: 2,
     });
+  });
+
+  it("migrates a stored old-default palette to the new default once", () => {
+    // Written by an older epoch (no brandEpoch marker): rose was the default.
+    localStorage.setItem(
+      THEME_STORAGE_KEY,
+      JSON.stringify({ preference: "dark", palette: "rose" }),
+    );
+    expect(readStoredAppearance().palette).toBe(DEFAULT_PALETTE);
+
+    // After the epoch marker is persisted, an explicit rose pick is respected.
+    localStorage.setItem(
+      THEME_STORAGE_KEY,
+      JSON.stringify({ preference: "dark", palette: "rose", brandEpoch: 2 }),
+    );
+    expect(readStoredAppearance().palette).toBe("rose");
+
+    // Non-default palettes migrate untouched.
+    localStorage.setItem(
+      THEME_STORAGE_KEY,
+      JSON.stringify({ preference: "dark", palette: "violet" }),
+    );
+    expect(readStoredAppearance().palette).toBe("violet");
   });
 
   it("falls back safely on invalid JSON or unknown values", () => {
