@@ -994,3 +994,37 @@ async def test_run_source_backoff_and_reset(world: World) -> None:
         assert item is not None
         assert item.next_run_at is not None and item.last_run_at is not None
         assert item.next_run_at - item.last_run_at == expected_delay
+
+
+async def test_import_rows_replace_with_no_records_keeps_the_table(world: World) -> None:
+    """An empty replace must not wipe the table.
+
+    ``replace`` writes the whole table, so zero accepted rows means zero
+    rows on disk. A connector can transiently return ``[]``; that must not
+    destroy the user's data.
+    """
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.service.append_row(row, {"title": "keep-me", "status": "new"})
+
+    with pytest.raises(OctopError):
+        await world.service.import_rows(row, [], mode="replace")
+
+    _, rows, total = await world.service.read_rows(world.service.get(app_id))
+    assert total == 1
+    assert rows[0]["title"] == "keep-me"
+
+
+async def test_import_rows_replace_all_invalid_keeps_the_table(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.service.append_row(row, {"title": "keep-me", "status": "new"})
+
+    with pytest.raises(OctopError):
+        await world.service.import_rows(
+            row, [{"title": "", "qty": "1", "status": "new"}], mode="replace"
+        )
+
+    _, rows, total = await world.service.read_rows(world.service.get(app_id))
+    assert total == 1
+    assert rows[0]["title"] == "keep-me"

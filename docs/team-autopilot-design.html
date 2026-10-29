@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Octop 主动工作团队 · 增强调整方案与实施路径</title>
+<style>
+  :root {
+    --bg: #f6f8fa;
+    --paper: #ffffff;
+    --ink: #1f2328;
+    --muted: #57606a;
+    --line: #d8dee4;
+    --accent: #0969da;
+    --accent-soft: #ddf4ff;
+    --ok: #1a7f37;
+    --ok-soft: #dafbe1;
+    --warn: #9a6700;
+    --warn-soft: #fff8c5;
+    --bad: #cf222e;
+    --bad-soft: #ffebe9;
+    --code-bg: #f6f8fa;
+    --code-ink: #cf222e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --paper: #161b22;
+      --ink: #e6edf3;
+      --muted: #8b949e;
+      --line: #30363d;
+      --accent: #58a6ff;
+      --accent-soft: #121d2f;
+      --ok: #3fb950;
+      --ok-soft: #12261e;
+      --warn: #d29922;
+      --warn-soft: #282214;
+      --bad: #f85149;
+      --bad-soft: #2d1517;
+      --code-bg: #1c2129;
+      --code-ink: #ff7b72;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.75 "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+          "Noto Sans CJK SC", -apple-system, "Segoe UI", sans-serif;
+  }
+  .paper {
+    max-width: 1020px;
+    margin: 0 auto;
+    padding: 48px 40px 80px;
+    background: var(--paper);
+  }
+  h1 { font-size: 30px; line-height: 1.3; margin: 0 0 8px; }
+  h2 {
+    font-size: 22px; margin: 56px 0 16px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  h3 { font-size: 17.5px; margin: 32px 0 10px; }
+  p { margin: 10px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ul, ol { padding-left: 1.5em; }
+  li { margin: 4px 0; }
+  code {
+    font-family: "SF Mono", ui-monospace, "Cascadia Code", Consolas, Menlo, monospace;
+    font-size: 0.86em;
+    background: var(--code-bg);
+    color: var(--code-ink);
+    padding: 2px 6px; border-radius: 5px;
+    white-space: nowrap;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 14.5px; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
+  tr:nth-child(even) td { background: color-mix(in srgb, var(--code-bg) 45%, transparent); }
+
+  .meta { color: var(--muted); font-size: 13.5px; margin-bottom: 28px; }
+  .meta .chip {
+    display: inline-block; border: 1px solid var(--line); border-radius: 999px;
+    padding: 1px 10px; margin-right: 6px; font-size: 12.5px; color: var(--muted);
+  }
+  .lead {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 14px 18px; border-radius: 0 8px 8px 0;
+    font-size: 15.5px;
+  }
+  .tag { display: inline-block; border-radius: 5px; padding: 1px 8px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+  .tag.ok   { color: var(--ok);   background: var(--ok-soft); }
+  .tag.bad  { color: var(--bad);  background: var(--bad-soft); }
+  .tag.warn { color: var(--warn); background: var(--warn-soft); }
+  .tag.info { color: var(--accent); background: var(--accent-soft); }
+
+  .toc { columns: 2; gap: 32px; font-size: 14.5px; margin-top: 12px; }
+  .toc li { margin: 3px 0; break-inside: avoid; }
+
+  /* 架构图（纯 CSS 盒图） */
+  .diagram {
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 22px 18px; margin: 16px 0;
+    font-size: 13.5px; line-height: 1.5;
+    overflow-x: auto;
+  }
+  .diagram .row { display: flex; align-items: stretch; gap: 14px; margin: 0; }
+  .dbox {
+    border: 1.5px solid var(--accent); border-radius: 8px;
+    padding: 10px 14px; background: var(--accent-soft); flex: 1;
+  }
+  .dbox.neutral { border-color: var(--line); background: transparent; }
+  .dbox.dashed { border-style: dashed; border-color: var(--muted); }
+  .dbox b { display: block; margin-bottom: 4px; font-size: 13.5px; }
+  .dbox small { color: var(--muted); }
+  .arrow { display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); min-width: 26px; font-size: 18px; }
+  .arrow small { font-size: 11px; white-space: nowrap; }
+  .varrow { text-align: center; color: var(--muted); font-size: 16px; margin: 4px 0; }
+
+  .schema {
+    font-family: ui-monospace, Consolas, Menlo, monospace;
+    font-size: 12.5px; line-height: 1.6;
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; white-space: pre;
+  }
+  .schema .t { color: var(--accent); font-weight: 700; }
+  .schema .c { color: var(--muted); }
+
+  .callout {
+    border: 1px solid var(--line); border-left-width: 4px; border-radius: 8px;
+    padding: 10px 16px; margin: 14px 0; font-size: 14.5px;
+  }
+  .callout.risk { border-left-color: var(--bad); background: var(--bad-soft); }
+  .callout.note { border-left-color: var(--warn); background: var(--warn-soft); }
+
+  @media (max-width: 760px) {
+    .paper { padding: 28px 18px 60px; }
+    .toc { columns: 1; }
+    .diagram .row { flex-direction: column; }
+    .arrow { transform: rotate(90deg); }
+  }
+  @media print {
+    body { background: #fff; color: #111; }
+    .paper { max-width: none; padding: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="paper">
+
+<h1>Octop 主动工作团队：增强调整方案与实施路径</h1>
+<div class="meta">
+  <span class="chip">2026-10-25 · v3（两轮反思修订）</span>
+  <span class="chip">状态：草案 · 决策 1 已拍板（原生表），余 4 项待定</span>
+  <span class="chip">分支背景：<code>feature/light-apps</code></span>
+  <span class="chip">依据：团队机制 / cron+HITL / 轻应用 / 前端集成 四路代码调研</span>
+</div>
+
+<h2 id="toc">目录</h2>
+<ol class="toc">
+  <li><a href="#conclusion">结论先行</a></li>
+  <li><a href="#goal">目标需求</a></li>
+  <li><a href="#inventory">现状盘点（关键事实）</a></li>
+  <li><a href="#gaps">五大核心缺口</a></li>
+  <li><a href="#mapping">目标 → 能力映射</a></li>
+  <li><a href="#design">总体设计</a></li>
+  <li><a href="#modules">分模块详细设计</a></li>
+  <li><a href="#roadmap">实施路径（P1–P5）</a></li>
+  <li><a href="#decisions">需要拍板的五个决策</a></li>
+  <li><a href="#risks">风险提示</a></li>
+  <li><a href="#retro">反思与修订（v2 / v3）</a></li>
+</ol>
+
+<h2 id="conclusion">一、结论先行</h2>
+<div class="lead">
+  Octop 已具备实现「主动工作团队」约 <b>60%</b> 的地基：主持人调度角色、异步派工/回叫、房间上墙、
+  HITL 审批闭环、cron 无人值守运行、轻应用与通知 WS 均已存在。<b>核心缺口是五个</b>：
+  任务无实体、主持人不能主动开工、无人值守遇审批即失败、无显式求助通道、看板缺基础设施。
+</div>
+<p>
+  方案 = 给团队加「<b>目标/任务实体 + 驱动循环 + 持久化 HITL + 原生看板</b>」，四个能力各自独立可交付；
+  轻应用作为 P2 阶段的看板自建/组合路径。
+</p>
+
+<h2 id="goal">二、目标需求</h2>
+<blockquote>
+  需要一个<b>能主动工作的团队</b>：设置整体目标后，任务由主持人驱动产生、选择、分配、执行；
+  必要时向团队创建人提出帮助或操作要求；根据任务执行状态提供必要的进度汇报和方向调整决策；
+  团队对外提供一个<b>看板</b>（可基于轻应用功能自主搭建或组合）；
+  创建人可通过<b>对话</b>和<b>看板</b>随时关注。
+</blockquote>
+
+<h2 id="inventory">三、现状盘点（关键事实）</h2>
+<table>
+  <thead><tr><th style="width:12%">块</th><th style="width:56%">已有能力</th><th>关键引用</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>团队</b></td>
+      <td>Team = <code>agents</code> 表 <code>kind='team'</code> 行；主持人 = team agent，工具白名单仅
+          <code>agent_list / ask_agent / memory_* / current_time</code>；成员编制在主持人工作区
+          <code>.octop/manifest.json</code>；房间 thread = 主持人 thread，成员气泡经
+          <code>speaker_agent_id</code> 上墙；派工走 <code>ask_agent</code>（sync/background）→
+          harness inbox → <code>TeamManager.on_reply</code> 推房间并唤醒主持人。</td>
+      <td><code>infra/agents/teams/team_manager.py:116,286-363,2216</code><br>
+          <code>infra/agents/teams/service.py:26-38</code><br>
+          <code>docs/expert-teams.md</code></td>
+    </tr>
+    <tr>
+      <td><b>成员 HITL</b></td>
+      <td>成员运行中遇工具审批 → 房间出审批卡、阻塞等待、用户决定后唤醒成员图（已最接近目标形态）。</td>
+      <td><code>team_manager.py:381-449,1194</code></td>
+    </tr>
+    <tr>
+      <td><b>Cron</b></td>
+      <td>APScheduler 单进程；触发器 <code>cron / interval / date / agently</code> 四种；agent 可自注册
+          cronjob；<code>task_type=agent</code> 走 harness 完整回合，结果投递到 job 绑定 session 的渠道。</td>
+      <td><code>infra/cron/manager.py:81,93</code><br>
+          <code>infra/cron/trigger.py:77-116</code><br>
+          <code>infra/cron/delivery.py:68-258</code></td>
+    </tr>
+    <tr>
+      <td><b>HITL</b></td>
+      <td><code>hitl_required</code> 帧（工具审批 + <code>ask_user_question</code> 提问两类）；
+          dashboard <code>POST /chat/hitl/resume</code> SSE 续跑；IM <code>/approve /reject</code>；
+          线程级自动批准 bypass。</td>
+      <td><code>api/routers/chat/routes.py:105-306</code><br>
+          <code>gateway/hitl/coordinator.py:223-347,481-609</code></td>
+    </tr>
+    <tr>
+      <td><b>轻应用</b></td>
+      <td>定义即文件（schema.json / data.csv / app.html），8 种列类型（含 enum/date）、多表、
+          9 个 agent 工具、内置问数助手、connector 数据源定时同步；iframe sandbox +
+          <code>octopApp</code> SDK。但定位为「读 + 追加」：无行 id、无行级更新、无视图层。</td>
+      <td><code>infra/apps/models.py:46-48</code><br>
+          <code>infra/apps/tools.py:19-29</code><br>
+          <code>infra/apps/service.py:1039-1090</code><br>
+          <code>docs/light-apps-architecture.md:24-34</code></td>
+    </tr>
+    <tr>
+      <td><b>前端</b></td>
+      <td>新增一级页面路径已通（routes / sidebarNav / locales）；chat WS 可 subscribe 房间线程、
+          notifications WS 按 user 推送；antd 5.29 + react-virtuoso，<b>无拖拽库</b>。</td>
+      <td><code>dashboard/src/routes/index.tsx:150</code><br>
+          <code>api/routers/chat/ws.py:88-124</code><br>
+          <code>api/routers/chat/notify_ws.py:26</code></td>
+    </tr>
+    <tr>
+      <td><b>权限</b></td>
+      <td>团队仅创建人可见（<code>_require_owned_team</code> → <code>assert_agent_owner</code>）；
+          WS subscribe 校验 <code>user_id</code>。</td>
+      <td><code>api/routers/teams.py:52-58</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="gaps">四、五大核心缺口</h2>
+<ol>
+  <li><b>目标/任务不是实体</b> —— 团队里「任务」只是消息文本，无持久化、无状态机，重启即丢
+      （<code>infra/agents/teams/service.py:26-38</code> 主持人仅 5 个工具，无任何任务工具）。</li>
+  <li><b>主持人不能主动开工</b> —— team host 不注册 cron 工具（工具装配处 <code>if not team_host</code>
+      直接跳过，<code>infra/agents/manager.py:3782-3786</code>）；成员虽可自挂 cron，但结果只投递到
+      job 绑定 session 的渠道、不经房间编排回流——团队实质只能靠用户消息驱动。</li>
+  <li><b>无人值守遇审批直接失败</b> —— cron 运行遇 <code>hitl_required</code> 判失败而非挂起
+      （<code>infra/cron/delivery.py:166-169</code>）；HITL pending 纯内存、30 分钟 TTL
+      （<code>infra/gateway/hitl/store.py:13</code>），长任务等不起。</li>
+  <li><b>无「向创建人求助」显式通道</b> —— HITL 只覆盖工具审批；主动推送只有文本 + toast
+      （<code>infra/gateway/gateway.py:507-522</code>），不会把待决策卡片定向推给创建人并等待其决定。</li>
+  <li><b>看板缺基础设施</b> —— 轻应用只有「读 + 追加」（无行 id、无行级更新、无视图层）；dashboard 无拖拽依赖。</li>
+</ol>
+
+<h2 id="mapping">五、目标 → 能力映射</h2>
+<table>
+  <thead><tr><th style="width:26%">需求</th><th style="width:30%">现状</th><th>需要做的</th></tr></thead>
+  <tbody>
+    <tr><td>设置整体目标</td><td><span class="tag bad">无目标实体</span></td>
+        <td><b>新增</b> <code>team_goals</code> 表 + 主持人 <code>goal_*</code> 工具</td></tr>
+    <tr><td>主持人驱动产生/选择/分配任务</td><td><span class="tag ok">有派工</span>
+        <span class="tag bad">无任务实体、无主动产生</span></td>
+        <td><b>新增</b> <code>team_tasks</code> 表 + <code>task_*</code> 工具；<b>解禁</b>团队驱动 cron</td></tr>
+    <tr><td>执行</td><td><span class="tag ok">inbox 异步派工/回叫已通</span></td>
+        <td>回叫时主持人回写任务状态（成员工具白名单不动，改动最小）</td></tr>
+    <tr><td>向创建人求助 / 操作请求</td><td><span class="tag ok">工具审批闭环有</span>
+        <span class="tag bad">主动求助无；无人值守即失败</span></td>
+        <td><b>持久化</b> HITL pending；<b>新增</b> <code>ask_creator</code> 工具；
+            cron/团队遇 HITL 转挂起 + 定向通知</td></tr>
+    <tr><td>进度汇报与方向调整</td><td><span class="tag ok"><code>compose_followup</code> 有总结能力</span></td>
+        <td>任务状态事件推房间（看板实时刷新）；里程碑/定时汇报到创建人 DM；创建人评论 = 方向输入</td></tr>
+    <tr><td>对外看板（可基于轻应用搭建/组合）</td><td><span class="tag warn">轻应用缺行级更新/视图</span>
+        <span class="tag bad">dashboard 无看板</span></td>
+        <td><b>P1</b> 原生 <code>/teams/:id/board</code> 页面；<b>P2</b> 轻应用补行 id/行更新后出
+            官方看板模板 + 数据投影，支持自建组合</td></tr>
+  </tbody>
+</table>
+
+<h2 id="design">六、总体设计</h2>
+<div class="diagram">
+  <div class="row">
+    <div class="dbox neutral"><b>创建人</b>
+      <small>设目标 · 看板审批 · 对话调整<br>（房间 / DM / 看板三入口）</small></div>
+    <div class="arrow">→<small>目标 / 决策</small></div>
+    <div class="dbox"><b>Team Host Agent（主持人）</b>
+      <small><code>goal_* / task_* / report_progress / ask_creator</code> 工具</small></div>
+    <div class="arrow">→<small><code>ask_agent</code><br>（现有异步派工）</small></div>
+    <div class="dbox neutral"><b>成员 A · 成员 B · …</b>
+      <small>执行 → 回叫 → 主持人提炼 → 回写任务</small></div>
+  </div>
+  <div class="varrow">↓</div>
+  <div class="row">
+    <div class="dbox dashed" style="flex:2"><b>驱动循环 cron（周期唤醒）</b>
+      <small>复用现有 cron 管道，仅加一种受控模板；prompt = 「读取未完成任务，继续推进/派工/汇报；有阻塞则 ask_creator」</small></div>
+    <div class="dbox dashed" style="flex:3"><b>team_goals / team_tasks（DB 实体）</b>
+      <small>状态机 + 事件广播 <code>team.task.updated</code></small></div>
+    <div class="dbox dashed" style="flex:2"><b>hitl_pending（持久化）</b>
+      <small>遇审批挂起 → 定向通知创建人 → 批准后自动续跑</small></div>
+    <div class="arrow">→</div>
+    <div class="dbox neutral"><b>看板页 / 轻应用模板</b>
+      <small>原生看板（P1）+ 轻应用模板（P2）</small></div>
+  </div>
+</div>
+<p><b>关键原则</b>：任务状态变更由<b>主持人</b>统一回写（成员从回叫中提炼），成员侧不新增工具；
+主动唤醒复用现有 cron 管道，只加「驱动循环」一种受控模板，不引入新调度器——
+符合仓库「单进程、无队列」约束（<code>docs/adr/001</code>）。</p>
+
+<h2 id="modules">七、分模块详细设计</h2>
+
+<h3 id="datamodel">7.1 数据模型（迁移号按 §11-B9 定，SQLite/pg 成对）</h3>
+<div class="schema"><span class="c">-- 遵循资源表规范：公开 string id + 整数 PK；team_id 引用 agents.agent_id 字符串</span>
+<span class="t">team_goals</span>      id, goal_id(<span class="c">公开 string</span>), team_id(→agents.agent_id), title, description,
+                status(planning|active|paused|done|archived),
+                success_criteria, created_by, created_at, updated_at
+
+<span class="t">team_tasks</span>      id, task_id(<span class="c">公开 string</span>), team_id, goal_id(→team_goals.goal_id),
+                title, spec(<span class="c">任务说明书</span>),
+                assignee(<span class="c">成员 id</span>),
+                status(proposed|assigned|running|blocked|needs_input|
+                       review|done|failed|cancelled),
+                priority, result_summary, blocked_reason,
+                version(<span class="c">乐观锁</span>), created_at, updated_at, due_at
+
+<span class="t">hitl_pending</span>    id, session_key, thread_id,
+                kind(tool_approval|question),
+                payload(JSON), created_by_agent,
+                task_id(<span class="c">可空；ask_creator 去重键</span>),
+                status(pending|approved|rejected|expired),
+                expires_at, resolved_by, resolved_at, resume_token</div>
+<ul>
+  <li>团队是 <code>agents.kind='team'</code> 的行，<code>team_id</code> 引用 <code>agent_id</code> 字符串；
+      两表各带公开 string id（<code>goal_id</code> / <code>task_id</code>），
+      <code>goal_id</code> 引用父表字符串 id（AGENTS.md §7 资源表约定，
+      <code>PATCH …/tasks/{task_id}</code> 与 <code>hitl_pending.task_id</code> 均依赖后者）。</li>
+  <li><code>hitl_pending</code> 是对现有内存 <code>HitlPendingStore</code>（<code>store.py:13,38-110</code>）的持久化落点：
+      写入时同步落库，重启时 boot 恢复未过期条目、将过期未决行置 <code>expired</code>，
+      TTL 可按 job 配置（无人值守长任务需要 &gt;30min）；持久化状态四态与内存 store
+      （<code>store.py:11</code>）对齐，不压缩成两态。</li>
+  <li>任务子表<b>不进</b>轻应用 CSV——需要行级并发更新与乐观锁，这正是轻应用当前明确缺的
+      （<code>service.py:1039-1090</code> 整文件重写）。</li>
+  <li><span class="tag warn">v3</span> <b>并发控制</b>：<code>team_tasks</code> 有两个写方——主持人工具（驱动循环/回叫）
+      与创建人看板拖拽（<code>PATCH</code>）。加 <code>version</code> 列做 compare-and-swap，
+      冲突返回 409；<code>PATCH</code> 的状态变更由<b>服务端</b>校验状态机合法流转，
+      不信任前端任意置 <code>done</code>（→ §7.6）。</li>
+  <li><span class="tag warn">v3</span> <b>求助去重</b>：<code>hitl_pending.task_id</code> 非空时，
+      同任务已存在 <code>pending</code> 行则拒绝重复 interrupt——防 <code>blocked</code> 任务
+      每个驱动周期重复发通知（→ §7.4）。</li>
+</ul>
+
+<h3>7.2 主持人驱动闭环（核心）</h3>
+<ol>
+  <li><b>工具扩展</b>：六个薄包装工具
+      <code>goal_set / task_create / task_update / task_list / report_progress / ask_creator</code>
+      （后两者见 7.4 / 7.5）：调 team repo，写 <code>team_goals</code> / <code>team_tasks</code>；
+      向房间发结构化事件消息时复用 <code>_persist_room_assistant</code> 上墙路径
+      （<code>team_manager.py:1317</code>），事件消息打标记、走投影层渲染规则（折叠/合并），
+      避免与 wake 帧同病刷屏（→ §7.3 隐形 wake）。
+      <span class="tag ok">v3</span> <b>P1 已落地（4/6）</b>：前四个工具已实现，挂载方式改为
+      <code>build_team_board_tools()</code>（<code>infra/agents/teams/board_tools.py</code>）构建、
+      经理装配时按 <code>team_host</code> 注入 <code>HarnessAgentConfig.tools</code>
+      （<code>manager.py</code> <code>_agent_runtime_bundle</code>），不动
+      <code>HOST_TOOLS_ALLOWED</code>（规避 host_tools_disabled 联动）；
+      <code>report_progress</code> 顺延 P2/P3（依赖 notify/gateway 通道）、
+      <code>ask_creator</code> 顺延 P3；房间结构化事件消息随 P2 驱动循环落地——
+      P1 阶段工具调用均发生在主持人可见回合内，回复本身即上墙，无刷屏问题。</li>
+  <li><b>驱动循环 prompt</b>：目标设定（或 cron 唤醒）时注入固定 wake prompt——
+      「读取未完成任务，继续推进/派工/汇报；有阻塞则 ask_creator」。主持人 LLM 负责产生（拆解目标）、
+      选择（排优先级）、分配（<code>ask_agent</code> 派工）、执行跟踪（回叫后 <code>task_update</code>）。</li>
+  <li><b>状态机</b>：成员回叫（<code>on_reply</code>，<code>team_manager.py:319-363</code>）→
+      主持人 <code>compose_followup</code> 总结 → <code>task_update(status=done/failed/blocked)</code>；
+      <code>needs_input</code> 状态与 <code>ask_creator</code> 联动。
+      <span class="tag warn">v2</span> 补两条流转：
+      ①<b>派工失败重试</b>——async <code>ask_agent</code> 走 inbox 排队，成员 busy 会等锁而非拒派
+      （<code>TEAM_MEMBER_BUSY</code> 仅用于删除守卫，<code>service.py:239-250</code>）；
+      派工失败发生在成员未运行/不存在等场景，经 <code>on_reply</code> 报错回房，
+      任务由驱动循环下轮重试或改派，主持人不另开新任务；
+      ②<b>stale 回收</b>——inbox 重启丢在途任务是团队第一版明示的非目标
+      （<code>docs/expert-teams.md:156-162</code>），自治循环将其放大：驱动循环每次唤醒检查
+      <code>running</code> 任务，若进程内在途锁（<code>jobs.py</code> TeamJobTracker）已丢失
+      （重启后必然丢失）则改判 <code>failed</code>（注明 stale）或回退 <code>proposed</code>
+      由下轮重派——不判 <code>needs_input</code>（该状态语义是「待创建人输入」，
+      stale 场景并无待决事项），杜绝永久卡死。</li>
+  <li><b>验证</b>：单元测状态机与工具参数；集成测「设目标 → 房间内主持人产 2-3 个任务并派工 →
+      成员回叫 → 任务关单」；v2 追加：派工失败重试、重启后 stale 任务回收两个用例。</li>
+</ol>
+
+<h3>7.3 主动唤醒（cron 解禁，受控）</h3>
+<ul>
+  <li>改 <code>infra/agents/manager.py:3782-3786</code>（host 现状不注册 cron 工具）：为 host
+      新注册<b>受限的 cron 工具子集</b>——只能创建 <code>task_type=agent</code>、
+      <code>session_key=团队房间线程</code>、prompt 固定为驱动循环模板的 job；
+      且限频（如 interval 下限 15 分钟）防风暴。</li>
+  <li>投递路径现成：cron → <code>delivery.py</code> → <code>agent_manager.stream</code> →
+      房间线程 → <code>on_reply</code> 上墙；dashboard 收到 toast（<code>gateway.py:507-522</code>）。</li>
+  <li class="callout note" style="list-style:none"><b>必须同步解决</b>：
+      <code>delivery.py:166-169</code> 的「遇 hitl_required 即失败」→ 改为「任务挂起 + 落
+      <code>hitl_pending</code> + 通知创建人」（见 7.4）；否则周期驱动第一次遇到审批就断。
+      该项在 §八 属 P3，但必须<b>不晚于 P2 合入</b>——它是 P2 驱动循环的前置。</li>
+</ul>
+<p><span class="tag warn">v2</span> 反思后补充四项防失控机制：</p>
+<ul>
+  <li><b>隐形 wake</b>：cron 的 <code>task_type=agent</code> prompt 会作为消息进入房间并上墙——
+      15 分钟一次会把创建人的房间刷满机械消息。wake 帧必须带标记并在投影层
+      （<code>history/projection.py</code>）过滤渲染，仅在有实质产出（新任务/状态变更/汇报）
+      时转播到房间。独立影子 session 不可选——与「驱动 job 必须 <code>fresh_thread=false</code>
+      同房间续聊」（下文）冲突，不采用。</li>
+  <li><b>预算闸门</b>：只对 cron 限频不够，单次 wake 内部也要限——每次唤醒最多派 N 个任务
+      （建议 N≤3）、单团队最大 open tasks（建议 ≤10）、（可选）token 消耗帽，
+      防「自我定时执行的 LLM」在目标误解析后无限产任务。</li>
+  <li><b>kill switch</b>：现状取消只断主持人当前 stream，inbox 里排队/在跑的成员任务不取消
+      （<code>docs/expert-teams.md</code> 装配节）。自治模式需要完整停止语义：
+      停用驱动 cron + 清空 inbox + open tasks 置 <code>cancelled</code> + 关联 pending 失效。</li>
+  <li><b>生命周期级联</b>：删除团队时级联停用其驱动 cron job、关闭未完任务、
+      失效 <code>hitl_pending</code> 行——host 自建的 job 若不处理，团队删除后会变成孤儿定时炸弹。</li>
+</ul>
+<p><span class="tag warn">v3</span> 第二轮反思补充：</p>
+<ul>
+  <li><b>host 未运行时的驱动行为</b>：成员「<code>last_state</code> 非 running 则调用失败」是现状；
+      team host 自身被停止后，驱动 cron 触发 <code>agent_manager.stream</code> 也会失败。需定义：
+      自动拉起 host（推荐，保持自治语义）或跳过并记录 <code>last_status</code>。
+      同时驱动 job 必须 <code>fresh_thread=false</code>（同房间续聊，主持人才能读到任务历史）。</li>
+  <li><b>存量团队迁移</b>：种子（SOUL.md / AGENTS.md / manifest）只在创建时写入。自治能力的新指导
+      应放进<b>运行时拼装</b>的 <code>host_system_prompt</code>（<code>team_manager.py:103-114</code>）
+      或 wake prompt，而非依赖工作区种子——否则只对新建团队生效，存量团队无感。</li>
+  <li><b>提示注入防线</b>：目标文本是创建人写的可控；但 agently 邮件等<b>外部内容</b>若流入
+      wake 上下文，恶意邮件正文即可指挥自治团队。驱动循环 prompt 必须把外部内容当数据不当指令，
+      且外部事件触发器默认<b>不进</b>自治循环（仅白名单触发器可注册为驱动源）。</li>
+  <li><b>成本配额</b>：15 分钟一轮 × 多成员的 token 消耗，应接 <code>usage_log</code> 做
+      每团队/每用户周期预算检查，超限自动暂停驱动循环——这是累计账单闸门，
+      与 §7.3 单轮预算闸门互补。</li>
+  <li><b>观测性</b>：接 <code>infra/metrics.py</code> 计数器（wake 执行/失败、任务流转、HITL 超时），
+      否则线上「团队卡死」无法事后归因。</li>
+</ul>
+
+<h3>7.4 求助/审批闭环（HITL 持久化 + 定向推送）</h3>
+<ol>
+  <li><b>持久化</b>：<code>gateway/hitl/store.py</code> 读写改为内存 cache + <code>hitl_pending</code> 表双写，
+      boot 时恢复。harness 的 interrupt checkpoint 本就在 workspace sessions 下
+      （<code>docs/architecture.md</code> §4），重启后 resume 链路可验证。</li>
+  <li><b>cron/团队遇 HITL</b>：不判失败，创建 pending 行 → 通过 notifications WS
+      （<code>chat/notify_ws.py:26</code>，按 user 注册）定向推创建人：
+      <code>{"type": "approval_required", team_id, task_id, pending_id, deep_link}</code>
+      ——信封沿用现有 <code>type</code> 字段约定（与 <code>dashboard_push</code>、
+      <code>team.task.updated</code> 一致），前端只对接一种形状。</li>
+  <li><b><code>ask_creator</code> 工具</b>：本质是 <code>ask_user_question</code> 类型的 HITL interrupt，
+      语义化包装（问题 + 选项 + 关联 task_id）；复用 <code>coordinator.py:325-339</code> 的
+      respond 决策类型。主持人可在成员 <code>blocked</code> 时转达求助。
+      <span class="tag warn">v3</span> 去重：同 task 已有 pending 行则拒绝重复 interrupt，
+      通知合并计数（→ §7.1）。</li>
+  <li><b>回应入口</b>：房间审批卡（已有，<code>team_manager.py:381-449</code>）、
+      看板「待我决策」区、创建人 DM 回复——三个入口都落既有
+      <code>POST /chat/hitl/resume</code>。</li>
+  <li><b>cron 写限制</b>（<code>delivery.py:149</code> 整体禁写）：改为
+      「默认禁写 + 该 session 存在已批准的写审批则放行」，与批准模型对齐。</li>
+</ol>
+<div class="callout note">
+  <span class="tag warn">v3</span> <b>验证门结论（已读码核销，2026-10-25）</b>：
+  ① <code>write_scope(allowed=False)</code> <b>只挡 agently 邮件写工具</b>——作用域是
+  <code>agently_cli.py:106-117</code> 的 ContextVar，仅 <code>_WRITES</code> 五个邮件写工具消费；
+  内部工具/DB 写不受影响，驱动循环在 cron 上下文可正常调 <code>task_update</code>（C11 核销）。
+  ② <code>ask_user_question</code> 的工具函数体<b>无条件</b>返回 HEADLESS_FALLBACK
+  （<code>ask_user.py:126</code>）——真正拦截在图的 <code>interrupt_on</code> 配置，
+  开关是静态 agent 配置（<code>_ask_user_active</code>，harness <code>agent.py:1392-1400</code>），
+  与运行上下文无关；cron 与 dashboard 走同一 <code>agent_manager.stream</code>、同一份配置，
+  <code>delivery.py:166-169</code> 存在 hitl_required 分支本身就证明 cron 运行会 interrupt
+  （C12 核销）。<b>实现要求</b>：<code>ask_creator</code> 必须像 <code>ASK_USER_TOOL_NAME</code>
+  一样显式注册进 <code>interrupt_on</code>（仿 <code>agent.py:1413</code> 的 respond-only 配置），
+  否则才会真的静默自答。
+  另：C13 已于 P3 落地时验证（2026-10-25）：host 停在 HITL 暂停时，成员 <code>on_reply</code> 回叫照常送达房间且 pending 暂停不被破坏（<code>test_member_reply_survives_host_hitl_pause</code>）。
+</div>
+
+<h3>7.5 进度汇报与方向调整</h3>
+<ul>
+  <li><b>事件流</b>：<code>task_* / goal_*</code> 工具每次写库同时经 WS hub 广播
+      <code>team.task.updated</code> 事件（看板增量刷新）；activity feed 直接读任务表
+      <code>updated_at</code> 排序，或复用 <code>audit_log</code>。</li>
+  <li><b>汇报</b>：<code>report_progress</code> 工具（主持人）把结构化摘要推到创建人 dashboard DM 线程
+      （<code>dashboard_key</code>，<code>threads.py:87-92</code>）；里程碑完成也可由驱动循环 cron 自然覆盖。</li>
+  <li><b>方向调整</b>：创建人在房间/看板评论 → 下轮驱动循环主持人消化（零新代码，聊天即输入通道）。</li>
+</ul>
+
+<h3>7.6 看板</h3>
+<ul>
+  <li><b>P1（原生，推荐先行）</b>：新增一级页面 <code>/teams/:id/board</code>
+      （<code>routes/index.tsx:150</code> + <code>sidebarNav.tsx:58</code> + locales 三处，
+      前端集成点已验证可行）。列 = 任务状态泳道，卡片 = <code>team_tasks</code> 行；
+      拖拽改状态需新增 <code>@dnd-kit/core</code> 依赖（当前 package.json 无拖拽库）→
+      <code>PATCH /api/teams/{id}/tasks/{task_id}</code>（仅创建人；
+      <span class="tag warn">v3</span> 带 <code>version</code> 乐观锁，冲突 409，服务端校验合法流转）。
+      实时刷新订阅 notifications WS 的 <code>team.task.updated</code>。
+      <span class="tag warn">v3</span> 截止时间渲染必须走服务器时区
+      （<code>useServerTimezone()</code> / <code>formatServerDateTime</code>，AGENTS.md §7 硬规则）。
+      API 扩展 <code>api/routers/teams.py</code>（goals / tasks / board 三个资源组，
+      沿用 <code>_require_owned_team</code>）。</li>
+  <li><b>P2（轻应用化，支撑「自主搭建或组合」）</b>：
+    <ol>
+      <li>轻应用先补齐地基（其架构稿已规划：<code>light_app_rows</code> 行表 + 版本号 CAS +
+          行更新 API/工具 + 在线表格视图，<code>docs/light-apps-architecture.md:69-79,95-103</code>）；</li>
+      <li>新增轻应用数据源类型 <code>team_tasks</code> 投影（复用 <code>infra/apps/sources.py</code>
+          绑定机制）；</li>
+      <li>官方「团队看板」模板 app（app.html 看板 UI + <code>octopApp</code> SDK）——
+          创建人可复制模板改造成自己的组合视图（按成员分组、按里程碑分组等），
+          这正是「基于轻应用功能自主搭建或组合」的落点。模板的拖拽改状态须经轻应用行更新
+          API 回写 <code>team_tasks</code> 服务端状态机（与 P1 PATCH 同一校验/CAS 路径），
+          P5「经投影回写」的验证标准以此为前提。</li>
+    </ol></li>
+  <li><b>顺序理由</b>：任务状态机需要可靠行更新与并发控制，轻应用当前「追加-only + 整文件重写」
+      （<code>service.py:1039-1090</code>）承载不了；先原生后轻应用，两条都不浪费。</li>
+</ul>
+
+<h2 id="roadmap">八、实施路径（P1–P5）</h2>
+<table>
+  <thead><tr><th style="width:8%">阶段</th><th style="width:34%">内容</th><th style="width:30%">涉及</th><th>验证</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>P1 目标与任务实体</b><br><span class="tag info">核心先行</span></td>
+      <td><span class="tag ok">✅ P1 已落地 2026-10-25（4/6 工具）</span><br>
+          三表迁移按 §11-B9 折叠进未发布的 022；<code>TeamGoalRepo / TeamTaskRepo</code>
+          + RepoBundle/SharedServices 接线；主持人 4 工具
+          （<code>goal_set / task_create / task_update / task_list</code>；
+          report_progress→P2/P3、ask_creator→P3，见 §7.2-①）
+          + <code>teams.autopilot_briefing</code> prompt（en/zh i18n 键位对齐）；
+          REST：<code>GET/POST /teams/{id}/goals</code>、
+          <code>GET /teams/{id}/tasks</code>、
+          <code>PATCH /teams/{id}/tasks/{task_id}</code>
+          （<code>team_tasks.version</code> 乐观锁 409 + 服务端状态机校验 400）；
+          <span class="tag warn">v3</span> 存量团队兼容：新指导走运行时
+          <code>host_system_prompt</code>，不依赖工作区种子</td>
+      <td><code>infra/db/migrations/022_*、infra/db/repos/team_{goals,tasks}.py、
+          infra/agents/teams/{task_state,board_tools}.py、agents/manager.py、
+          src/octop/i18n/、api/routers/teams.py</code></td>
+      <td><code>make all</code> 全绿（5189 passed / 21 skipped，2026-10-25）；
+          新增单测 13（repo CAS/级联、工具守卫/流转）+ 集成 2
+          （设目标→产任务→PATCH CAS/流转→关单，含越权 403）；
+          「ask_agent 派工→成员回叫→主持人关单」端到端留待 P2 驱动循环联调</td>
+    </tr>
+    <tr>
+      <td><span class="tag ok">✅ P2 已落地 2026-10-25</span><br>
+          drive job = 普通 cron 行佩戴
+          <code>meta={"kind":"team_drive"}</code>（022 增
+          <code>cron_jobs.meta</code>：SQLite 走
+          <code>_apply_sqlite_migration</code> v22 幂等 helper 分支 +
+          <code>_ensure_cron_jobs_schema</code> 折叠列，PG
+          <code>ADD COLUMN IF NOT EXISTS</code>）；
+          trigger 白名单仅 <code>interval:&lt;sec&gt;</code>（≥900 下限）或
+          <code>date:&lt;ISO8601&gt;</code>，<code>cron:</code> /
+          <code>agently:</code> 拒绝（外部内容是数据不是驱动源）；
+          主持人三工具 <code>drive_enable / drive_disable / drive_list</code>
+          （仅创建人可用），唤醒模板锁定
+          <code>teams.drive_wake_prompt</code>；一行一驱动（重复启用拒绝）；
+          隐形 wake：delivery 按 meta 识别，wake 帧（逐字 prompt）从投影过滤，
+          无工具调用的 wake = noop（不投影/不推送/不通知，仅计 metrics）；
+          stale 回收：重启后 <code>updated_at &lt; started_at</code>
+          且非 busy 的 running 任务 CAS 置 failed（永不 needs_input），
+          wake 前自动拉起已停止主持人；
+          预算闸门：open tasks ≤10 在 <code>task_create</code> 服务端强制
+          （单轮 ≤3 派工为提示侧约束）；
+          kill switch：<code>stop_team_drive</code>（删 drive cron +
+          排空 inbox + 取消 open tasks），
+          REST <code>POST /teams/{id}/drive/stop</code>（仅 owner，幂等）；
+          删除级联：<code>AgentManager.delete()</code> 先 unschedule+
+          删 drive cron 行再删 agent 行；
+          metrics：<code>team_wake_total / team_wake_noop_total /
+          team_tasks_stale_reaped_total</code></td>
+      <td><code>infra/agents/teams/{drive,drive_tools,board_tools}.py、
+          agents/manager.py、cron/{manager,job,delivery}.py、
+          db/repos/cron.py、db/migrate.py、api/routers/teams.py、
+          infra/metrics.py、src/octop/i18n/</code></td>
+      <td>新增单测 13（drive 工具白名单/坏 trigger/重复启用/停用全停/stale
+          回收 busy 跳过/删除级联 + delivery wake 帧过滤/noop 隐形/meta 解析）
+          + 集成 2（drive/stop 取消 open 任务且幂等、非 owner 403）；
+          mypy --strict 干净；
+          <span class="tag ok">§7.3 前置门已随 P3 关闭（2026-10-25）：cron 遇 HITL 改为挂起+落库+定向通知</span></td>
+    </tr>
+    <tr>
+      <td><span class="tag ok">✅ P3 已落地 2026-10-25</span><br>
+          持久化：<code>HitlPendingRepo</code>（<code>hitl_pending</code> 表，022 已建）
+          + <code>HitlPendingStore</code> 双写（register/resolve/ask 答案/TTL 过期全落表）
+          + boot 恢复 <code>load_persisted()</code>（TTL 过期行直接表内标 expired；
+          <code>pending_id</code> 为可重铸 nonce，卡片经 history 端点重新水合）；
+          接线 <code>gateway.boot → GlobalProcessor(hitl_repo) → coordinator</code>；
+          cron 遇 HITL：delivery 不再 raise——带 request 的 interrupt 注册 pause
+          （房间卡可水合、<code>/chat/hitl/resume</code> 可用）+ 定向推
+          <code>{"type":"approval_required", agent_id, team_id, thread_id,
+          pending_id, task_id, deep_link}</code>（§7.4-2 信封；前端对接随 P4）；
+          无 request payload 的 interrupt 仍 raise（不可恢复须响亮）；
+          同问重复升级由 register 同槽等价合并兜底，命中旧记录则跳过推送；
+          <code>ask_creator</code>：questions 复用 harness <code>AskQuestion</code>
+          形状 + <code>task_id</code> 关联，主持人常开
+          <code>interrupt_on["ask_creator"]=respond-only</code>
+          （仿 ask_user_question，不依赖全局 HITL 开关）；
+          format.py 与前端 hitl.ts 的 ask 名单扩为
+          {ask_user_question, ask_creator}，ask 卡零新组件；
+          task_id 经 <code>_action_task_id</code> 提取入
+          <code>hitl_pending.task_id</code>；
+          写审批放行（§7.4-5）：该 session 存在 status=approved 且 action 命中
+          agently 写工具（<code>is_write_action_name</code>）即
+          <code>write_scope(allowed=True)</code>；
+          metrics <code>cron_hitl_total</code>；C13 已验证（见 §7.4 验证门）</td>
+      <td><code>infra/db/repos/hitl.py、db/services.py、gateway/hitl/{store,format}.py、
+          cron/delivery.py、gateway/{gateway.py,process/processor.py}、
+          agents/{manager.py,teams/ask_creator.py}、
+          connectors/…/agently_cli.py、infra/metrics.py、src/octop/i18n/、
+          dashboard/src/api/types/hitl.ts</code></td>
+      <td>新增单测 20：repo 5（CRUD/状态/作用域）+ store 双写与 boot 恢复 5
+          （双写/去重一行/恢复重铸/过期行/无 repo no-op）+
+          delivery 4（挂起不抛/团队信封/重复跳推/写放行开关）+
+          ask_creator 4（schema/无 HITL fallback/卡形兼容/ask 名单）+
+          manager interrupt 1 + C13 processor 用例 1；
+          mypy --strict 干净；
+          <span class="tag warn">C14（远程后端 checkpoint 恢复）仍待验证——
+          以 harness sessions 落盘为主，Octop 侧无独立改动</span></td>
+    </tr>
+    <tr>
+      <td><span class="tag ok">✅ P4 已落地 2026-10-25</span><br>
+          实时事件：board_tools <code>task_create</code>/<code>task_update</code>
+          落库后经 <code>task_notify</code> 推 <code>team.task.updated</code>
+          （type/team_id/task_id/status/version 最小帧，前端收到即重取看板）——
+          AgentManager<code>.set_task_notify()</code> ← server 启动注入
+          <code>gateway.ws_hub.push_to_user</code>；REST PATCH 同帧推送
+          （409/400 拒绝写不发帧）；
+          看板页 <code>/teams/:teamId/board</code>：六道状态泳道
+          （proposed+assigned / running / blocked+needs_input / review / done /
+          failed+cancelled）+ dnd-kit 拖拽 → PATCH CAS（409 弹错并刷新、
+          非法流转 400 透传）；目标条 + 设目标弹窗 + 驱动全停按钮；
+          <span class="tag ok">v3</span> 时间渲染走 useServerTimezone +
+          formatServerDateTime；实时订阅 <code>useTeamTaskEvents</code> ←
+          新共享钩子 <code>useDashboardNotifySocket</code>（重连/心跳自
+          push-toast 原样抽出）；approval_required 信封全局消费：push-toast
+          弹通知、点击跳 <code>deep_link</code>；入口在团队卡片「更多」菜单
+          （设计稿原定 sidebarNav 一级入口不采用——一级导航不适合单团队页，
+          路由/locales 同步落地）；i18n en/zh（teams.board.* /
+          teams.approvalToast.* / experts.teams.boardBtn）；文档同步
+          <code>docs/expert-teams.md</code> + <code>docs/api.md</code>
+          （含 notifications WS 帧类型）+ OpenAPI Field 描述</td>
+      <td><code>infra/agents/teams/{board_tools,__init__}.py</code>、
+          <code>agents/manager.py</code>、<code>infra/server.py</code>、
+          <code>api/routers/teams.py</code>、
+          <code>dashboard/</code>（api/modules/teams.ts、
+          hooks/useDashboardNotifySocket、hooks/useTeamTaskEvents、
+          hooks/useDashboardPushToast、pages/Teams/、routes/index.tsx、
+          Experts/components/TeamCard、locales、@dnd-kit/core）、
+          <code>docs/</code></td>
+      <td>新增单测 1（task 写入发帧、读/拒绝写不发）+ 集成 1（PATCH 发帧、
+          409 不发）；tsc -b 干净；dashboard 新改文件 eslint 零问题
+          （存量 Settings 页 3 error 非本阶段引入）；make all 全绿
+          （5226 passed / 21 skipped，2026-10-25）
+      </td>
+    </tr>
+    <tr>
+      <td><b>P5 轻应用组合</b><br><span class="tag warn">可选</span></td>
+      <td>轻应用行 id/行更新/视图；<code>team_tasks</code> 数据源；官方看板模板</td>
+      <td><code>infra/apps/</code>、<code>dashboard/src/pages/Apps/</code></td>
+      <td>模板 app 拖拽改状态经投影回写</td>
+    </tr>
+  </tbody>
+</table>
+<p>P1–P3 全在 <code>infra/</code>，可分别合入 <code>develop</code>，唯 P3 的 delivery
+挂起改造须<b>不晚于 P2</b>（P2 驱动循环遇审批的前置，见 §7.3）；
+P4 依赖 P1 的 API；P5 依赖 P1+P4 且改动面最大，建议单独立项。</p>
+
+<h2 id="decisions">九、需要拍板的决策</h2>
+<ol>
+  <li><b>【已拍板 2026-10-25】任务实体落原生表</b>——按推荐采用原生表，轻应用只做投影展示层（P5）。</li>
+  <li><b>驱动循环的唤醒方式</b>：推荐 cron 白名单解禁（实现小、可控）；
+      备选是「成员回叫 + 目标变更事件驱动」纯事件模型（无周期成本，但空闲任务不会自动推进）。</li>
+  <li><b><code>ask_creator</code> 的推送强度</b>：仅 toast + 看板红点（安静），还是同时经创建人绑定的
+      IM 渠道外发（强提醒，需处理免打扰）？推荐先做前者，IM 外发放 P3 可选项。</li>
+  <li><span class="tag warn">v3</span> <b>host 停止后驱动循环的行为</b>：自动拉起 host（推荐，保持自治语义）
+      还是跳过并记录 <code>last_status</code>？（→ §7.3）</li>
+  <li><span class="tag warn">v3</span> <b>看板可见性</b>：agent 访问现状是
+      <code>admin || owner || shared</code>（<code>api/common/agent.py:26-36</code>），团队 API 仅 owner。
+      共享用户是否可<b>只读</b>看看板？推荐默认仅 owner（最简），只读共享作后续增强。</li>
+</ol>
+
+<h2 id="risks">十、风险提示</h2>
+<div class="callout risk">
+  <b>harness 侧联动</b> —— <code>ask_agent</code> / inbox / <code>wire_host_dispatch</code> 在
+  <code>octop-harness</code> 库内（<code>octop_harness/teams/tools.py:161-250</code>），
+  工具白名单与 interrupt 语义若有出入需要跨库发版协调。
+</div>
+<div class="callout risk">
+  <b>重启恢复</b>是 P3 最大的不确定点：langgraph interrupt 的 checkpoint 恢复在真实长任务上需要专门验证
+  （本地 SQLite 快；「远程后端 workspace 的 sessions 路径已在本地，风险可控」目前是断言，
+  已列入附录 C14 待验证）。
+</div>
+<div class="callout risk">
+  <b>解禁 cron 的安全面</b>：host 可创建 job 等于代码可自我定时执行，
+  限频 + 模板锁定 + 沿用仅-owner 校验（<code>cron/tools.py:100-267</code>）三重约束缺一不可。
+</div>
+<div class="callout risk">
+  <span class="tag warn">v2</span> <b>多租户饿死</b>：派工走共享成员时，「同一成员串行」的
+  inbox 并发模型意味着某创建人的团队长任务会饿死该共享专家的其他用户。
+  需要成员忙碌配额，或自治派工优先使用团队独占成员。
+</div>
+
+<h2 id="retro">十一、反思与修订（v2 / v3）</h2>
+<p>
+  方案骨架（四模块、P1–P5 顺序、原生表优先）经反思仍成立；两轮反思发现的问题，
+  已直接修订进上文正文（标 <span class="tag warn">v2</span> / <span class="tag warn">v3</span> 处），
+  本节保留完整记录。
+</p>
+
+<h3>A. 影响成败的设计遗漏</h3>
+<table>
+  <thead><tr><th style="width:6%">#</th><th style="width:22%">问题</th><th>说明与修订</th></tr></thead>
+  <tbody>
+    <tr><td>A1</td><td><b>Wake 消息刷爆房间</b></td>
+        <td>驱动循环 cron 的 prompt 会进房间上墙，15 分钟一次刷满机械消息。
+            修订：wake 帧打标记 + 投影层过滤；影子 session 与同房间续聊要求冲突，不采用（→ §7.3）。</td></tr>
+    <tr><td>A2</td><td><b>卡死任务无回收</b></td>
+        <td>「inbox 进程外持久化（重启丢在途任务）」是
+            <code>docs/expert-teams.md:156-162</code> 明示的第一版非目标，自治循环将其放大：
+            成员崩溃/重启后任务永远停在 <code>running</code>。
+            修订：stale 回收（改判 <code>failed</code> / 回退 <code>proposed</code> 重派）；
+            async 派工本走 inbox 排队、无 busy 拒派路径（→ §7.2）。</td></tr>
+    <tr><td>A3</td><td><b>无人值守无预算上限</b></td>
+        <td>只对 cron 限频，未限循环内部（单轮派工数、open tasks 上限、token 帽）。
+            修订：预算闸门（→ §7.3）。</td></tr>
+    <tr><td>A4</td><td><b>停止语义不完整</b></td>
+        <td>现状取消只断主持人 stream，inbox 在跑任务不取消。修订：完整 kill switch（→ §7.3）。</td></tr>
+    <tr><td>A5</td><td><b><code>review</code> 状态有字段没语义</b></td>
+        <td>谁审、怎么过、<code>success_criteria</code> 谁检查均未定义。修订（进 §7.2 实施时明确）：
+            默认主持人自审，创建人验收作为可选开关。</td></tr>
+    <tr><td>A6</td><td><b>生命周期级联缺失</b></td>
+        <td>删除团队时驱动 cron / 未关任务 / <code>hitl_pending</code> 的清理未提。
+            修订：删除级联（→ §7.3）。</td></tr>
+    <tr><td>A7</td><td><b>多租户副作用</b></td>
+        <td>共享成员的 inbox 串行模型下，一个自治团队可饿死其他用户的派工。
+            修订：忙碌配额 / 优先独占成员（→ §十 风险）。</td></tr>
+  </tbody>
+</table>
+
+<h3>B. 仓库流程遗漏（会被 <code>make all</code> / review 打回）</h3>
+<table>
+  <thead><tr><th style="width:6%">#</th><th style="width:22%">问题</th><th>说明与修订</th></tr></thead>
+  <tbody>
+    <tr><td>B8</td><td><b>i18n 一字未提</b></td>
+        <td>本仓库硬规则：主持人新工具的房间文案、工具显示名必须进
+            <code>src/octop/i18n/{en,zh}.json</code> 且键位对齐（<code>tests/unit/i18n</code>）。
+            修订：补进 P1 工作量（→ §八）。</td></tr>
+    <tr><td>B9</td><td><b>迁移号可能错误</b></td>
+        <td><span class="tag ok">已定（v3）</span>已核实 <code>022_light_apps</code> 未发布
+            （仅存在于 <code>feature/light-apps</code>，未进 main/develop），
+            团队三表<b>折叠进 022</b>，不开 023（AGENTS.md §7 未发布折叠规则）。</td></tr>
+    <tr><td>B10</td><td><b>跨平台测试约定</b></td>
+        <td>cron/HITL 持久化测试需遵守 Windows CI 规则（<code>OCTOP_HOME</code> monkeypatch、
+            <code>Path</code> 断言）。修订：补进 P3 验证列（→ §八）。</td></tr>
+  </tbody>
+</table>
+
+<h3>C. 前置假设验证（P2/P3）—— C11/C12 已读码核销，C13/C14 待集成用例</h3>
+<table>
+  <thead><tr><th style="width:6%">#</th><th style="width:22%">假设</th><th>影响与动作</th></tr></thead>
+  <tbody>
+    <tr><td>C11</td><td><code>write_scope(allowed=False)</code> 只禁连接器写</td>
+        <td><span class="tag ok">已核销（v3）</span>属实：ContextVar 仅作用于 agently
+            <code>_WRITES</code> 五个邮件写工具（<code>agently_cli.py:106-117</code>），
+            内部工具/DB 写不受影响，cron 上下文可正常调 <code>task_update</code>。</td></tr>
+    <tr><td>C12</td><td>cron 上下文不被 harness 判为 headless</td>
+        <td><span class="tag ok">已核销（v3）</span>不存在运行时 headless 判定：工具函数体无条件
+            返回 fallback（<code>ask_user.py:126</code>），拦截由静态配置的
+            <code>interrupt_on</code> 驱动（harness <code>agent.py:1392-1400</code>），
+            cron 与对话同路径同配置。实现要求：<code>ask_creator</code> 需显式注册
+            <code>interrupt_on</code>（→ §7.4）。</td></tr>
+    <tr><td>C13</td><td>host interrupt 期间成员回叫不丢</td>
+        <td>host 图暂停等批准时，成员 <code>on_reply</code> 是否在 inbox 正常排队未验证。
+            动作：P3 集成用例覆盖。</td></tr>
+    <tr><td>C14</td><td>远程后端 workspace sessions 恢复可用</td>
+        <td>「sessions 路径已在本地，风险可控」目前是断言（→ §十）。langgraph checkpoint
+            resume 在远程存储后端 + 真实长任务上未验证。动作：P3 恢复用例覆盖。</td></tr>
+  </tbody>
+</table>
+
+<h3>D. 第二轮反思（v3）—— 并发 / 演进 / 流程 / 安全成本</h3>
+<table>
+  <thead><tr><th style="width:6%">#</th><th style="width:24%">问题</th><th>说明与修订</th></tr></thead>
+  <tbody>
+    <tr><td>D14</td><td><b>任务双写方无并发控制</b></td>
+        <td>主持人工具与创建人拖拽可能同时写同一行（如拖卡片时驱动循环回写
+            <code>result_summary</code>）。修订：<code>version</code> 乐观锁 + CAS +
+            PATCH 服务端状态机校验（→ §7.1、§7.6）。</td></tr>
+    <tr><td>D15</td><td><b>存量团队无迁移路径</b></td>
+        <td>种子只在创建时写入，新工具用法对已存在团队不可见。修订：指导放运行时
+            <code>host_system_prompt</code> / wake prompt，不依赖工作区种子（→ §7.3）。</td></tr>
+    <tr><td>D16</td><td><b>ask_creator 无去重 → 通知风暴</b></td>
+        <td>blocked 任务每驱动周期重复发通知。修订：同 task 单活跃 pending +
+            看板红点合并计数（→ §7.1、§7.4）。</td></tr>
+    <tr><td>D17</td><td><b>host 停止后驱动行为未定义</b></td>
+        <td>host 停止后 cron 触发 <code>stream</code> 失败。修订：拍板自动拉起或跳过记录；
+            驱动 job 必须 <code>fresh_thread=false</code>（→ §7.3、§九）。</td></tr>
+    <tr><td>D18</td><td><b>设计文档会失真</b></td>
+        <td><code>docs/expert-teams.md</code>（团队权威设计稿）与 <code>docs/api.md</code>
+            须随 P1/P2/P4 同步更新，含 OpenAPI 规范（summary/Field/<code>/api/docs</code> 检查）
+            （→ §八 P4）。</td></tr>
+    <tr><td>D19</td><td><b>时间显示须走服务器时区</b></td>
+        <td>看板 <code>due_at</code> 用 <code>useServerTimezone()</code> /
+            <code>formatServerDateTime</code>，禁裸 <code>toLocaleString</code>（AGENTS.md §7）
+            （→ §7.6）。</td></tr>
+    <tr><td>D20</td><td><b>观测性缺失</b></td>
+        <td>接 <code>infra/metrics.py</code> 计数器：wake 执行/失败、任务流转、HITL 超时；
+            否则线上团队卡死无法归因（→ §7.3）。</td></tr>
+    <tr><td>D21</td><td><b>提示注入进入驱动循环</b></td>
+        <td>agently 邮件等外部内容若流入 wake 上下文可指挥自治团队。修订：外部内容当数据
+            不当指令；外部事件触发器默认不进自治循环（→ §7.3）。</td></tr>
+    <tr><td>D22</td><td><b>成本配额（累计）</b></td>
+        <td>接 <code>usage_log</code> 做每团队/用户周期预算，超限自动暂停驱动循环——
+            与单轮闸门互补（→ §7.3）。</td></tr>
+    <tr><td>D23</td><td><b>看板可见性决策漏项</b></td>
+        <td>agent 访问是 <code>admin||owner||shared</code>，团队 API 仅 owner——共享用户能否只读
+            看板需拍板。修订：新增决策第 5 项（→ §九）。</td></tr>
+  </tbody>
+</table>
+
+<p class="meta" style="margin-top:48px; border-top:1px solid var(--line); padding-top:16px;">
+  本文档由四路并行代码调研（团队机制 / cron+HITL / 轻应用 / 前端集成）汇总而成，引用均核实到具体文件行号。
+  v2：合并反思修订——设计补强（A）、流程补全（B）、前置验证门（C），修订点已同步进正文。
+  v3：第二轮反思——并发控制（乐观锁）、存量团队兼容、通知去重、host 生命周期、
+  注入防线、成本配额、观测性、文档同步（D14–D23），修订点已同步进正文。
+  v3 校对：修正两处调研误读（async <code>ask_agent</code> 走 inbox 排队、无 busy 拒派路径，
+  <code>TEAM_MEMBER_BUSY</code> 仅用于删除守卫；cron 限制实为「host 不注册 cron 工具」，
+  <code>manager.py:3782-3786</code>），补表结构公开 string id，对齐 <code>hitl_pending</code>
+  四态，理顺 P2/P3 合入顺序。同日：C11/C12 读码核销，决策 1 拍板（原生表），
+  P1 迁移号落定（折叠进 022）。
+  可直接在浏览器打开阅读，亦支持打印（Ctrl/Cmd + P）。
+</p>
+
+</div>
+</body>
+</html>

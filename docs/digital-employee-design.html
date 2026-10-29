@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Octop 数字员工 · 定位判断与完整设计</title>
+<style>
+  :root {
+    --bg: #f6f8fa;
+    --paper: #ffffff;
+    --ink: #1f2328;
+    --muted: #57606a;
+    --line: #d8dee4;
+    --accent: #0969da;
+    --accent-soft: #ddf4ff;
+    --ok: #1a7f37;
+    --ok-soft: #dafbe1;
+    --warn: #9a6700;
+    --warn-soft: #fff8c5;
+    --bad: #cf222e;
+    --bad-soft: #ffebe9;
+    --code-bg: #f6f8fa;
+    --code-ink: #cf222e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --paper: #161b22;
+      --ink: #e6edf3;
+      --muted: #8b949e;
+      --line: #30363d;
+      --accent: #58a6ff;
+      --accent-soft: #121d2f;
+      --ok: #3fb950;
+      --ok-soft: #12261e;
+      --warn: #d29922;
+      --warn-soft: #282214;
+      --bad: #f85149;
+      --bad-soft: #2d1517;
+      --code-bg: #1c2129;
+      --code-ink: #ff7b72;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.75 "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+          "Noto Sans CJK SC", -apple-system, "Segoe UI", sans-serif;
+  }
+  .paper {
+    max-width: 1020px;
+    margin: 0 auto;
+    padding: 48px 40px 80px;
+    background: var(--paper);
+  }
+  h1 { font-size: 30px; line-height: 1.3; margin: 0 0 8px; }
+  h2 {
+    font-size: 22px; margin: 56px 0 16px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  h3 { font-size: 17.5px; margin: 32px 0 10px; }
+  p { margin: 10px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ul, ol { padding-left: 1.5em; }
+  li { margin: 4px 0; }
+  code {
+    font-family: "SF Mono", ui-monospace, "Cascadia Code", Consolas, Menlo, monospace;
+    font-size: 0.86em;
+    background: var(--code-bg);
+    color: var(--code-ink);
+    padding: 2px 6px; border-radius: 5px;
+    white-space: nowrap;
+  }
+  td code { white-space: normal; word-break: break-word; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 14.5px; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
+  tr:nth-child(even) td { background: color-mix(in srgb, var(--code-bg) 45%, transparent); }
+
+  .meta { color: var(--muted); font-size: 13.5px; margin-bottom: 28px; }
+  .meta .chip {
+    display: inline-block; border: 1px solid var(--line); border-radius: 999px;
+    padding: 1px 10px; margin-right: 6px; font-size: 12.5px; color: var(--muted);
+  }
+  .lead {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 14px 18px; border-radius: 0 8px 8px 0;
+    font-size: 15.5px;
+  }
+  .tag { display: inline-block; border-radius: 5px; padding: 1px 8px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+  .tag.ok   { color: var(--ok);   background: var(--ok-soft); }
+  .tag.bad  { color: var(--bad);  background: var(--bad-soft); }
+  .tag.warn { color: var(--warn); background: var(--warn-soft); }
+  .tag.info { color: var(--accent); background: var(--accent-soft); }
+
+  .toc { columns: 2; gap: 32px; font-size: 14.5px; margin-top: 12px; }
+  .toc li { margin: 3px 0; break-inside: avoid; }
+
+  /* 架构图（纯 CSS 盒图） */
+  .diagram {
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 22px 18px; margin: 16px 0;
+    font-size: 13.5px; line-height: 1.5;
+    overflow-x: auto;
+  }
+  .diagram .row { display: flex; align-items: stretch; gap: 14px; margin: 0; }
+  .dbox {
+    border: 1.5px solid var(--accent); border-radius: 8px;
+    padding: 10px 14px; background: var(--accent-soft); flex: 1;
+  }
+  .dbox.neutral { border-color: var(--line); background: transparent; }
+  .dbox.dashed { border-style: dashed; border-color: var(--muted); }
+  .dbox b { display: block; margin-bottom: 4px; font-size: 13.5px; }
+  .dbox small { color: var(--muted); }
+  .arrow { display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); min-width: 26px; font-size: 18px; }
+  .arrow small { font-size: 11px; white-space: nowrap; }
+  .varrow { text-align: center; color: var(--muted); font-size: 16px; margin: 4px 0; }
+
+  .schema {
+    font-family: ui-monospace, Consolas, Menlo, monospace;
+    font-size: 12.5px; line-height: 1.6;
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; white-space: pre;
+  }
+  .schema .t { color: var(--accent); font-weight: 700; }
+  .schema .c { color: var(--muted); }
+
+  .callout {
+    border: 1px solid var(--line); border-left-width: 4px; border-radius: 8px;
+    padding: 10px 16px; margin: 14px 0; font-size: 14.5px;
+  }
+  .callout.risk { border-left-color: var(--bad); background: var(--bad-soft); }
+  .callout.note { border-left-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-left-color: var(--ok); background: var(--ok-soft); }
+
+  @media (max-width: 760px) {
+    .paper { padding: 28px 18px 60px; }
+    .toc { columns: 1; }
+    .diagram .row { flex-direction: column; }
+    .arrow { transform: rotate(90deg); }
+  }
+  @media print {
+    body { background: #fff; color: #111; }
+    .paper { max-width: none; padding: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="paper">
+
+<h1>Octop 数字员工：定位判断与完整设计</h1>
+<div class="meta">
+  <span class="chip">2026-10-28 · v2（已与三份设计交叉核对）</span>
+  <span class="chip">状态：设计定稿（Slice 1 可执行；Slice 2 架构基线已修正）</span>
+  <span class="chip">分支背景：<code>feature/light-apps</code></span>
+  <span class="chip">依据：状态机 / expert 架构 / 前端 三路代码核实 + 四轮设计反思</span>
+  <span class="chip">配套实施计划：<code>docs/digital-employee-plan.md</code></span>
+</div>
+
+<h2 id="toc">目录</h2>
+<ol class="toc">
+  <li><a href="#conclusion">一、结论先行</a></li>
+  <li><a href="#criterion">二、判据：状态机什么时候是必须的</a></li>
+  <li><a href="#inventory">三、现状盘点</a></li>
+  <li><a href="#gaps">四、四个真空</a></li>
+  <li><a href="#design">五、目标架构</a></li>
+  <li><a href="#data">六、数据模型</a></li>
+  <li><a href="#api">七、API 设计</a></li>
+  <li><a href="#frontend">八、前端</a></li>
+  <li><a href="#plan">九、最终实施计划（M0 – M6）</a></li>
+  <li><a href="#risk">十、风险与人工闸门</a></li>
+  <li><a href="#notdo">十一、明确不做</a></li>
+  <li><a href="#open">十二、待拍板与待验证</a></li>
+  <li><a href="#appendix">附录 A · 代码索引</a></li>
+  <li><a href="#relations">附录 B · 与既有文档的关系</a></li>
+</ol>
+
+<h2 id="conclusion">一、结论先行</h2>
+
+<div class="lead">
+  <b>数字员工不需要新建角色。</b>Octop 里已经有两个可复用的东西：<b>团队那套 agent 无关的自治运行时</b>，和 <b>expert 的人格模板</b>。缺的是把它们<b>解耦</b>——让「单兵 expert + 自主运行」这个格子存在——再补上<b>岗位层</b>（职责 / 权限 / 预算 / 考核 / 汇报线）。
+</div>
+
+<table>
+  <tr><th style="width:22%">判断</th><th>结论</th><th style="width:26%">依据</th></tr>
+  <tr>
+    <td>状态机对主动 team <b>必须</b>吗？</td>
+    <td><span class="tag ok">必须</span> 但理由不是「工作流复杂」，而是<b>承诺必须活得比做出承诺的进程久</b>，且<b>多个 actor 会碰它</b>。主动系统真正难的不是「干活」而是<b>边界</b>——什么时候该停、该问、该放弃——这正是状态机唯一不可替代的功能。</td>
+    <td><code>task_state.py:9-47</code><br><code>coordinator.py:38-39</code></td>
+  </tr>
+  <tr>
+    <td>状态机对 expert <b>必须</b>吗？</td>
+    <td><span class="tag warn">分身份</span> expert 作为<b>人设包</b>不需要（现状正确）；expert 作为<b>主动工作者</b>需要，但<b>必须复用</b> <code>task_state.py</code>，不能另起一套——因为那套状态机<b>本来就没有 kind 约束</b>。</td>
+    <td><code>022_light_apps.sql:98-133</code><br><code>task_state.py:9-47</code></td>
+  </tr>
+  <tr>
+    <td>现有 expert 架构适合做数字员工吗？</td>
+    <td><span class="tag warn">人设合适，岗位缺席</span> expert 模板给的是<b>人格</b>（SOUL.md / quick prompts / task examples），数字员工需要的是<b>职责</b>。差别不是「会不会干活」，而是「有没有岗位」。</td>
+    <td><code>experts/catalog.py:106-148</code><br><code>proactive_care_config</code> 仅 5 字段</td>
+  </tr>
+  <tr>
+    <td>数字员工挂哪套驱动架构？</td>
+    <td><span class="tag bad">不能挂 v1/v3</span> 团队侧现在<b>两套 drive 机制并存</b>（v1 的 <code>drive_tools</code> 仍能建 cron 行，v2 的 <code>TeamAutopilot</code> 也已接），且 <code>migrate_legacy_drive_jobs</code> 启动时会把 v1 cron 行搬进 <code>team_runtime</code> 并删掉——<b>用户建了 cron，下次重启就没了</b>。数字员工必须挂在 <b>team-drive-v2</b> 的持久化协调者上。</td>
+    <td><code>drive.py:131-170</code><br><code>runtime.py:269-321</code><br><code>team-drive-v2.md</code> 附录 A</td>
+  </tr>
+  <tr>
+    <td>数字员工能像成员一样被派工吗？</td>
+    <td><span class="tag bad">不能</span> harness <b>硬禁自派发</b>（<code>cannot collaborate with self</code>）。<code>TeamDispatcher.submit_peer</code> 永远不能用于 <code>assignee == team_id</code>。所以执行单元必须多一种实现：<b>self-execute</b>（跑自己一个回合），与成员派发<b>平级</b>。</td>
+    <td><code>octop_harness/teams/team_manager.py:316-317</code></td>
+  </tr>
+  <tr>
+    <td>Octop 现在最大的问题是什么？</td>
+    <td><span class="tag bad">不是状态不够</span> 是<b>可推导的状态被手工维护</b>：<code>team_tasks.status</code> 与 <code>team_runtime.status</code> 都能从 waits + events 推导（<code>dispatcher.py:503-521</code> 就是现成的推导函数），却散在 <b>20+ 处</b>写入点手工同步，且<b>没有任何 reconcile</b>。</td>
+    <td><code>dispatcher.py:503-521</code><br><code>coordinator.py:173-175,353-354</code></td>
+  </tr>
+</table>
+
+<div class="callout note">
+  <b>一句话：</b>Octop 为「主动性」搭了骨架（goal / task / wait / decision / drive / board），但<b>没有把「这个员工到底产出了什么、消耗了什么、卡在哪里」变成可查询、可断言的事实</b>。骨架有了，仪表盘还没有。
+</div>
+
+<h2 id="criterion">二、判据：状态机什么时候是必须的</h2>
+
+<p>状态机的必要性不来自「工作流复杂」。多步骤不等于需要状态机——一条 20 步的流水线不需要，每步都有可观测的完成信号。</p>
+
+<p>状态机真正解决两件事：</p>
+
+<table>
+  <tr><th style="width:8%">条件</th><th>含义</th><th style="width:32%">不满足会怎样</th></tr>
+  <tr>
+    <td><b>(a)</b></td>
+    <td><b>承诺必须活得比做出承诺的进程久</b>。一个决策单元跨越 heartbeat → 决策 → 派发 → 成员跑 → 回叫 → 审批 → 恢复 → 结算；这个跨度里进程会死、会重启，LLM 没有记忆。</td>
+    <td>状态存在内存里 → 重启即丢 → 承诺变成谎言</td>
+  </tr>
+  <tr>
+    <td><b>(b)</b></td>
+    <td><b>有第二个 actor 会碰它</b>。团队协调器写、host 工具写、Dashboard 拖拽写、sweeper 写、成员回叫写、审批人写。</td>
+    <td>多写者并发覆盖 → 静默丢失 / 互相打架</td>
+  </tr>
+</table>
+
+<p>满足 (a) 或 (b) 之一 → 需要一个<b>持久</b>的状态记录（可能只是一张表几个字段，<b>不需要迁移表</b>）。两者都满足 → 才需要真正的<b>状态机</b>（封闭的合法迁移集）。</p>
+
+<h3>2.1 套到 Octop 各层</h3>
+
+<table>
+  <tr><th style="width:20%">层</th><th style="width:8%">(a)</th><th style="width:8%">(b)</th><th>结论</th></tr>
+  <tr><td>Team task</td><td><span class="tag ok">✓</span></td><td><span class="tag ok">✓</span></td><td>需要状态机。<b>已有，且是全仓唯一强校验的</b></td></tr>
+  <tr><td>Team runtime</td><td><span class="tag ok">✓</span></td><td><span class="tag ok">✓</span></td><td>需要状态机。<b>当前只有取值没有边</b></td></tr>
+  <tr><td>Decision</td><td><span class="tag ok">✓</span></td><td><span class="tag ok">✓</span></td><td>需要状态机。当前靠「每团队最多一个 pending/running」软约束</td></tr>
+  <tr><td>Wait</td><td><span class="tag ok">✓</span></td><td><span class="tag ok">✓</span></td><td>需要。<b>唯一有状态守卫的</b>（<code>settle()</code> 带 <code>WHERE status='waiting'</code>）</td></tr>
+  <tr><td>HITL</td><td><span class="tag ok">✓</span></td><td><span class="tag ok">✓</span></td><td>需要。<b>当前零守卫，是最该补严的一层</b></td></tr>
+  <tr><td>Goal</td><td><span class="tag warn">△</span></td><td><span class="tag warn">△</span></td><td>目标是<b>意图陈述</b>不是承诺，廉价可重建 → 不需要状态机，需要<b>生命周期</b>（归档即替换）</td></tr>
+  <tr><td>Expert（人设）</td><td><span class="tag bad">✗</span></td><td><span class="tag bad">✗</span></td><td>不需要。<b>现状正确，不要动</b></td></tr>
+  <tr><td>Agent 的单次 ReAct 回合</td><td><span class="tag warn">△</span></td><td><span class="tag bad">✗</span></td><td>LangGraph checkpoint 够用。<b>但 fresh thread 即空</b> → 跨会话必须落 DB</td></tr>
+</table>
+
+<div class="callout ok">
+  <b>代码级硬证据：</b>harness 的待办 <code>write_todos</code> 存于 langgraph state，仅随 checkpoint 持久，<b>fresh thread 即空</b>——跨会话任务状态必须落 DB（<code>docs/proactive-expert-design.md</code> §3.2）。这直接证明：一个 volatile 状态机对主动系统等于没有状态机。
+</div>
+
+<h3>2.2 四条必须成立的不变量</h3>
+
+<table>
+  <tr><th style="width:10%">#</th><th>不变量</th><th style="width:22%">现状</th></tr>
+  <tr><td><b>INV-1</b></td><td>凡被挂载 <code>ask_creator</code> 工具的 agent，其 <code>interrupt_on</code> 必须包含 <code>ask_creator</code></td><td><span class="tag bad">不成立</span>（①）</td></tr>
+  <tr><td><b>INV-2</b></td><td>任务状态的<b>每一个</b>写入点都必须过 <code>is_valid_task_transition</code>，包括服务端自己写的那些</td><td><span class="tag bad">不成立</span>（⑦）</td></tr>
+  <tr><td><b>INV-3</b></td><td>预算累加必须<b>原子</b>（SQL 侧 <code>SET col = col + ?</code>），不得 read-modify-write</td><td><span class="tag bad">必然不成立</span>——<code>team_runtime_repo</code> 只有 <code>update()</code>（CAS）与 <code>reset_budget()</code>，<b>没有原子累加方法</b></td></tr>
+  <tr><td><b>INV-4</b></td><td>用量归集到「预算 owner」的口径必须<b>统一</b>在三处记账点（对话 / cron / team 房间）</td><td><span class="tag warn">不统一</span>（P0.4a）</td></tr>
+</table>
+
+<h3>2.3 Gate 通则</h3>
+
+<div class="callout risk">
+  <b>GATE-RULE：断言行为，不断言配置项存在。</b>
+  <br>反例：<code>assert "ask_creator" in tool_names</code> —— 只证明工具挂上了，<b>不证明它能中断</b>。
+  <br>正例：调 <code>ask_creator</code> → 产生 <code>hitl_required</code> 且带 request payload → <code>hitl_pending</code> 落一行 → 创建者收到帧。
+  <br><br>现有 <code>tests/unit/agents/test_autonomy_mount.py:4</code> 的 docstring 声称「the same runtime a team host gets」却只断言工具存在——<b>这就是 ① 在 2019 个全绿测试下漏网的原因</b>。所有新 Gate 按 GATE-RULE 写。
+</div>
+
+<h2 id="inventory">三、现状盘点</h2>
+
+<h3>3.1 五个并行状态机，成熟度差异极大</h3>
+
+<table>
+  <tr><th style="width:16%">状态机</th><th style="width:12%">表</th><th style="width:8%">状态数</th><th style="width:12%">迁移表</th><th style="width:12%">强校验</th><th style="width:12%">乐观并发</th><th>备注</th></tr>
+  <tr>
+    <td><b>Task</b></td><td><code>team_tasks.status</code></td><td>9</td>
+    <td><span class="tag ok">✓</span></td><td><span class="tag ok">✓ 6 处</span></td><td><span class="tag ok">✓ version CAS</span></td>
+    <td><b>全仓唯一完备的</b>。单一迁移表 + 6 个写者共用同一函数</td>
+  </tr>
+  <tr>
+    <td>Runtime</td><td><code>team_runtime.status</code></td><td>9</td>
+    <td><span class="tag bad">✗</span></td><td><span class="tag bad">✗</span></td><td><span class="tag ok">✓ version CAS</span></td>
+    <td>只有「是否可路由」与「硬关闭」两个语义集，<b>不是迁移表</b></td>
+  </tr>
+  <tr>
+    <td>Decision</td><td><code>team_decisions.status</code></td><td>5</td>
+    <td><span class="tag bad">✗</span></td><td><span class="tag bad">✗</span></td><td><span class="tag bad">✗</span></td>
+    <td>靠调用方保证「每团队最多一个 pending/running」</td>
+  </tr>
+  <tr>
+    <td>Wait</td><td><code>team_waits.status</code></td><td>5</td>
+    <td><span class="tag bad">✗</span></td><td><span class="tag warn">△ settle 幂等</span></td><td><span class="tag bad">✗</span></td>
+    <td><b>唯一有状态守卫</b>：<code>settle()</code> 带 <code>WHERE status='waiting'</code></td>
+  </tr>
+  <tr>
+    <td>HITL</td><td><code>hitl_pending.status</code></td><td>4</td>
+    <td><span class="tag bad">✗</span></td><td><span class="tag bad">✗ 无守卫</span></td><td><span class="tag bad">✗</span></td>
+    <td><code>mark_resolved()</code> 无条件 UPDATE → <code>approved → rejected</code> 可能</td>
+  </tr>
+</table>
+
+<p>状态词汇表在 <b>6 个模块里各写一遍</b>（<code>coordinator.py:38-39</code>、<code>runtime.py:36</code>、<code>dispatcher.py:35</code>、<code>decision.py:37</code>、<code>sweeper.py:36-38</code>、<code>repos/team_runtime.py:16</code>），没有共享 enum，会漂移。</p>
+
+<h3>3.2 Task 迁移表（唯一完备的那个）</h3>
+
+<div class="schema"><span class="t">proposed</span>   → assigned, running, blocked, needs_input, cancelled
+<span class="t">assigned</span>   → running, proposed, blocked, needs_input, cancelled
+<span class="t">running</span>    → blocked, needs_input, review, done, failed, cancelled
+<span class="t">blocked</span>    → running, proposed, done, failed, cancelled
+<span class="t">needs_input</span>→ running, proposed, blocked, cancelled
+<span class="t">review</span>     → done, failed, running, cancelled
+<span class="t">done</span>       → <span class="c">∅  （终态）</span>
+<span class="t">failed</span>     → proposed, cancelled
+<span class="t">cancelled</span>  → <span class="c">∅  （终态）</span></div>
+
+<p>两个刻意决定（<code>docs/team-drive-v2.md</code> §3.3）：<b><code>ready</code> 不是状态</b>而是派生量（proposed + 依赖终态 + 时间窗开放），由 <code>dispatcher.plan_dispatches()</code> 现算；<b>阻塞不用新状态表达</b>，靠 <code>needs_input</code>/<code>blocked</code> + <code>active_wait_id</code> 指向 wait 行。</p>
+
+<p><b>校验点（6 个写者共用同一函数）</b>：host 工具 <code>board_tools.py:252</code> · Dashboard PATCH <code>api/routers/teams.py:476</code> · 成员回叫 <code>coordinator.py:405</code> · 审批恢复 <code>coordinator.py:652,656</code> · sweeper 泊车 <code>sweeper.py:201</code> · 计划 apply <code>plan_apply.py:200,219,232</code>。</p>
+
+<p><b>唯一软肋</b>：DB 层没有 <code>CHECK</code> 约束，<code>status TEXT NOT NULL DEFAULT 'proposed'</code>（<code>022_light_apps.sql:121</code>），任何绕过 Python 的写入都能塞进非法状态。</p>
+
+<h3>3.3 Expert 现状：三种身份，都不是「员工」</h3>
+
+<table>
+  <tr><th style="width:20%">身份</th><th style="width:20%">载体</th><th>有无状态机</th></tr>
+  <tr>
+    <td>内置目录 expert</td><td><code>experts/catalog.py:106-148</code> 的纯 dataclass + 磁盘文件清单</td>
+    <td><span class="tag bad">无</span> library README 明示「是数据，不是运行时代码」</td>
+  </tr>
+  <tr>
+    <td>用户自建 expert</td><td><code>agents.kind='expert'</code> 的普通行</td>
+    <td><span class="tag bad">无</span> <code>docs/proactive-expert-design.md:87</code>：「无特殊运行时」</td>
+  </tr>
+  <tr>
+    <td>已发布 expert</td><td><code>published_experts</code>（12 列，<b>无 status 列</b>）</td>
+    <td><span class="tag warn">生命周期 = publish → refresh → unpublish</span>，<b>行在不在就是状态</b></td>
+  </tr>
+</table>
+
+<p>唯一的 per-agent 状态是 <code>agents.last_state</code>（<code>running</code>/<code>stopped</code>）——运行时状态，不是任务生命周期。</p>
+
+<h3>3.4 Team 现状：宿主才是「员工」</h3>
+
+<table>
+  <tr><th style="width:26%">能力</th><th style="width:16%">Team host</th><th style="width:16%">Expert</th><th>说明</th></tr>
+  <tr><td>状态列</td><td><code>team_runtime.status</code> 9 态</td><td><span class="tag bad">无</span></td><td>—</td></tr>
+  <tr><td>承诺</td><td>goal + task + wait + decision + 事件账本</td><td><span class="tag bad">无</span></td><td>—</td></tr>
+  <tr><td>驱动</td><td><code>start/pause/resume/finish/stop</code></td><td><span class="tag bad">无</span></td><td>—</td></tr>
+  <tr><td>交付物</td><td><code>goal_deliverables</code>（pending/produced + artifact）</td><td><span class="tag bad">无</span></td><td>—</td></tr>
+  <tr><td>考核</td><td><span class="tag bad">无</span></td><td><span class="tag bad">无</span></td><td><b>两边都空</b></td></tr>
+  <tr><td>板工具</td><td><span class="tag ok">已挂载</span></td><td><span class="tag bad">未挂载</span></td><td>闸门在 <code>manager.py:3865</code> 的 <code>if team_host:</code></td></tr>
+  <tr><td>求助通道</td><td><span class="tag ok">ask_creator</span></td><td><span class="tag bad">无</span></td><td>闸门在 <code>manager.py:3899</code></td></tr>
+</table>
+
+<div class="callout risk">
+  <b>决定性约束：</b><code>TEAM_MIN_MEMBERS = 2</code>（<code>teams/service.py:19</code>，校验在 <code>:208-212</code> 抛 <code>TEAM_MEMBERS_TOO_FEW</code>）。<b>今天，单人数字员工在建出来的那一刻就被挡住了</b>——唯一带自治运行时的实体强制要求 ≥2 个成员。
+</div>
+
+<h3>3.5 关键事实索引（决定方案大小的那几条）</h3>
+
+<table>
+  <tr><th style="width:6%">#</th><th>事实</th><th style="width:30%">引用</th><th style="width:22%">对设计的意义</th></tr>
+  <tr><td>F1</td><td><code>team_goals</code> / <code>team_tasks</code> 外键 <code>REFERENCES agents(agent_id)</code>，<b>无 kind 约束</b></td><td><code>022_light_apps.sql:98-133</code></td><td>零迁移复用目标表</td></tr>
+  <tr><td>F2</td><td><code>team_runtime.team_id</code> 外键同样无 kind 约束</td><td><code>022_light_apps.sql:169</code></td><td>自治专家也能有 runtime 行</td></tr>
+  <tr><td>F3</td><td>repo 层<b>零 kind 过滤</b></td><td><code>repos/team_tasks.py</code></td><td>不改 repo</td></tr>
+  <tr><td>F4</td><td>kind 过滤只有两处薄层：API 路由 + 工具挂载</td><td><code>teams.py:174-180</code>、<code>manager.py:3865</code></td><td><b>这两处就是主要改动点</b></td></tr>
+  <tr><td>F5</td><td><code>assert_agent_owner</code> / <code>require_agent_owner_row</code> <b>完全不涉及 kind</b></td><td><code>api/common/agent.py:16-23,68-77</code></td><td>通用路由鉴权可直接用</td></tr>
+  <tr><td>F6</td><td><code>board_tools._tool_ctx()</code> 从 tool scope 取 agent_id，agent 无关</td><td><code>board_tools.py:47-82</code></td><td>同一实现可挂 expert</td></tr>
+  <tr><td>F7</td><td><b><code>goals.py</code> 已经是 agent 通用的</b>：<code>GET/POST/PATCH /agents/{agent_id}/goals</code> + deliverables 全套</td><td><code>api/routers/goals.py:208-360</code></td><td><b>goal 侧不需要做任何事</b></td></tr>
+  <tr><td>F8</td><td>task 侧只有 team 路由；<b>全仓无任何 POST task 路由</b></td><td><code>teams.py:447-460,463-522</code></td><td>task 通用路由 + <b>POST tasks 是新能力</b></td></tr>
+  <tr><td>F9</td><td>看板是唯一还在用旧 team goal/task 客户端的调用点</td><td><code>TeamBoardPage.tsx:240,241,274</code></td><td>切过去即消灭双份路由</td></tr>
+  <tr><td>F10</td><td><code>GoalDrawer</code> 已用 agent 通用 <code>goalsApi</code></td><td><code>GoalDrawer/index.tsx:22,95,122</code></td><td>通用化的先例已经存在</td></tr>
+  <tr><td>F11</td><td><code>proactive_care_config</code> 仅 5 字段（启用 / 免打扰窗 / 最小最大间隔）</td><td><code>001_initial.sql:246-256</code></td><td>是<b>推送节奏</b>，不是<b>岗位</b></td></tr>
+  <tr><td>F12</td><td>team roster 只存在 host workspace 的 <code>.octop/manifest.json</code>，<b>不是注册表、不可查询</b></td><td><code>teams/service.py:152-168</code></td><td>「我手下有哪些员工」答不了</td></tr>
+  <tr><td>F13</td><td><code>budget_used</code> 全仓<b>只有一处写入</b>——<code>reset_budget()</code> 清零</td><td><code>repos/team_runtime.py:138-146</code></td><td><b>预算系统完全惰性</b></td></tr>
+  <tr><td>F14</td><td><code>budget_remaining</code> 硬编码 <code>None</code> → 预算闸门是死分支</td><td><code>decision.py:241</code>、<code>dispatcher.py:188</code></td><td>无成本护栏</td></tr>
+  <tr><td>F15</td><td><code>usage_log</code> 有 <code>agent_id</code>，<b>无</b> <code>task_id</code>/<code>goal_id</code></td><td><code>001_initial.sql:181-196</code></td><td>成本能归到员工，归不到任务</td></tr>
+  <tr><td>F16</td><td>无任何 reconcile / rebuild 代码</td><td>grep <code>rebuild|recompute|reconcile|repair|drift</code> → 0 命中</td><td><b>状态漂移不可检测</b></td></tr>
+  <tr><td>F17</td><td>账本会<b>故意吞掉存储错误</b>；runtime 状态更新会吞掉 CAS 失败</td><td><code>coordinator.py:173-175,353-354</code></td><td>主动系统里的静默故障</td></tr>
+  <tr><td>F18</td><td>cron 无人值守遇 <code>hitl_required</code> <b>直接判失败</b></td><td><code>cron/delivery.py:166-169</code></td><td>C1 硬前置</td></tr>
+  <tr><td>F19</td><td>cron 执行链对 expert <b>天然可用</b>（cron 工具只对 team_host 跳过）</td><td><code>manager.py:3814</code></td><td>Slice 2 不用重造执行链</td></tr>
+  <tr><td>F20</td><td>主动关怀已有 per-agent 调度器 + 免打扰窗 + 频控 + 去重</td><td><code>infra/proactive/scheduler.py</code>、<code>service.py</code></td><td>运行策略可泛化复用</td></tr>
+  <tr><td><b>F26</b></td><td><b>预算归集的三个记账点口径不一致</b>：对话（<code>processor.py:1773</code>）、cron（<code>delivery.py:211</code>）、team 房间（<code>team_manager.py:428</code>，<b>已正确归 team</b>）；自治员工的用量落 <code>team_id=NULL</code></td><td><code>usage_log</code></td><td>预算 owner 需统一（P0.4a）</td></tr>
+  <tr><td><b>F27</b></td><td><b>记账点拿不到 task 上下文</b>——回合结束时只有 <code>agent_id</code>/<code>thread_id</code></td><td><code>processor.py:1767</code>、<code>delivery.py:207</code></td><td>⇒ 预算粒度定为 <b>agent/team 级</b>（D10）</td></tr>
+  <tr><td><b>F21</b></td><td><b>harness 硬禁自派发</b>：<code>cannot collaborate with self</code></td><td><code>octop_harness/teams/team_manager.py:316-317</code></td><td><b>数字员工不能走 dispatcher</b>；执行单元必须另做 self-execute</td></tr>
+  <tr><td><b>F22</b></td><td><b>两套 drive 机制并存</b>：v1 <code>drive_tools</code> 仍挂载且仍能建 <code>meta.kind=team_drive</code> 的 cron 行；v2 <code>TeamAutopilot</code> 也已接。启动时 <code>migrate_legacy_drive_jobs</code> 把 v1 cron 行搬进 <code>team_runtime</code> 并删除</td><td><code>manager.py:3885-3889,3957,4018</code>、<code>drive.py:131-170</code>、<code>server.py:661-663</code></td><td><b>半迁移状态</b>：建了 cron，下次重启就没了</td></tr>
+  <tr><td><b>F23</b></td><td><b>HITL 挂起已落地</b>（团队 P3）：带 request payload 的 interrupt 注册 pause 不再 raise</td><td><code>cron/delivery.py:183-190</code></td><td><code>proactive-expert</code> 的 C1 与本计划原 S2.4 <b>已过时</b></td></tr>
+  <tr><td><b>F24</b></td><td><b>唯一已落地的「预算闸门」是数量闸门</b>：open tasks ≤10 服务端强制</td><td><code>board_tools.py:205-209</code></td><td>不是成本闸门；成本闸门全仓惰性</td></tr>
+  <tr><td><b>F25</b></td><td>v2 明确弃用 per-team drive cron，改为 <code>team_runtime</code> + 全局 <code>team_sweeper</code>；阶段 0–3 已完成，<b>4 治理 / 5 清理未实施</b></td><td><code>team-drive-v2.md</code> 附录 A、<code>:3,628-633</code></td><td>本设计原 S2.1「cron wake」是 v1/v3 遗留，<b>照做等于建第三套</b></td></tr>
+  <tr><td><b>F26</b></td><td><b>SQLite 不支持 <code>ALTER TABLE ... ADD COLUMN IF NOT EXISTS</code></b>（实测 3.53.1 报语法错）</td><td>实测</td><td>幂等只能靠 <code>migrate.py</code> 的 <code>_ensure_column</code>——这决定了迁移落点</td></tr>
+  <tr><td><b>F27</b></td><td><b>只有 <code>version == 22</code> 有专用幂等分支</b>；23/24 直跑原始文件</td><td><code>migrate.py:2336-2348</code></td><td>裸 ALTER 只能放进 022，否则版本回退重跑会炸 <code>duplicate column name</code></td></tr>
+</table>
+
+<h2 id="gaps">四、四个真空</h2>
+
+<table>
+  <tr><th style="width:18%">真空</th><th style="width:34%">现状</th><th>后果</th></tr>
+  <tr>
+    <td><b>预算闸门惰性</b></td>
+    <td><code>budget_used</code> 只被清零从不累加；<code>budget_remaining</code> 恒 <code>None</code>；<code>usage_log</code> 无 task 维度</td>
+    <td>一个自主运行的数字员工，<b>会自己花钱、没人知道花了多少</b>。企业不会接受</td>
+  </tr>
+  <tr>
+    <td><b>没有岗位层</b></td>
+    <td>职责边界 / 权限范围 / 预算上限 / 考核指标 / 汇报对象 / 排班 —— 全部无处存放</td>
+    <td>数字员工与「定时任务」无法区分。<b>负责人说不出它这个月交付了什么</b></td>
+  </tr>
+  <tr>
+    <td><b>编制不可查询</b></td>
+    <td>roster 只在 workspace manifest；<code>agents.autonomy_enabled</code> 尚不存在</td>
+    <td>「我手下有哪些员工、各自在干什么」无法用 SQL 回答</td>
+  </tr>
+  <tr>
+    <td><b>状态无自证机制</b></td>
+    <td>无 reconcile；缓存漂移不可检测；CAS 失败被静默吞掉</td>
+    <td>无人值守系统里，漂移 = <b>永久性故障</b>。人在的系统里，人会看见并纠正</td>
+  </tr>
+</table>
+
+<h2 id="design">五、目标架构</h2>
+
+<h3>5.1 核心：把两件事正交开</h3>
+
+<div class="diagram">
+  <div class="row">
+    <div class="dbox neutral"><b><code>kind</code> —— 组织形状</b><small>这个 agent 是单兵还是多兵？<br>决定有没有派工 / inbox / 回叫</small></div>
+    <div class="arrow">×</div>
+    <div class="dbox"><b><code>autonomy_enabled</code> —— 运行模式</b><small>这个 agent 是否自主运转？<br>决定有没有 wake / 预算 / 闸门</small></div>
+  </div>
+  <div class="varrow">↓</div>
+  <div class="row">
+    <div class="dbox" style="flex:1"><b>expert + 自治</b><small><b>数字员工</b> ← 今天这一格是空的</small></div>
+    <div class="dbox neutral" style="flex:1"><b>expert + 被动</b><small>今天的普通专家</small></div>
+    <div class="dbox neutral" style="flex:1"><b>team + 自治</b><small>今天的主动团队</small></div>
+    <div class="dbox neutral" style="flex:1"><b>team + 被动</b><small>编排但不自动</small></div>
+  </div>
+</div>
+
+<div class="callout note">
+  现在这两件事被 <code>kind</code> 焊死了：<code>expert</code> 只能被动，<code>team</code> 才能主动。<b>数字员工需要的「单人 + 自主」是空的。</b>
+</div>
+
+<h3>5.2 数字员工的运行回路</h3>
+
+<div class="diagram">
+  <div class="row">
+    <div class="dbox neutral"><b>创建人</b><small>设岗位 · 开闸门 · 看板</small></div>
+    <div class="arrow">→<small>策略</small></div>
+    <div class="dbox"><b>数字员工（单兵 expert）</b><small>板工具：goal_set / task_create / task_update / task_list<br>ask_creator 升级通道</small></div>
+    <div class="arrow">⇄<small>同一张表</small></div>
+    <div class="dbox dashed"><b><code>team_goals</code> / <code>team_tasks</code></b><small>复用 · 无 kind 约束<br><code>task_state.py</code> 校验</small></div>
+  </div>
+  <div class="varrow">↓ 同一个 ReAct 回合内闭环（无 inbox / 无跨 agent 在途状态）</div>
+  <div class="row">
+    <div class="dbox"><b>self-execute</b><small>同一回合：读任务 → 领取 → 执行 → 回写 → 汇报<br><code>agent_manager.stream()</code>，不走 inbox</small></div>
+    <div class="arrow">→</div>
+    <div class="dbox dashed"><b><code>autonomy_policy</code></b><small>职责 · 预算 · 排班 · 汇报对象</small></div>
+    <div class="arrow">→</div>
+    <div class="dbox neutral"><b>收件箱 / KPI</b><small>待你 N 条 · 交付了什么 · 花了多少</small></div>
+  </div>
+</div>
+
+<h3>5.3 复用与不复用</h3>
+
+<table>
+  <tr><th style="width:26%">组件</th><th style="width:12%">单人数字员工</th><th>理由</th></tr>
+  <tr><td><code>team_goals</code> / <code>team_tasks</code> 表</td><td><span class="tag ok">复用</span></td><td>外键无 kind 约束，零迁移</td></tr>
+  <tr><td><code>task_state.py</code> 状态机</td><td><span class="tag ok">复用</span></td><td>唯一强校验点，不能分裂</td></tr>
+  <tr><td><code>TeamGoalRepo</code> / <code>TeamTaskRepo</code></td><td><span class="tag ok">复用</span></td><td>repo 层零 kind 过滤</td></tr>
+  <tr><td>板工具 <code>build_team_board_tools</code></td><td><span class="tag ok">复用</span></td><td>同一实现，仅挂载条件与 assignee 锁不同</td></tr>
+  <tr><td>看板页</td><td><span class="tag ok">复用</span></td><td>按 kind 渲染差异</td></tr>
+  <tr><td>cron 执行链</td><td><span class="tag ok">复用</span></td><td>对 expert 天然可用</td></tr>
+  <tr><td>主动关怀调度器</td><td><span class="tag ok">泛化</span></td><td>策略存储位复用，求值逻辑泛化</td></tr>
+  <tr><td><code>TeamDispatcher.submit_peer</code></td><td><span class="tag bad">不可用</span></td><td><b>harness 硬禁自派发</b>（<code>cannot collaborate with self</code>）——<code>from_agent_id == to_agent_id</code> 必抛</td></tr>
+  <tr><td><b>self-execute</b>（新增执行实现）</td><td><span class="tag info">新增</span></td><td>与成员派发<b>平级</b>：调 <code>agent_manager.stream(agent_id, request)</code> 跑自己一个回合，不需要 per-team cron</td></tr>
+  <tr><td><code>TeamDecisionService</code></td><td><span class="tag bad">跳过</span></td><td>决策单元存在的原因是「把活拆给多成员」；单人 agent 自己就是决策者 + 执行者</td></tr>
+  <tr><td>per-team drive cron（v1/v3）</td><td><span class="tag bad">不复用</span></td><td>v2 附录 A 已明确弃用：<code>每团队 drive cron → team_runtime + 全局 team_sweeper</code></td></tr>
+  <tr><td><code>TEAM_MIN_MEMBERS = 2</code></td><td><span class="tag bad">不动</span></td><td>数字员工是单兵 expert，不是「一个人的 team」</td></tr>
+</table>
+
+<h3>5.4 岗位层：autonomy policy 字段</h3>
+
+<table>
+  <tr><th style="width:26%">字段</th><th style="width:14%">默认</th><th style="width:14%">生效 slice</th><th>语义</th></tr>
+  <tr><td><code>enabled</code></td><td><code>false</code></td><td>Slice 1</td><td>自治总开关</td></tr>
+  <tr><td><code>active_hours_start</code> / <code>_end</code></td><td><code>09:00</code> / <code>22:00</code></td><td>Slice 1（存储）</td><td>值班窗口</td></tr>
+  <tr><td><code>min_interval_hours</code> / <code>max_interval_hours</code></td><td><code>5</code> / <code>24</code></td><td>Slice 2</td><td>最小心跳间隔 / 频控</td></tr>
+  <tr><td><code>budget_limit_tokens</code></td><td><code>0</code>（不限）</td><td>Slice 3</td><td>周期预算上限</td></tr>
+  <tr><td><code>budget_window</code></td><td><code>day</code></td><td>Slice 3</td><td>预算周期（日 / 月）</td></tr>
+  <tr><td><code>sla_tasks_per_day</code></td><td><code>0</code>（不限）</td><td>Slice 3</td><td>产能 SLA</td></tr>
+  <tr><td><code>escalate_to</code></td><td><code>""</code></td><td>Slice 3</td><td>汇报对象</td></tr>
+  <tr><td><code>responsible_scope</code></td><td><code>""</code></td><td>Slice 3</td><td>职责边界（注入 prompt）</td></tr>
+  <tr><td><code>tool_scope_allow</code> / <code>_deny</code></td><td><code>""</code></td><td>Slice 3</td><td>权限范围</td></tr>
+</table>
+
+<div class="callout note">
+  <b>存储落点：</b>加列到 <code>proactive_care_config</code>（001 已发布，<b>不改表名</b>，改名需双份重建脚本）；代码层新建 <code>AutonomyPolicyRepo</code> 读同一张表，<code>ProactiveCareConfigRepo</code> 保持不动。将来真拆表只改 repo 一处。
+</div>
+
+<h2 id="data">六、数据模型</h2>
+
+<h3>6.1 迁移落点</h3>
+
+<p>已核实 <b>022 / 023 / 024 全部未进 main 与 develop</b>，本分支会整块发布 → 按 AGENTS.md「未发布 schema 折叠进当前未发布 <code>00N</code>」规则折叠，版本断言保持 <code>v == 24</code>（<code>tests/unit/db/test_db_pool.py:113,247,386</code>）。</p>
+
+<div class="callout note">
+  <b>折进 022 而非 024</b>（实施中修正）：初稿写的是 024，实施时两个事实推翻了它——<br>
+  ① <b>SQLite 不支持 <code>ADD COLUMN IF NOT EXISTS</code></b>（实测 3.53.1 报 <code>near "EXISTS": syntax error</code>），裸 ALTER <b>不可重复执行</b>；<br>
+  ② <b>只有 <code>version == 22</code> 有专用幂等分支</b>（<code>migrate.py:2336-2348</code>），23/24 直跑原始文件 → 裸 ALTER 放进 023/024 会在「版本回退后重跑」时炸 <code>duplicate column name</code>。<br><br>
+  而 022 三处正好合适：<b>已经承载 team 看板的全部表</b>（数字员工正是为复用它们而加列）、<b>其分支走幂等 helper 而非原始文件</b>（SQLite 侧根本不执行裸 ALTER）、<b>本就是本分支的未发布大杂烩迁移</b>（light apps + team 看板 + <code>usage_log.team_id</code> + <code>cron_jobs.meta</code>）。<br><br>
+  幂等 helper 是真正的保证，挂在<b>两处</b>：<code>version == 22</code> 分支 + <code>run_migrations</code> 的 post-loop 无条件块（覆盖「已记录版本、文件被跳过」的库）。
+</div>
+
+<h3>6.2 DDL</h3>
+
+<div class="schema"><span class="t">-- 数字员工：自治开关（默认关；打开即视为数字员工）</span>
+ALTER TABLE agents ADD COLUMN autonomy_enabled INTEGER NOT NULL DEFAULT 0;
+
+<span class="t">-- 岗位规格：自治策略（加列，不改表名）</span>
+ALTER TABLE proactive_care_config ADD COLUMN budget_limit_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE proactive_care_config ADD COLUMN budget_window TEXT NOT NULL DEFAULT 'day';
+ALTER TABLE proactive_care_config ADD COLUMN sla_tasks_per_day INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE proactive_care_config ADD COLUMN escalate_to TEXT NOT NULL DEFAULT '';
+ALTER TABLE proactive_care_config ADD COLUMN responsible_scope TEXT NOT NULL DEFAULT '';
+ALTER TABLE proactive_care_config ADD COLUMN tool_scope_allow TEXT NOT NULL DEFAULT '';
+ALTER TABLE proactive_care_config ADD COLUMN tool_scope_deny TEXT NOT NULL DEFAULT '';</div>
+
+<div class="callout risk">
+  <b>这些裸 ALTER 不能是唯一入口。</b><code>run_migrations</code> 会跳过 <code>version &lt;= current</code> 的文件（<code>migrate.py:2442</code>），而 <code>_apply_sqlite_migration</code> 只对 <code>version == 22</code> 走幂等 helper 分支（<code>:2336-2348</code>）。<b>一个已经记录了该版本的本地库会永远拿不到这些列。</b>
+  <br><br>必须有一个<b>幂等 helper</b>（<code>_ensure_autonomy_schema</code>），挂在<b>两处</b>：<code>version == 22</code> 分支（让该分支应用<b>完整的 v22 schema</b>）＋ <code>run_migrations</code> 的 post-loop 无条件块（覆盖「已记录版本、文件被跳过」的库）。
+  <br><br>用既有的 <code>_ensure_column</code> / <code>_table_columns</code> 工具（<code>migrate.py:92-117</code>）——它先查列是否存在，跨方言安全。
+  <br><br>✅ <b>已实施</b>：<code>022_light_apps.sql</code> / <code>.pg.sql</code>（裸 ALTER / <code>IF NOT EXISTS</code>）+ <code>migrate.py</code> helper + <code>tests/unit/db/test_autonomy_schema.py</code>（6 例，含「版本回退重跑」与「已记录版本修复」两个关键路径）。
+</div>
+
+<h3>6.3 <code>AgentRow</code> 兼容</h3>
+
+<p><code>AgentRow.from_row</code> 对 <code>kind</code> 已用 <code>try/except KeyError</code> 兜底（<code>agents.py:85-89</code>）。新列必须照抄这个写法——迁移只保证<b>迁移时</b>补列，进程运行期若遇到漏迁移的库，<code>from_row</code> 必须能兜住。</p>
+
+<h2 id="api">七、API 设计</h2>
+
+<h3>7.1 现状路由矩阵</h3>
+
+<table>
+  <tr><th style="width:34%">路由</th><th style="width:12%">状态</th><th style="width:26%">位置</th><th>说明</th></tr>
+  <tr><td><code>GET/POST /agents/{agent_id}/goals</code></td><td><span class="tag ok">已有</span></td><td><code>goals.py:208-251</code></td><td>已是 agent 通用，鉴权用 <code>_owned_agent</code></td></tr>
+  <tr><td><code>PATCH /agents/{agent_id}/goals/{goal_id}</code></td><td><span class="tag ok">已有</span></td><td><code>goals.py:252-275</code></td><td>—</td></tr>
+  <tr><td><code>/agents/{agent_id}/goals/{goal_id}/deliverables</code> 全套</td><td><span class="tag ok">已有</span></td><td><code>goals.py:277-360</code></td><td>—</td></tr>
+  <tr><td><code>GET /agents/{agent_id}/tasks</code></td><td><span class="tag bad">缺</span></td><td>—</td><td>只有 <code>GET /teams/{team_id}/tasks</code></td></tr>
+  <tr><td><code>PATCH /agents/{agent_id}/tasks/{task_id}</code></td><td><span class="tag bad">缺</span></td><td>—</td><td>只有 team 版</td></tr>
+  <tr><td><code>POST /agents/{agent_id}/tasks</code></td><td><span class="tag bad">缺</span></td><td>—</td><td><b>全仓无任何 POST task 路由</b></td></tr>
+  <tr><td><code>GET/POST /teams/{team_id}/goals</code></td><td><span class="tag warn">重复</span></td><td><code>teams.py:409-444</code></td><td>与 <code>goals.py</code> 双份并存</td></tr>
+</table>
+
+<div class="callout ok">
+  <b>核查结论（写完初稿后当场查）：</b>初稿计划新建 <code>agent_work.py</code> 同时提供 goal + task 路由，核查发现 <b>goal 侧已存在且已通用</b>，照做会造路由重复 → <b>方案作废</b>，改为「新建 <code>api/routers/tasks.py</code> 仿 <code>goals.py</code> 模式」。附带发现 goal 路由与客户端在 <code>goals.py</code> / <code>teams.py</code> 双份并存，而<b>看板是唯一还在用旧 team 版的调用点</b>——切过去即消灭重复。
+</div>
+
+<h3>7.2 新路由</h3>
+
+<div class="schema"><span class="t"># 新增：api/routers/tasks.py（挂 /api，tag tasks）</span>
+GET    /agents/{agent_id}/tasks            <span class="c"># 列表（agent 通用）</span>
+POST   /agents/{agent_id}/tasks            <span class="c"># 新能力：任务创建/编辑</span>
+PATCH  /agents/{agent_id}/tasks/{task_id}  <span class="c"># CAS + 状态机校验</span>
+
+<span class="t"># 新增：api/routers/autonomy.py（挂 /api，tag agents）</span>
+PUT    /agents/{agent_id}/autonomy                <span class="c"># 自治开关</span>
+GET    /agents/{agent_id}/autonomy-policy         <span class="c"># 岗位规格</span>
+PUT    /agents/{agent_id}/autonomy-policy</div>
+
+<h3>7.3 三条铁律</h3>
+
+<ol>
+  <li><b>状态机逻辑只许一份。</b><code>patch_task</code> 的主体（状态机校验、approval 冲突检查、CAS、终态结算 wait、WS 推送、事件记录）抽成共享实现，<code>tasks.py</code> 与 <code>teams.py</code> 的路由都调它。<b>绝不能复制两份</b>——否则状态机校验会出现第二份真相。</li>
+  <li><b>鉴权用 kind 无关的 <code>require_agent_owner_row</code></b>（<code>api/common/agent.py:68-77</code>），不用 <code>_require_owned_team</code>。</li>
+  <li><b>team 专属副作用用 <code>if is_team_agent(row):</code> 收口</b>——照抄 <code>goals.py:242-244</code> 的现成模式；自治员工只写 <code>team_tasks</code> 行，不记 team 事件、不推 runtime。</li>
+</ol>
+
+<p><b>错误码复用</b>：<code>TEAM_TASK_CONFLICT</code>(409) / <code>TEAM_TASK_INVALID_TRANSITION</code>(400) / <code>TEAM_WAIT_CONFLICT</code>(409)（<code>infra/errors.py:161-163,327-329</code>），不新增——agent 通用路由与 team 路由返回一致。</p>
+
+<h2 id="frontend">八、前端</h2>
+
+<h3>8.1 看板通用化</h3>
+
+<table>
+  <tr><th style="width:30%">层</th><th style="width:22%">现状</th><th>目标</th></tr>
+  <tr><td>路由</td><td><code>/teams/:teamId/board</code></td><td>加 <code>/agents/:agentId/board</code>，同组件</td></tr>
+  <tr><td>组件 param</td><td>只读 <code>teamId</code></td><td><code>agentId ?? teamId</code>（改名 churn 留到 Slice 3）</td></tr>
+  <tr><td>goal 客户端</td><td>看板用旧 <code>teamsApi.listGoals</code></td><td>切到已有的 <code>goalsApi</code>（<code>api/modules/goals.ts:69</code>）</td></tr>
+  <tr><td>task 客户端</td><td>看板用旧 <code>teamsApi.patchTask</code></td><td>新建 <code>api/modules/tasks.ts</code>，镜像 <code>goals.ts</code> 形状</td></tr>
+  <tr><td>WS</td><td><code>useTeamTaskEvents</code></td><td><b>无需改动</b>——帧对自治专家同样会发</td></tr>
+  <tr><td>入口</td><td>—</td><td>自治专家卡片加「工作台」菜单项</td></tr>
+</table>
+
+<p>切换后 <code>teams.ts</code> 的 <code>listGoals</code> / <code>createGoal</code> / <code>listTasks</code> / <code>patchTask</code> 即无引用 → 删除它们属于<b>本 slice 直接造成的后续清理</b>，不是 opportunistic cleanup。</p>
+
+<h3>8.2 看板泳道与状态机脱节（既存问题）</h3>
+
+<p>看板 6 条泳道（<code>TeamBoardPage.tsx:53-68</code>）<b>前端不做迁移校验</b>——拖拽直接把目标泳道的状态发给后端，靠 400 回错误弹窗。结果是<b>看板提供了一批后端必然拒绝的落点</b>：</p>
+
+<table>
+  <tr><th style="width:34%">拖拽</th><th style="width:16%">后端判定</th><th>原因</th></tr>
+  <tr><td><code>running</code> → proposed 泳道</td><td><span class="tag bad">非法</span></td><td>running 不能回 proposed</td></tr>
+  <tr><td><code>proposed</code> / <code>blocked</code> / <code>needs_input</code> → review 泳道</td><td><span class="tag bad">非法</span></td><td>只有 running 能进 review</td></tr>
+  <tr><td><code>proposed</code> / <code>needs_input</code> → done 泳道</td><td><span class="tag bad">非法</span></td><td>—</td></tr>
+  <tr><td><code>review</code> → blocked 泳道</td><td><span class="tag bad">非法</span></td><td>review 只能回 running</td></tr>
+  <tr><td><code>done</code> 卡片 → 任何泳道</td><td><span class="tag bad">非法</span></td><td>done 是终态，无出边</td></tr>
+  <tr><td><code>failed</code> / <code>cancelled</code></td><td><span class="tag bad">不可达</span></td><td><code>closed</code> 泳道 <code>dropStatus: null</code>，UI 上无法设置</td></tr>
+</table>
+
+<p>另外 <code>TeamTaskPatchBody</code>（<code>teams.py:63-71</code>）只暴露 <code>status / priority / due_at / expected_version</code>，<b>没有 <code>result_summary</code> / <code>blocked_reason</code> / <code>assignee</code></b>，看板也没有任务创建入口。</p>
+
+<div class="callout note">
+  <b>Slice 1 的 <code>POST /agents/{agent_id}/tasks</code> 直接关掉这个缺口</b>（<code>docs/team-l3-roadmap.md:48</code> 早就记了「看板没有任务创建/编辑」）。泳道与迁移表的脱节、以及卡片级状态下拉，建议在 Slice 3 随 4 列投影一起处理。
+</div>
+
+<h2 id="plan">九、最终实施计划（M0 – M6）</h2>
+
+<div class="lead">
+  <b>先止血，再修账本，然后才让它自己醒。</b>
+  M0 三处改动让「自主」不等于「失控」；M1 让任务账本可信；M2 让数字员工拥有看板并把路由只抽一次；M3 把团队收敛成一套机制并接通成本闸门；M4 让它自己醒来干活且不越权不乱花钱；M5 让它像员工一样被管；M6 让状态不漂移。
+</div>
+
+<div class="callout note">
+  <b>v4 变化</b>：合并自我反思发现的 7 处问题——① 预算粒度改为 <b>agent/team 级</b>（已拍板）、② M1.1 覆盖三处越权路径、③ 预算累加必须原子、④ 修正 M2/M3 阶段循环、⑤ 补「关掉自治」语义、⑥ 补 Gate 通则、⑦ 补首次上岗 / 跨平台 / build-frontend / <code>review → proposed</code>。
+</div>
+
+<h3>9.1 阶段总表</h3>
+
+<table>
+  <tr><th style="width:18%">阶段</th><th style="width:22%">目标</th><th style="width:34%">Gate</th><th>依赖</th></tr>
+  <tr>
+    <td><b>M0 止血</b></td><td>自主系统的安全边界</td>
+    <td>①的自问自答消失；②的 <b>approval 卡</b>能答；③的放行被限定</td><td>—</td>
+  </tr>
+  <tr>
+    <td><b>M1 数据正确性</b></td><td>账本可信、状态机自洽、契约唯一</td>
+    <td>④⑤⑥⑦⑨⑩⑫ 全修 + 每条一个<b>行为</b>测试</td><td>M0</td>
+  </tr>
+  <tr>
+    <td><b>M2 底座通用化 + 路由收敛</b><br><span class="c">S1.5–S1.8 + P0.5</span></td>
+    <td>数字员工<b>能被人看见和干预</b>；<b><code>patch_task</code> 只抽一次</b></td>
+    <td>agent 通用看板可用；能建任务改状态；<b>全仓只有一份 <code>patch_task</code></b></td><td>M1</td>
+  </tr>
+  <tr>
+    <td><b>M3 团队侧收敛</b><br><span class="c">P0.1–P0.4</span></td><td>只有一套驱动机制 + 成本闸门接通</td>
+    <td>v1 drive 创建路径不可达；预算超限产出 <code>defer_budget</code></td><td>M2</td>
+  </tr>
+  <tr>
+    <td><b>M4 自治闭环</b><br><span class="c">S2.1–S2.6</span></td><td>数字员工<b>能自己醒来干活</b>，且不越权、不乱花钱</td>
+    <td>self-execute 回路通；预算闸门拦得住；<b>solo 用量计入</b>；HITL 能挂起能续跑</td><td>M0 M1 M3</td>
+  </tr>
+  <tr>
+    <td><b>M5 岗位与考核</b><br><span class="c">S3.1–S3.5</span></td><td><b>能当员工管</b></td>
+    <td>policy 全字段生效；KPI 可查；收件箱可处理</td><td>M4</td>
+  </tr>
+  <tr>
+    <td><b>M6 状态自证</b><br><span class="c">S3.6</span></td><td>状态不漂移</td>
+    <td>能从 <code>team_waits</code> + <code>team_events</code> 重建并对账</td><td>M4，独立立项</td>
+  </tr>
+</table>
+
+<div class="callout note">
+  <b>v4 修正</b>：原表把 <b>P0.5（路由收敛）记在 M3</b>、又说「M3 依赖 M2」——<b>同一件事记在两阶段</b>。现改为：<b>P0.5 的执行归 M2</b>（与 S1.5/S1.7 同批），<b>M3 只留 P0.1–P0.4</b>（去双驱动 + 成本预算）。
+</div>
+
+<h3>9.2 M0 止血（三处）</h3>
+
+<table>
+  <tr><th style="width:8%">#</th><th style="width:26%">问题</th><th>改法</th><th style="width:24%">Gate（GATE-RULE）</th></tr>
+  <tr>
+    <td><b>M0.1</b></td>
+    <td>自治专家 <code>ask_creator</code> <b>静默自答</b>——工具挂上了（<code>manager.py:3906</code>）但 <code>interrupt_on</code> 只在 team 分支设置（<code>:4313</code> 早退 / <code>:4344</code> 唯一写入点）</td>
+    <td>把 <code>interrupt_on[ask_creator]</code> 从 team 分支<b>提出来</b>，跟工具挂载点放一起；team-only 项不动</td>
+    <td>调 <code>ask_creator</code> → 产生 <code>hitl_required</code> 且<b>带 request payload</b> → <code>hitl_pending</code> 落行 → 创建者收到帧。<b>同时验证无 request 的路径仍 raise</b></td>
+  </tr>
+  <tr>
+    <td><b>M0.2</b></td>
+    <td>重启后 <b>approval 卡永远答不了</b>——<code>store.py:397</code> 另起 nonce，而 transcript 里的卡带旧 id（<code>stream_project.py:199</code> → <code>MessageBubble.tsx:689</code>）</td>
+    <td><code>load_persisted()</code> 复用 <code>row.payload["pending_id"]</code>，仅在缺失时铸造</td>
+    <td>注册<b>工具审批</b> → 重启 → 用<b>原始</b> pending_id resume → 审批生效。<b>不测 ask 路径</b>（ask 卡走 composer dock，不受影响）</td>
+  </tr>
+  <tr>
+    <td><b>M0.3</b></td>
+    <td><code>write_scope</code> 变 session 级<b>永久放行</b>——聊天里批准过一次发信，该 agent 之后所有无人值守 cron 获得发信权</td>
+    <td>改为 <b>per-job 显式 opt-in</b>：<code>command.meta.get("allow_writes")</code> 为真 <b>且</b> session 里有被批准的邮件写动作。<code>TEAM_DRIVE_META</code> 已加 <code>allow_writes: True</code> 保留 §7.4-5 能力</td>
+    <td>端到端：普通 cron（无 opt-in）+ session 有批准 → <code>writes_allowed()</code> 仍 <b>False</b>；opt-in 且有批准 → True</td>
+  </tr>
+</table>
+
+<h3>9.3 M1 数据正确性（十处）</h3>
+
+<table>
+  <tr><th style="width:8%">#</th><th style="width:32%">问题</th><th>改法</th></tr>
+  <tr>
+    <td><b>M1.1</b></td>
+    <td><b>三条越权路径</b>：① 板工具只查存在不查花名册；② 决策路径 roster 取不到时 <b>fail-open</b> 降级成「任何 agent 都行」（<code>decision.py:342-344,630-632</code>）；③ <code>plan_apply</code> 完全不校验 assignee（<code>:148,211-212</code>）</td>
+    <td><b>三处一起修</b>：工具路径校验花名册与 goal 归属；决策路径改 <b>fail-closed</b>；<code>plan_apply</code> 写入前<b>自校验</b>（不信任上游）</td>
+  </tr>
+  <tr><td><b>M1.2</b></td><td><code>import_rows(replace)</code> 空集<b>抹掉整张表</b></td><td>守卫改 <code>if not imported_rows: raise</code>（不看 <code>clean</code>）</td></tr>
+  <tr><td><b>M1.3</b></td><td><code>HitlPendingRepo.create</code> 用 <code>SELECT MAX(id)</code> 取 id —— <b>竞态</b></td><td>改 <code>cursor.lastrowid</code>（SQLite）/ <code>RETURNING id</code>（PG）</td></tr>
+  <tr><td><b>M1.4</b></td><td>dispatcher 写 <code>assigned → failed</code>，<b>违反自己的状态机</b></td><td>派发失败走 <code>is_valid_task_transition</code>：<code>assigned → blocked</code> + reason</td></tr>
+  <tr><td><b>M1.5</b></td><td>goal 的 <code>dedupe_key</code> 用秒级 <code>updated_at</code> → 同秒二次编辑被吞</td><td>改 version/纳秒 nonce</td></tr>
+  <tr><td><b>M1.6</b></td><td>限流在验签<b>之前</b>，key 是攻击者可控的 <code>source_id</code></td><td><code>allow_webhook</code> 移到 <code>verify_webhook</code> 之后；key 改派生值</td></tr>
+  <tr><td><b>M1.7</b></td><td>同一 goal 两条路由两种结构（<code>deliverables</code> 缺失）</td><td><code>teams.py</code> 的 goal 路由转薄委托到 <code>goals.py</code>；看板切 <code>goalsApi</code></td></tr>
+  <tr><td><b>M1.8</b></td><td>notify WS 每个消费者开一条连接</td><td>改模块级<b>单例</b> + 订阅者列表</td></tr>
+  <tr><td><b>M1.9</b></td><td>自治专家 <code>peer_invoke_mode="sync"</code> + <code>ask_agent</code> 仍可用</td><td>自治 expert <b>摘掉 <code>ask_agent</code></b></td></tr>
+  <tr><td><b>M1.10</b></td><td>服务端生成的中文硬编码</td><td>进 <code>src/octop/i18n/{en,zh}.json</code> + <code>tr()</code></td></tr>
+</table>
+
+<h3>9.4 M2 / M3 / M4 / M5 / M6 要点</h3>
+
+<table>
+  <tr><th style="width:14%">阶段</th><th style="width:32%">做什么</th><th>关键提醒</th></tr>
+  <tr>
+    <td><b>M2</b><br><span class="c">S1.5–S1.8 + P0.5</span></td>
+    <td>新建 <code>api/routers/tasks.py</code>（<code>GET</code>/<code>POST</code>/<code>PATCH</code> <code>/agents/{id}/tasks</code>）+ <code>api/routers/autonomy.py</code> + <code>repos/autonomy_policy.py</code> + 前端切 <code>goalsApi</code>/<code>tasksApi</code> + i18n</td>
+    <td><b>三条铁律</b>：状态机逻辑只许一份；鉴权用 kind 无关的 <code>require_agent_owner_row</code>；team 副作用用 <code>if is_team_agent(row):</code> 收口。<b>S1.6 必须定义三件事</b>：关闭自治的清理语义（复用 <code>TeamAutopilot.stop()</code>）、拒绝给 <code>kind='team'</code> 设 autonomy、<b>首次上岗引导</b>（没 goal 时给明确指引，不空转）</td>
+  </tr>
+  <tr>
+    <td><b>M3</b><br><span class="c">P0.1–P0.4</span></td>
+    <td>去双驱动 + 成本预算闸门</td>
+    <td><b>P0.4 是本计划最重要的归属决定</b>：成本预算被四份文档同时规划——<b>做两次 = 两个预算字段 + 两套闸门</b>。粒度为 <b>agent/team 级</b>（D10）</td>
+  </tr>
+  <tr>
+    <td><b>M4</b><br><span class="c">S2.1–S2.6</span></td>
+    <td>执行单元接口化 + <b>SelfExecute</b> + 接 v2 heartbeat + solo 跳过 decision unit + <b>S2.6 记账路径对齐</b></td>
+    <td><b>不用 cron</b>：v2 立意就是消除 per-team cron。<b>S2.6 是 v4 新增的接口缺口</b>——self-execute 走普通对话路径（<code>processor.py</code>）不走 cron delivery，<b>不接上则自治员工的预算永远记不上</b></td>
+  </tr>
+  <tr>
+    <td><b>M5</b><br><span class="c">S3.1–S3.5</span></td>
+    <td>policy 全字段生效 + KPI + 收件箱 + 独立验收 + 编制视图</td>
+    <td>S3.4 需要在 <code>task_state.py</code> 的 <code>review</code> 出边里加 <code>proposed</code>（现无）——<b>加边不违反「不改状态集合」</b></td>
+  </tr>
+  <tr>
+    <td><b>M6</b><br><span class="c">S3.6</span></td>
+    <td>从 <code>team_waits</code> + <code>team_events</code> 重建 task/runtime 状态的纯函数 + 对账 job</td>
+    <td>Octop 现在<b>零 reconcile 代码</b>；且账本吞存储错误、runtime 吞 CAS 失败。<b>主动系统里漂移 = 永久故障</b></td>
+  </tr>
+</table>
+
+<h3>9.5 P0.4 成本预算闸门（D10：agent / team 级）</h3>
+
+<div class="callout note">
+  <b>为什么不是 task 级</b>：记账点在 harness 层，回合结束时只有 <code>agent_id</code>/<code>thread_id</code>，<b>没有 task 上下文</b>（<code>processor.py:1767</code>、<code>delivery.py:207</code>）。task_id 只在调用方手里。要做 task 粒度得引入上下文传递，改动面大、收益是精细化而非止损。
+  <br><br><b>好消息</b>：team 级已基本就绪——<code>team_manager.py:405-435</code> 的 <code>_record_team_turn_usage</code> <b>已经把成员回合归到 team</b>（<code>source="team_member"</code> / <code>"team_host"</code>）。
+</div>
+
+<table>
+  <tr><th style="width:8%">#</th><th style="width:34%">做什么</th><th>位置 / 说明</th></tr>
+  <tr>
+    <td><b>a</b></td>
+    <td><b>统一「预算 owner」口径</b>（INV-4）：新增 <code>usage_owner_id(agent_row)</code>——team host 返回 team_id、<b>autonomy_enabled 的 agent 返回自己的 agent_id</b>、其余 None</td>
+    <td>三处记账点统一调用：<code>processor.py:1773</code>、<code>cron/delivery.py:211-216</code>、<code>team_manager.py:428</code>。自治员工的用量现在 <code>team_id=NULL</code>，必须归到它自己的 <code>team_runtime</code> 行</td>
+  </tr>
+  <tr>
+    <td><b>b</b></td>
+    <td><b>原子累加方法</b>（INV-3）：<code>TeamRuntimeRepo.add_budget_used(team_id, tokens)</code> → <code>UPDATE team_runtime SET budget_used = budget_used + ? WHERE team_id = ?</code></td>
+    <td><code>repos/team_runtime.py</code> 现只有 <code>update()</code>（CAS）与 <code>reset_budget()</code>。<b>不得 read-modify-write</b>——多 agent 并发上报会丢账</td>
+  </tr>
+  <tr><td><b>c</b></td><td><code>budget_remaining</code> 接真值</td><td><code>decision.py:241</code> 硬编码 <code>None</code> → <code>dispatcher.py:188</code> 是死分支</td></tr>
+  <tr><td><b>d</b></td><td><code>budget_window</code>（日/月）切换与清零</td><td><code>reset_budget()</code> 已有日切，扩到 <code>budget_window</code></td></tr>
+</table>
+
+<div class="callout note">
+  <b>M0.3 的最终规则是 per-job opt-in，不是「只限 team_drive」。</b>
+  <br>v2 的 drive 走 sweeper heartbeat + self-execute，<b>根本不是 cron run</b> →「只限 team_drive」等于把 drive 能力也砍了，并把个人定时任务的合法发信一并砍掉。
+  <br>per-job opt-in 才是「<b>显式授权、逐 job 生效</b>」：开一个 job 不影响另一个。
+  <br>⚠️ <b>已知后续</b>：<code>CronCreateBody</code> 没有 <code>meta</code> 字段 → 用户目前无法为个人 cron 开 <code>allow_writes</code>。<b>默认安全</b>，但该能力需开 API 字段才可达（列为 M3 跟进项）。
+</div>
+
+<div class="callout risk">
+  <b>b 最容易被漏</b>：只加列不改累加、或者用 CAS 读改写，闸门依然是死的。
+  <br><b>闸门是滞后的</b>：<code>budget_used</code> 在回合<b>结束后</b>才累加，闸门拦的是「下一轮」不是「这一轮」。单轮可超支——v1 接受此语义，但<b>必须写进文档</b>（不能当 bug 报）。
+  <br><b>open tasks ≤10 是数量闸门，不是成本闸门</b>，不能当预算已做。
+</div>
+
+<h3>9.6 验证矩阵</h3>
+
+<div class="callout ok">
+  <b>通则（GATE-RULE）</b>：<b>断言行为，不断言配置项存在。</b> 每条 Gate 都要能被「行为缺失」判失败。
+  <br>现有 <code>tests/unit/{agents,db,gateway,api}</code> → <b>2019 passed, 1 skipped</b>；<code>tests/unit/i18n</code> → 82 passed。<b>14 条问题一条都没被现有测试抓到</b>——这些是覆盖盲区，不是 CI 抓到的回归。<b>每条修复必须配一个行为测试。</b>
+</div>
+
+<table>
+  <tr><th style="width:12%">阶段</th><th>用例</th><th style="width:34%">命令</th></tr>
+  <tr><td>M0</td><td>① 产生 <code>hitl_required</code> 且带 request · ② <b>approval 卡</b>重启后能答 · ③ 非 drive cron 不解锁写</td><td><code>tests/unit/agents/test_autonomy_mount.py</code>、<code>tests/unit/gateway/test_hitl_channel.py</code>、<code>tests/unit/cron</code></td></tr>
+  <tr><td>M1</td><td>④–⑬ 每条一个<b>行为</b>测试</td><td><code>tests/unit/{agents,db,gateway,api}</code></td></tr>
+  <tr><td>M2</td><td>agent 通用看板 / 建任务 / 状态流转 / 越权 / <b>关掉自治的清理</b> / <b>全仓一份 <code>patch_task</code></b></td><td>新 <code>tests/integration/test_agent_tasks_api.py</code></td></tr>
+  <tr><td>M3</td><td>v1 drive 不可达 / 预算超限 <code>defer_budget</code> / <b>并发不丢账</b> / 自治员工用量归集</td><td><code>tests/unit/agents/test_team_*</code>、<code>tests/unit/db</code></td></tr>
+  <tr><td>M4</td><td>heartbeat→self-execute→板变更→事件 / 预算（含 <b>solo 计入</b>）/ HITL / 重启回收</td><td><code>tests/unit/agents/test_team_autopilot.py</code> 等</td></tr>
+  <tr><td>M5</td><td>policy 生效 / KPI 可查 / 收件箱可处理 / <code>review → proposed</code> 可走通</td><td>新 <code>tests/integration/test_autonomy_policy.py</code></td></tr>
+  <tr><td>全量</td><td>ship bar</td><td><code>make all</code></td></tr>
+  <tr><td>前端</td><td>类型 + lint + <b>构建</b></td><td><code>cd dashboard &amp;&amp; npx tsc -b &amp;&amp; npm run lint</code> + <code>make build-frontend</code></td></tr>
+  <tr><td>i18n</td><td>前后端键对齐</td><td><code>uv run pytest tests/unit/i18n -q</code></td></tr>
+</table>
+
+<div class="callout note">
+  <b>跨平台约束（Windows CI）</b>：M0 / M2 / M3 涉及持久化的新测试必须遵守 AGENTS.md §7——<code>monkeypatch.setenv("OCTOP_HOME", str(tmp_path))</code>、<code>Path</code> 断言、<code>posix_only</code>。
+</div>
+
+<h2 id="risk">十、风险与人工闸门</h2>
+
+<table>
+  <tr><th style="width:26%">风险</th><th style="width:14%">Slice 1</th><th>缓解</th></tr>
+  <tr><td>自治专家把任务甩给别的 agent（无派工语义 → 任务永久悬置）</td><td><span class="tag bad">存在</span></td><td><b>S1.4 assignee 自我锁</b>——本 slice 的核心防线</td></tr>
+  <tr><td>自治专家工具面过大（expert = 全量工具，含邮件 / MCP / 写文件）</td><td><span class="tag warn">部分</span></td><td>Slice 1 仍由人驱动，风险有限；Slice 2 接 cron 前必须叠 <code>write_scope(allowed=False)</code> + mandatory HITL 清单</td></tr>
+  <tr><td><code>ask_agent</code> 同步调用阻塞他人会话</td><td><span class="tag warn">存在</span></td><td>Slice 1 不宣传该路径；Slice 2 收窄 peer 白名单</td></tr>
+  <tr><td>自治专家与 team 共用 <code>team_tasks</code>，看板数据混淆</td><td><span class="tag warn">存在</span></td><td>看板按 kind 渲染 + assignee 徽标；<code>assignee=self</code> 天然可区分</td></tr>
+  <tr><td>通用 API 越权访问他人 agent 的任务</td><td><span class="tag ok">无</span></td><td><code>require_agent_owner_row</code> + admin bypass</td></tr>
+  <tr><td>迁移在旧库上丢列（开关永远为关，且静默）</td><td><span class="tag ok">无</span></td><td><b>S1.1b 幂等 helper 挂 post-loop</b></td></tr>
+</table>
+
+<div class="callout ok">
+  <b>必须保留的人工闸门（不可 bypass）：</b>kill switch · <code>write_scope</code> 禁写默认 · active hours 默认窗 · 工具审批 mandatory 清单 · <code>ask_creator</code> 升级通道。
+  <br><b>自治专家的「自由度」必须小于对话态专家——无人值守是更严的上下文，不是更松的。</b>
+</div>
+
+<h2 id="notdo">十一、明确不做</h2>
+
+<table>
+  <tr><th style="width:44%">不做</th><th>理由</th></tr>
+  <tr><td>合并或重命名 <code>task_state.py</code> 的状态</td><td><code>team-l3-roadmap.md:275</code>：<code>assigned</code> / <code>needs_input</code> 是承重的</td></tr>
+  <tr><td>新建 <code>digital_employees</code> 表</td><td>agent 行就是它</td></tr>
+  <tr><td>改 <code>proactive_care_config</code> 表名</td><td>001 已发布，改名需双份重建脚本</td></tr>
+  <tr><td>降低 <code>TEAM_MIN_MEMBERS</code></td><td>数字员工是单兵 expert，不是「一个人的 team」</td></tr>
+  <tr><td>单人场景复用 <code>TeamDispatcher</code> / <code>TeamDecisionService</code></td><td>前者靠 <code>submit_peer</code> 派给别的 agent；后者是为「拆给多成员」而生</td></tr>
+  <tr><td>在 Slice 1 接 cron 自动唤醒</td><td>需先有 C1 / C2</td></tr>
+  <tr><td>在 Slice 1 加 KPI / 收件箱</td><td>属 Slice 3，依赖 Slice 2 的运行数据</td></tr>
+  <tr><td>复制一份 <code>patch_task</code> 给 agent 路由</td><td>会产生第二份状态机真相</td></tr>
+</table>
+
+<h2 id="open">十二、待拍板与待验证</h2>
+
+<h3>12.1 待拍板</h3>
+
+<table>
+  <tr><th style="width:8%">#</th><th style="width:26%">决定</th><th>建议</th></tr>
+  <tr><td>D4</td><td>迁移落点</td><td>折进 <b>024</b>，版本断言保持 24。若 024 被单独切出发布则改开 025</td></tr>
+  <tr><td>D5</td><td>自治开关落点</td><td><code>agents.autonomy_enabled</code>，不放 policy 表；顺带让「在岗数字员工名单」可 SQL 查询</td></tr>
+  <tr><td>D1′</td><td>policy 表名</td><td>加列不改名；代码层用 <code>AutonomyPolicyRepo</code> 表达概念</td></tr>
+</table>
+
+<h3>12.2 待验证</h3>
+
+<table>
+  <tr><th style="width:8%">#</th><th>假设</th><th style="width:16%">何时</th></tr>
+  <tr><td>V1</td><td>板工具挂到 expert 后，<code>current_tool_scope()</code> 能正确返回该 expert 的 agent_id（team 路径已验证，<b>expert 路径未验证</b>）</td><td>S1.3 单测</td></tr>
+  <tr><td>V2</td><td>自治专家的 <code>goal_set</code> 创建的 <code>team_runtime</code> 行不会被 sweeper 误当 autopilot team 拾取（<code>mode</code> 默认 <code>manual</code>，预期安全）</td><td>S1.4 集成测试</td></tr>
+  <tr><td>V3</td><td><code>goal_set</code> 写 <code>runtime.goal_id</code> 时不会与 <code>expected_version</code> 竞态</td><td>S1.4 集成测试</td></tr>
+  <tr><td>V4</td><td>通用 API 路由不与既有路由撞车</td><td><span class="tag ok">已查，无冲突</span></td></tr>
+  <tr><td>V5</td><td><code>proactive_care_config</code> 加列后，既有 <code>SELECT</code>（显式列名）不受影响</td><td>S1.6 单测</td></tr>
+  <tr><td>V6</td><td><code>agents</code> 加列后，无按位置下标读该表的路径</td><td>S1.2 单测</td></tr>
+  <tr><td><b>V10</b></td><td><b><code>usage_owner_id</code> 统一后，自治员工的每一笔用量都能归到自己的 <code>team_runtime</code> 行</b>（含 self-execute 路径）</td><td>M3 / M4</td></tr>
+  <tr><td><b>V11</b></td><td><b>agent/team 级预算足以拦住「烧钱」</b>（粗粒度够用）</td><td>M3</td></tr>
+</table>
+
+<h2 id="appendix">附录 A · 代码索引</h2>
+
+<table>
+  <tr><th style="width:34%">文件</th><th>关键位置</th><th style="width:24%">作用</th></tr>
+  <tr><td><code>infra/agents/teams/task_state.py</code></td><td><code>:9-47</code></td><td>9 状态 + 迁移表 + <code>is_valid_task_transition</code></td></tr>
+  <tr><td><code>infra/agents/teams/board_tools.py</code></td><td><code>:47-82,132-142,149-153,194-231,233-295</code></td><td>板工具；<code>self_only</code> 加在这里</td></tr>
+  <tr><td><code>infra/agents/teams/coordinator.py</code></td><td><code>:38-39,173-175,353-354,405,556,652,656</code></td><td>路由状态集；吞错点；任务迁移调用点</td></tr>
+  <tr><td><code>infra/agents/teams/dispatcher.py</code></td><td><code>:34,87,188,503-521</code></td><td>可派发态；预算死分支；runtime 推导函数</td></tr>
+  <tr><td><code>infra/agents/teams/sweeper.py</code></td><td><code>:87-113,186-206,280</code></td><td>重启回收；超时泊车；只遍历 autopilot</td></tr>
+  <tr><td><code>infra/agents/teams/runtime.py</code></td><td><code>:150-161,177-180,217-265,425-436</code></td><td>start/pause/finish/stop；CAS 重试一次后静默</td></tr>
+  <tr><td><code>infra/agents/teams/decision.py</code></td><td><code>:62-83,241</code></td><td>routine/judgment 分诊；预算 None</td></tr>
+  <tr><td><code>infra/agents/teams/service.py</code></td><td><code>:19,152-168,208-212</code></td><td>最少成员数；roster manifest</td></tr>
+  <tr><td><code>infra/agents/manager.py</code></td><td><code>:3812,3814,3846,3865,3899</code></td><td>工具装配四处 kind 闸门</td></tr>
+  <tr><td><code>infra/gateway/hitl/store.py</code></td><td><code>:17,346-353,355-370,467-478</code></td><td>HITL 四态；无守卫的结算</td></tr>
+  <tr><td><code>infra/db/repos/agents.py</code></td><td><code>:51-78,80-115</code></td><td><code>AgentRow</code> + 兜底读取先例</td></tr>
+  <tr><td><code>infra/db/repos/team_runtime.py</code></td><td><code>:15-16,138-146</code></td><td>runtime 状态常量；唯一清零预算的地方</td></tr>
+  <tr><td><code>infra/db/repos/team_waits.py</code></td><td><code>:21-25,286-306</code></td><td>wait 五态；唯一有守卫的结算</td></tr>
+  <tr><td><code>infra/db/migrate.py</code></td><td><code>:92-117,2312-2323,2442,2474-2493</code></td><td>幂等加列工具；post-loop 无条件块</td></tr>
+  <tr><td><code>api/routers/goals.py</code></td><td><code>:73-79,208-360</code></td><td>agent 通用路由的现成模板</td></tr>
+  <tr><td><code>api/routers/teams.py</code></td><td><code>:63-71,174-180,385-406,409-444,447-522</code></td><td>task 路由与 payload；薄委托来源</td></tr>
+  <tr><td><code>api/common/agent.py</code></td><td><code>:16-23,68-77</code></td><td>kind 无关的鉴权</td></tr>
+  <tr><td><code>api/app.py</code></td><td><code>:159-213,231+</code></td><td>router 注册表</td></tr>
+  <tr><td><code>dashboard/src/pages/Teams/TeamBoardPage.tsx</code></td><td><code>:53-68,240-241,274,295-307</code></td><td>泳道；旧客户端调用点；拖拽</td></tr>
+  <tr><td><code>dashboard/src/api/modules/goals.ts</code></td><td><code>:69-110</code></td><td>agent 通用客户端模板</td></tr>
+  <tr><td><code>dashboard/src/components/GoalDrawer/index.tsx</code></td><td><code>:22,95,122</code></td><td>已通用化的先例</td></tr>
+</table>
+
+<h2 id="relations">附录 B · 与既有文档的关系</h2>
+
+<table>
+  <tr><th style="width:30%">文档</th><th>关系</th></tr>
+  <tr><td><code>docs/proactive-expert-design.md</code></td><td>可行性分析 + E1–E6 路线 + C1/C2/C3 前置 + U1–U5。本文是它的<b>落地版</b>：把 E1 拆成可执行的 9 步，并按代码实况修正了「goal 侧要新建路由」等偏差。<b>其 C1（HITL 挂起）已过时</b>——团队 P3 已落地</td></tr>
+  <tr><td><code>docs/team-l3-roadmap.md</code></td><td>L3 自治路线（Phase A0–A4）。其 A1（预算）、A2（独立验收）、A3（收件箱 + KPI）与本设计的 P0.4 / S3.2–S3.4 <b>重叠</b>——已归一到单一归属，避免两套实现</td></tr>
+  <tr><td><code>docs/team-l3-roadmap.md</code></td><td>L3 自治路线（Phase A0–A4）。本文的 Slice 2 / Slice 3 与其 C1/C2、A1–A4 <b>对齐</b>，但排序不同：本文把<b>岗位层</b>提到 Slice 3，把<b>状态自证（S3.6）</b>单列</td></tr>
+  <tr><td><code>docs/team-drive-v2.md</code></td><td><b>运行时真相源</b>（阶段 0–3 已实现，4/5 未实现）。数字员工<b>挂载</b>其上，不改动其状态机；其阶段 4（成本预算）与阶段 5（旧 drive 清理）分别是本设计的 P0.4 / P0.2–P0.3</td></tr>
+  <tr><td><code>docs/team-autopilot-design.html</code></td><td>团队 v3 设计（P1–P4 已落地，2026-10-25）。<b>其驱动架构已被 team-drive-v2 取代</b>（v2 附录 A 明确替换「每团队 drive cron」），应标注为历史归档；仅采信其已落地的 P1（任务实体）/P3（HITL 挂起）/P4（看板）成果</td></tr>
+  <tr><td><code>docs/team-l3-roadmap.md:284</code></td><td>待定决策「专家是否需要看板，还是只共享 goal/task/deliverable 存储」→ 本文回答：<b>共享存储 + 看板按 kind 渲染</b></td></tr>
+  <tr><td><code>docs/digital-employee-plan.md</code></td><td>本文的<b>实施版 v3</b>：M0–M6 阶段 + Gate + 14 条问题映射 + 验证矩阵。本文多了定位判断与架构图</td></tr>
+</table>
+
+</div>
+</body>
+</html>

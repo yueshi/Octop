@@ -1,0 +1,472 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 24px 32px 28px;
+  overflow: hidden;
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 60vh;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--fn-border-secondary);
+  border-radius: 10px;
+  background: var(--fn-bg-container, var(--fn-bg-elevated));
+  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+}
+
+.headerMain {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.backBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--fn-card-border-normal);
+  border-radius: var(--fn-radius-lg, 10px);
+  background: var(--fn-bg-primary);
+  color: var(--fn-text-secondary);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--fn-text-primary);
+  }
+}
+
+.teamIcon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--fn-text-primary);
+  white-space: nowrap;
+}
+
+.teamName {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--fn-text-tertiary);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-left: auto;
+}
+
+.actionBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--fn-card-border-normal);
+  border-radius: 8px;
+  background: var(--fn-bg-primary);
+  color: var(--fn-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    color: var(--fn-text-primary);
+    border-color: var(--fn-color-brand);
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+}
+
+.stopBtn:hover:not(:disabled) {
+  color: #ff4d4f;
+  border-color: #ff4d4f;
+}
+
+.goalBar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.goalIcon {
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--fn-color-brand);
+}
+
+.goalFields {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.goalRow {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+}
+
+.goalLabel {
+  color: var(--fn-text-tertiary);
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.goalValue {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--fn-text-primary);
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.goalTitle {
+  font-weight: 600;
+}
+
+.goalEmpty {
+  flex: 1;
+  min-width: 0;
+  color: var(--fn-text-tertiary);
+  line-height: 20px;
+}
+
+.lanes {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 16px;
+  align-items: stretch;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.lane {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 240px;
+  height: 100%;
+  min-height: 0;
+  border: 1px solid var(--fn-card-border-normal);
+  border-radius: var(--fn-radius-lg, 10px);
+  background: var(--fn-bg-primary);
+}
+
+.laneOver {
+  border-color: var(--fn-color-brand);
+}
+
+.laneHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fn-text-secondary);
+  border-bottom: 1px solid var(--fn-card-border-normal);
+}
+
+.laneCount {
+  color: var(--fn-text-tertiary);
+  font-weight: 400;
+}
+
+.laneBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  min-height: 80px;
+  overflow-y: auto;
+}
+
+.laneEmpty {
+  margin: auto;
+  padding: 12px 0;
+  color: var(--fn-text-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.card {
+  padding: 8px 10px;
+  border: 1px solid var(--fn-card-border-normal);
+  border-radius: 8px;
+  background: var(--fn-bg-primary);
+  cursor: grab;
+  touch-action: none;
+}
+
+.cardDragging {
+  opacity: 0.6;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 14%);
+}
+
+.cardTitle {
+  font-size: 13px;
+  color: var(--fn-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardReason {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #d46b08;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardResult {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--fn-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  min-height: 18px;
+}
+
+.statusTag {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 5px;
+}
+
+.cardAssignee {
+  font-size: 11px;
+  color: var(--fn-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardPriority {
+  font-size: 11px;
+  color: var(--fn-color-brand);
+  font-weight: 600;
+}
+
+.cardDue {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--fn-text-tertiary);
+  white-space: nowrap;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.detailRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detailItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detailLabel {
+  font-size: 12px;
+  color: var(--fn-text-tertiary);
+}
+
+.detailText {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fn-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+:global(html[data-theme="dark"]) {
+  .cardReason {
+    color: #ffa940;
+  }
+}
+
+.runtimeBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--fn-border-secondary);
+  font-size: 12px;
+  color: var(--fn-text-secondary);
+}
+
+.runtimeDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fn-text-tertiary);
+}
+
+.runtimeDotActive {
+  background: var(--fn-color-primary, #13c2c2);
+  box-shadow: 0 0 0 3px rgba(19, 194, 194, 0.15);
+}
+
+.runtimeLabel {
+  font-weight: 500;
+  color: var(--fn-text-primary);
+}
+
+.runtimeMeta {
+  color: var(--fn-text-tertiary);
+}
+
+.cardWait {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: rgba(19, 194, 194, 0.12);
+  color: var(--fn-color-primary, #13c2c2);
+  font-size: 11px;
+}
+
+.runtimeActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.approvalBar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--fn-card-border-normal);
+  border-radius: var(--fn-radius-lg, 10px);
+  background: var(--fn-bg-primary);
+}
+
+.approvalTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fn-text-primary);
+}
+
+.approvalItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--fn-radius-md, 8px);
+  background: var(--fn-bg-secondary, rgba(0, 0, 0, 0.02));
+}
+
+.approvalText {
+  min-width: 0;
+  flex: 1;
+}
+
+.approvalTask {
+  font-size: 13px;
+  color: var(--fn-text-primary);
+}
+
+.approvalMeta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--fn-text-tertiary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.approvalHint {
+  font-size: 12px;
+  color: var(--fn-text-tertiary);
+}
+
+.approvalActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 767px) {
+  .page {
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+    gap: 14px;
+  }
+
+  .header {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .headerActions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+
+  .goalRow {
+    grid-template-columns: 68px minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .lanes {
+    gap: 10px;
+  }
+}

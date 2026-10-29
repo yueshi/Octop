@@ -107,7 +107,11 @@ inbox 按 callee 并发：同一成员串行，不同成员并行；主持人回
 
 成员被派工时仍用自己的工作区。对方 `last_state` 非 running 则 harness 调用失败，主持人走失败回叫。
 
-停止：Dashboard 取消只取消主持人当前 stream；inbox 里已排队/在跑的成员任务不取消。
+停止：Dashboard 取消只取消主持人当前 stream；inbox 里已排队/在跑的成员任务不取消。自治驱动需要完整停止时走 `POST /api/teams/{team_id}/drive/stop`（停 runtime + 删 legacy 驱动 cron + 排空 inbox + 取消全部未完成任务与 wait，幂等）。
+
+## 看板与驱动（自治闭环）
+
+主持人内置目标/任务工具（`goal_set` / `task_create` / `task_update` / `task_list`，任务状态机在服务端统一校验）。驱动已切换到 v2 runtime（`docs/team-drive-v2.md`）：`team_runtime` 是权威状态，`team_events` 记录控制流，`team_decisions` 保存判断计划，`team_waits` 记录等待/阻塞点；进程级 `team_sweeper` 负责到期、超时、心跳与崩溃回放，团队不再依赖唤醒 cron（启动时会把 legacy `meta.kind=team_drive` cron 折叠进 runtime 并删除）。`drive_enable` 现在启动/更新 runtime；`drive_disable` 仍是 kill switch。autopilot 团队的成员回叫由协调者结算 wait 并关闭任务，不再默认唤醒主持人收口。遇审批或 `ask_creator` 时任务挂起并定向通知创建人。创建人在原生看板页（专家页团队卡片菜单「看板」→ `/teams/{team_id}/board`）按状态泳道查看/拖拽任务（拖拽经 PATCH CAS 写回，冲突 409 提示后刷新），页面显示 runtime 状态并可启动/暂停/恢复/完成；订阅 notifications WS 的 `team.task.updated` / `team.runtime.updated` / `team.decision.updated` / `team.wait.updated` / `team.goal.updated` 实时刷新，`approval_required` 通知点击直达被挂起的会话。设计全文见 `docs/team-autopilot-design.html` 与 `docs/team-drive-v2.md`。
 
 ## 房间与转播
 
@@ -134,10 +138,24 @@ conversation_id = 主持人 thread_id
 | GET | `/api/teams/{team_id}` | 详情 |
 | PATCH | `/api/teams/{team_id}` | 改名称/模型/欢迎语/成员（在途则拒改该成员） |
 | DELETE | `/api/teams/{team_id}` | 删除团队主持人 |
+| GET/POST | `/api/teams/{team_id}/goals` | 目标列表 / 设定活动目标（旧的自动归档，一队一目标） |
+| GET/POST/PATCH | `/api/agents/{agent_id}/goals` | 专家/团队通用目标：标题、背景、验收标准、预期产物；团队目标同步 runtime/ledger |
+| POST/PATCH/DELETE | `/api/agents/{agent_id}/goals/{goal_id}/deliverables` | 产物：预设预期，执行后关联工作区文件/链接/文本 |
+| GET | `/api/teams/{team_id}/tasks` | 任务列表（`?status=` / `?goal_id=`） |
+| PATCH | `/api/teams/{team_id}/tasks/{task_id}` | CAS 更新：`{status?, priority?, due_at?, expected_version}`，版本冲突 409、非法流转 400 |
+| GET | `/api/teams/{team_id}/runtime` | runtime 状态、活动目标/决策、心跳、预算计数、未结算 wait |
+| POST | `/api/teams/{team_id}/drive/start` | 启动/恢复 autopilot（`{heartbeat_interval_sec?, trigger?}`） |
+| POST | `/api/teams/{team_id}/drive/pause` | 用户暂停（`{reason?}`），保留在途与 wait |
+| POST | `/api/teams/{team_id}/drive/resume` | 恢复并重新激活 deferred wait |
+| POST | `/api/teams/{team_id}/drive/finish` | 目标完成，停止接新工作 |
+| GET | `/api/teams/{team_id}/decisions` | 决策审计（`?limit=`） |
+| GET | `/api/teams/{team_id}/waits` | 等待账本（`?status=` / `?limit=`） |
+| POST | `/api/teams/{team_id}/waits/{wait_id}/resolve` | 决策级审批：`{status: approved\|rejected, note?}`；成员 HITL 暂停（`external_ref` 存在）需回会话卡片处理 |
+| POST | `/api/teams/{team_id}/drive/stop` | 驱动全停（停 runtime + 删 legacy cron + 排空 inbox + 取消未完成任务与 wait，幂等） |
 
 `GET /api/agents` 增加 `kind`；团队行带 `member_ids`。`kind=team` 不可 `is_shared`。
 
-错误码：`TEAM_NOT_FOUND`、`TEAM_MEMBERS_TOO_FEW`、`TEAM_MEMBER_INVALID`、`TEAM_MEMBER_BUSY`、`TEAM_NOT_SHAREABLE`。
+错误码：`TEAM_NOT_FOUND`、`TEAM_MEMBERS_TOO_FEW`、`TEAM_MEMBER_INVALID`、`TEAM_MEMBER_BUSY`、`TEAM_NOT_SHAREABLE`、`TEAM_TASK_CONFLICT`、`TEAM_TASK_INVALID_TRANSITION`、`TEAM_WAIT_CONFLICT`。
 
 ## 前端
 
@@ -145,6 +163,7 @@ conversation_id = 主持人 thread_id
 
 - 我的专家：过滤 `kind !== team`
 - 我的团队：卡片/空态指引；创建/编辑只要名称、模型、颜色、欢迎语、成员；通道走现有通道配置（绑在主持人）
+- 团队卡片「更多」菜单：「看板」进入 `/teams/{team_id}/board`（状态泳道 + dnd-kit 拖拽 + WS 实时刷新；截止时间按服务器时区渲染；顶部显示 runtime 状态、启动/暂停/恢复/完成按钮，以及决策级待审批条——批准/拒绝直接调用 `waits/{id}/resolve`，成员 HITL 暂停提示回会话卡片处理）
 - 侧栏：团队带团队徽章
 - 团队聊天右侧：成员条（不含主持人）
 - 气泡：`speaker_agent_id` 对应专家头像/名称；主持人用自己的头像

@@ -147,6 +147,24 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "teams",
         "description": "Expert teams: roster, create/edit, and member dispatch.",
     },
+    {
+        "name": "tasks",
+        "description": (
+            "Board tasks for an expert or team: create, list, and CAS status "
+            "updates validated by the shared state machine."
+        ),
+    },
+    {
+        "name": "goals",
+        "description": "Goals and expected deliverables for experts and teams, with file/link/text artifacts.",
+    },
+    {
+        "name": "external-events",
+        "description": (
+            "External event plane: HMAC webhook ingress, sources/subscriptions, "
+            "and delivery status for team and light-app targets."
+        ),
+    },
     {"name": "workspace", "description": "Agent workspace file tree: list, read, write, upload."},
     {"name": "agent_files", "description": "Agent-owned configuration files (SOUL.md, skills, …)."},
     {"name": "usage", "description": "Token usage summaries for billing and dashboards."},

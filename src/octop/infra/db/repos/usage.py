@@ -41,6 +41,7 @@ class UsageRow:
     total_tokens: int
     model_calls: int
     source: str
+    team_id: str | None
 
     @classmethod
     def from_row(cls, r: DbRow) -> UsageRow:
@@ -60,6 +61,7 @@ class UsageRow:
             total_tokens=r["total_tokens"],
             model_calls=r["model_calls"],
             source=r["source"],
+            team_id=r["team_id"],
         )
 
 
@@ -157,6 +159,7 @@ class UsageRepo:
         model: str = "",
         thread_id: str = "",
         source: str = "chat",
+        team_id: str | None = None,
         ts: int | None = None,
     ) -> int:
         """Append one usage row. Returns the new row id."""
@@ -168,8 +171,8 @@ class UsageRepo:
                     ts, agent_id, user_id, thread_id, model,
                     input_tokens, uncached_input_tokens,
                     cache_read_tokens, cache_write_tokens,
-                    output_tokens, reasoning_tokens, total_tokens, model_calls, source
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    output_tokens, reasoning_tokens, total_tokens, model_calls, source, team_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     ts or now_ts(),
@@ -188,6 +191,7 @@ class UsageRepo:
                     int(input_tokens) + int(output_tokens),
                     int(model_calls),
                     source,
+                    team_id,
                 ),
             )
 
@@ -424,14 +428,14 @@ class UsageRepo:
                     input_tokens, uncached_input_tokens,
                     cache_read_tokens, cache_write_tokens,
                     output_tokens, reasoning_tokens, total_tokens,
-                    model_calls, source
+                    model_calls, source, team_id
                 FROM (
                     SELECT
                         id, ts, agent_id, user_id, thread_id, model,
                         input_tokens, uncached_input_tokens,
                         cache_read_tokens, cache_write_tokens,
                         output_tokens, reasoning_tokens, total_tokens,
-                        model_calls, source
+                        model_calls, source, team_id
                     FROM usage_log
                     WHERE {where_sql}
                     ORDER BY ts DESC, id DESC

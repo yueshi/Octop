@@ -269,3 +269,43 @@ async def test_cross_user_cannot_list_cron(env: Any) -> None:
     c, _srv, _alice_auth, bob_auth, aid = env
     r = await c.get(f"/api/agents/{aid}/cron", headers=bob_auth)
     assert r.status_code == 403
+
+
+async def test_meta_write_opt_in_is_stored_and_nothing_else_passes(
+    env: Any,
+) -> None:
+    """``meta.allow_writes`` is the only client-supplied meta key honoured.
+
+    A cron job stays write-blocked by default; letting clients set arbitrary
+    meta would let them forge the drive kind or wake markers.
+    """
+    c, srv, alice_auth, _bob_auth, aid = env
+    assert srv.services is not None
+
+    r = await c.post(
+        f"/api/agents/{aid}/cron",
+        headers=alice_auth,
+        json={
+            "trigger": "interval:60",
+            "prompt": "send the report",
+            "meta": {"allow_writes": True, "kind": "team_drive"},
+        },
+    )
+    assert r.status_code == 201, r.text
+    row = srv.services.cron_repo.get(r.json()["id"])
+    assert row is not None
+    assert row.meta == {"allow_writes": True}
+
+
+async def test_cron_without_opt_in_is_write_blocked(env: Any) -> None:
+    c, srv, alice_auth, _bob_auth, aid = env
+    assert srv.services is not None
+
+    r = await c.post(
+        f"/api/agents/{aid}/cron",
+        headers=alice_auth,
+        json={"trigger": "interval:60", "prompt": "ping"},
+    )
+    assert r.status_code == 201
+    row = srv.services.cron_repo.get(r.json()["id"])
+    assert row is not None and row.meta == {}

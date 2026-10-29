@@ -144,6 +144,14 @@ def write_interrupt_on(mcp_server_names: list[str]) -> dict[str, Any]:
     return {name: dict(entry) for server in mcp_server_names for name in write_tool_names(server)}
 
 
+def is_write_action_name(name: str) -> bool:
+    """True when a HITL action name targets an Agent Mail write tool.
+
+    Mount-time names are ``{server}_{tool}`` (see :func:`write_tool_names`).
+    """
+    return any(str(name).endswith(f"_{raw}") for raw in _WRITES)
+
+
 def list_tools() -> list[dict[str, Any]]:
     tools = []
     for name, (_, properties, required) in _COMMANDS.items():

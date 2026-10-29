@@ -20,6 +20,7 @@ import {
   Shield,
   PanelsTopLeft,
   AppWindow,
+  Webhook,
 } from "lucide-react";
 import type { OctopUser } from "../api/modules/auth";
 import { navAllowed, userCan } from "../utils/permissions";
@@ -77,6 +78,7 @@ export const SIDEBAR_NAV_KEYS = [
   "skill-packages",
   "knowledge-bases",
   "bridge",
+  "external-events",
   "workbench",
   "remote-desktop",
   "acp",
@@ -131,6 +133,7 @@ export const SIDEBAR_GROUPED_NAV_KEYS = [
   "skill-packages",
   "knowledge-bases",
   "bridge",
+  "external-events",
   "workbench",
   "remote-desktop",
   "acp",
@@ -241,6 +244,12 @@ export function buildNavSections(
     icon: <Cloudy size={iconSize} strokeWidth={iconStroke} />,
     labelKey: "nav.bridge",
     badge: "Beta",
+  });
+  settingsItems.push({
+    key: "external-events",
+    path: "/external-events",
+    icon: <Webhook size={iconSize} strokeWidth={iconStroke} />,
+    labelKey: "nav.externalEvents",
   });
   if (settingsItems.length > 0) {
     sections.push({

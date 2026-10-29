@@ -294,6 +294,10 @@ class AppRuntime:
     trajectory_service: TrajectoryService | None = None
     history_archive: Any | None = None
     bridge_manager: Any | None = None
+    team_sweeper: Any | None = None
+    external_event_service: Any | None = None
+    external_event_worker: Any | None = None
+    external_expert_target: Any | None = None
 
     def replace_services(self, services: SharedServices, config: OctopConfig) -> None:
         """Retarget all runtime singletons onto a new SharedServices / config.
@@ -322,6 +326,52 @@ class AppRuntime:
                     services=services, workspaces=self.agent_registry, config=config
                 ),
             )
+        connector_runner: Any | None = None
+        if self.external_event_service is not None:
+            from octop.infra.events.connector_poll import (  # noqa: PLC0415
+                build_connector_runner,
+            )
+            from octop.infra.events.service import ExternalEventService  # noqa: PLC0415
+
+            connector_runner = build_connector_runner(services=services, config=config)
+            self.external_event_service = ExternalEventService(
+                repos=services.repos,
+                secret_repo=services.secret_repo,
+                connector_runner=connector_runner,
+            )
+        if self.external_event_worker is not None:
+            from octop.infra.cron.delivery import CronDeliveryService  # noqa: PLC0415
+            from octop.infra.events.expert_target import ExpertTarget  # noqa: PLC0415
+
+            expert_target = ExpertTarget(
+                gateway=self.gateway,
+                agent_manager=self.agent_registry,
+                delivery=CronDeliveryService(
+                    gateway=self.gateway,
+                    agent_manager=self.agent_registry,
+                    repos=services.repos,
+                ),
+                repos=services.repos,
+            )
+            self.external_expert_target = expert_target
+            self.external_event_worker.replace_persistence(
+                repos=services.repos,
+                app_service=build_source_service(
+                    services=services, workspaces=self.agent_registry, config=config
+                ),
+                coordinator=self.gateway.team_coordinator,
+                resolve_team_target=(
+                    self.gateway.team_autopilot.resolve_target
+                    if self.gateway.team_autopilot is not None
+                    else None
+                ),
+                push_user=self.gateway.ws_hub.push_to_user,
+                expert_delivery=expert_target.deliver,
+                event_service=self.external_event_service,
+                connector_runner=connector_runner,
+            )
+        if self.team_sweeper is not None:
+            self.team_sweeper.replace_repos(services.repos)
 
 
 class OctopServer:
@@ -491,11 +541,26 @@ class OctopServer:
             config.database.driver,
         )
 
+    def _record_team_boot_events(self) -> None:
+        """Shadow ledger: one runtime.boot per team per process (v2 §11.2)."""
+        assert self.services is not None
+        from octop.infra.agents.teams import TeamCoordinator, is_team_agent  # noqa: PLC0415
+
+        repos = self.services.repos
+        coordinator = TeamCoordinator(
+            event_repo=repos.team_event_repo,
+            runtime_repo=repos.team_runtime_repo,
+        )
+        for row in repos.agent_repo.list_all():
+            if is_team_agent(row):
+                coordinator.record_boot(row.agent_id)
+
     async def _boot_runtime(self, config: OctopConfig) -> None:
         assert self.services is not None
         assert self.expert_catalog is not None
         assert self.plugin_manager is not None
 
+        self._record_team_boot_events()
         from octop.infra.utils.browser_media import (  # noqa: PLC0415
             configure_browser_idle_timeout,
         )
@@ -589,6 +654,13 @@ class OctopServer:
         hitl_session_store = gateway.processor.hitl_coordinator.session_policies
         hitl_session_store.replace_repo(self.services.repos.thread_repo)
         registry.set_hitl_session_store(hitl_session_store)
+        registry.set_task_notify(gateway.ws_hub.push_to_user)
+
+        # Phase 3: team_runtime is authoritative; legacy drive cron rows are
+        # folded into it and a process-wide sweeper replaces the wake cron.
+        if gateway.team_autopilot is not None:
+            registry.set_team_autopilot(gateway.team_autopilot)
+            await gateway.team_autopilot.migrate_legacy_drive_jobs(cron_mgr)
 
         care_service = ProactiveCareService(
             gateway=gateway,
@@ -608,6 +680,20 @@ class OctopServer:
 
         await registry.boot()
         registry.schedule_idle_reclaim_sweep()
+        team_sweeper = None
+        if gateway.team_coordinator is not None:
+            from octop.infra.agents.teams.sweeper import (  # noqa: PLC0415
+                TeamSweeper,
+                install_team_sweeper,
+            )
+
+            team_sweeper = TeamSweeper(
+                repos=self.services.repos,
+                coordinator=gateway.team_coordinator,
+                timezone=config.default_timezone,
+            )
+            team_sweeper.recover_inflight()
+            install_team_sweeper(cron_mgr, team_sweeper)
         await gateway.refresh_media_backends()
 
         user_mgr = UserManager(self.services)
@@ -648,6 +734,43 @@ class OctopServer:
         )
         source_scheduler.start()
 
+        from octop.infra.events.connector_poll import (  # noqa: PLC0415
+            build_connector_runner,
+        )
+        from octop.infra.events.expert_target import ExpertTarget  # noqa: PLC0415
+        from octop.infra.events.service import ExternalEventService  # noqa: PLC0415
+        from octop.infra.events.worker import ExternalEventWorker  # noqa: PLC0415
+
+        connector_runner = build_connector_runner(services=self.services, config=config)
+        expert_target = ExpertTarget(
+            gateway=gateway,
+            agent_manager=registry,
+            delivery=cron_delivery,
+            repos=self.services.repos,
+        )
+        external_event_service = ExternalEventService(
+            repos=self.services.repos,
+            secret_repo=self.services.secret_repo,
+            connector_runner=connector_runner,
+        )
+        external_event_worker = ExternalEventWorker(
+            repos=self.services.repos,
+            app_service=build_source_service(
+                services=self.services, workspaces=registry, config=config
+            ),
+            coordinator=gateway.team_coordinator,
+            resolve_team_target=(
+                gateway.team_autopilot.resolve_target
+                if gateway.team_autopilot is not None
+                else None
+            ),
+            push_user=gateway.ws_hub.push_to_user,
+            expert_delivery=expert_target.deliver,
+            event_service=external_event_service,
+            connector_runner=connector_runner,
+        )
+        external_event_worker.start()
+
         self.app_runtime = AppRuntime(
             agent_registry=registry,
             gateway=gateway,
@@ -658,6 +781,10 @@ class OctopServer:
             trajectory_service=trajectory_service,
             history_archive=history_archive,
             bridge_manager=bridge_mgr,
+            team_sweeper=team_sweeper,
+            external_event_service=external_event_service,
+            external_event_worker=external_event_worker,
+            external_expert_target=expert_target,
         )
         from octop.infra.knowledge.gate import (  # noqa: PLC0415
             warn_if_local_embedding_deps_missing,
@@ -761,6 +888,8 @@ class OctopServer:
             await agently_auth.close()
             if self.app_runtime is not None:
                 rt = self.app_runtime
+                if rt.external_event_worker is not None:
+                    await rt.external_event_worker.shutdown()
                 if rt.source_scheduler is not None:
                     await rt.source_scheduler.shutdown()
                 await rt.proactive_scheduler.shutdown()

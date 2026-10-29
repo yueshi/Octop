@@ -12,10 +12,14 @@ import pytest
 from octop_harness.teams.inbox import InboxMessage
 from octop_harness.teams.processor import ReplyEvent
 
+from octop.infra.agents.teams.coordinator import TeamCoordinator
 from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.agents import AgentRepo
 from octop.infra.db.repos.sessions import SessionRepo
+from octop.infra.db.repos.team_events import TeamEventRepo
+from octop.infra.db.repos.team_runtime import TeamRuntimeRepo
+from octop.infra.db.repos.team_tasks import TeamTaskRepo
 from octop.infra.db.repos.threads import ThreadRepo
 from octop.infra.db.repos.users import UserRepo
 from octop.infra.gateway.process.processor import GlobalProcessor
@@ -74,8 +78,13 @@ def processor_env(tmp_path: Path) -> dict[str, object]:
         connector_repo=repos.connector_repo,
         dispatcher=SlashDispatcher(),
         gateway=gw,
+        team_coordinator=TeamCoordinator(
+            event_repo=TeamEventRepo(db),
+            runtime_repo=TeamRuntimeRepo(db),
+            task_repo=TeamTaskRepo(db),
+        ),
     )
-    return {"processor": processor, "gateway": gw, "parent_sk": parent_sk}
+    return {"processor": processor, "gateway": gw, "parent_sk": parent_sk, "db": db}
 
 
 def test_compose_followup_uses_peer_display_name(processor_env: dict) -> None:
@@ -271,6 +280,72 @@ async def test_on_reply_publishes_wrapup_without_session_key(processor_env: dict
     tokens = [frame for frame in frames if frame.get("type") == "token"]
     assert tokens
     assert tokens[0].get("content") == "没有 session_key 也要进群聊"
+
+
+@pytest.mark.asyncio
+async def test_on_reply_records_member_replied_event(processor_env: dict) -> None:
+    """成员回执恰好落一条 member.replied 事件，旧收口行为不变（v2 §11.2）。"""
+    processor = processor_env["processor"]
+    gateway = processor_env["gateway"]
+    db = processor_env["db"]
+    parent_sk = processor_env["parent_sk"]
+    processor._agent_repo.create(agent_id="host", user_id=1, name="Host", kind="team")
+    host_sk = ThreadRegistry.dashboard_key(agent_id="host", user_id=1)
+    gateway.thread_registry._threads.insert(
+        thread_id="thr_team",
+        agent_id="host",
+        user_id=1,
+        channel_type="dashboard",
+        session_key=host_sk,
+    )
+    frames: list[dict[str, object]] = []
+
+    async def capture(frame: dict[str, object]) -> None:
+        frames.append(frame)
+
+    gateway.ws_hub.register("conn-ledger", capture)
+    gateway.ws_hub.subscribe("thr_team", "conn-ledger")
+
+    await processor.on_reply(
+        ReplyEvent(
+            inbox_id="job-ledger",
+            status="done",
+            source_agent_id="member-1",
+            source_thread_id="thr_team",
+            target_agent_id="host",
+            user_id=1,
+            reply_text="成员收口进事件账本",
+            metadata={},
+        )
+    )
+
+    events = TeamEventRepo(db).list_after("host")
+    assert [(e.type, e.dedupe_key, e.actor) for e in events] == [
+        ("member.replied", "inbox:job-ledger", "member:member-1")
+    ]
+    assert events[0].payload["status"] == "done"
+    # Legacy close-out still published the room text.
+    tokens = [frame for frame in frames if frame.get("type") == "token"]
+    assert tokens and tokens[0].get("content") == "成员收口进事件账本"
+    # Runtime row was provisioned lazily by the first event.
+    runtime = TeamRuntimeRepo(db).get("host")
+    assert runtime is not None and runtime.status == "idle"
+
+    # Non-team peer rooms (expert ask_agent) stay off the ledger.
+    await processor.on_reply(
+        ReplyEvent(
+            inbox_id="job-expert",
+            status="done",
+            source_agent_id="child",
+            source_thread_id="thr_parent",
+            target_agent_id="host",
+            user_id=1,
+            reply_text="expert wrap-up",
+            metadata={"session_key": parent_sk},
+        )
+    )
+    assert TeamEventRepo(db).list_after("parent") == []
+    assert len(TeamEventRepo(db).list_after("host")) == 1
 
 
 @pytest.mark.asyncio
@@ -2348,3 +2423,53 @@ def test_stamp_stream_speaker_sets_agent_alias() -> None:
     )
     assert member["agent_id"] == "doctor"
     assert member["agent"] == "doctor"
+
+
+@pytest.mark.asyncio
+async def test_member_reply_survives_host_hitl_pause(processor_env: dict) -> None:
+    """C13: while the host graph is paused on HITL, member wrap-ups still land.
+
+    The pause registers on the room thread exactly as the delivery path does;
+    the member callback must neither drop the wrap-up nor clobber the pending
+    pause the creator still has to answer.
+    """
+    from octop.infra.gateway.hitl.coordinator import HitlStreamContext
+
+    processor = processor_env["processor"]
+    gateway = processor_env["gateway"]
+    parent_sk = processor_env["parent_sk"]
+
+    coordinator = processor.hitl_coordinator
+    record = coordinator.register_from_request(
+        {"action_requests": [{"name": "ask_creator", "args": {"task_id": "t1"}}]},
+        ctx=HitlStreamContext(
+            thread_id="thr_parent",
+            agent_id="parent",
+            user_id=1,
+            session_key=parent_sk,
+            channel_type="dashboard",
+        ),
+    )
+    assert record.status == "pending"
+
+    await processor.on_reply(
+        ReplyEvent(
+            inbox_id="job-hitl",
+            status="done",
+            source_agent_id="parent",
+            source_thread_id="thr_parent",
+            target_agent_id="child",
+            user_id=1,
+            reply_text="member finished while host awaits approval",
+            metadata={"session_key": parent_sk},
+        )
+    )
+
+    session = gateway.thread_registry.get_session(parent_sk)  # type: ignore[attr-defined]
+    assert session is not None
+    assert session.unread_count == 1
+    pending = coordinator.store.resolve_pending_for_thread(
+        "thr_parent", agent_id="parent", user_id=1
+    )
+    assert pending is not None
+    assert pending.status == "pending"

@@ -8,6 +8,7 @@ import { message } from "@/utils/antdMessage";
 import {
   AlertCircle,
   ChevronRight,
+  Columns3,
   FolderOpen,
   MessageSquare,
   MoreHorizontal,
@@ -301,6 +302,14 @@ export const TeamCard = memo(function TeamCard({
               {t("experts.teams.memberMore", { count: hiddenCount })}
             </span>
           )}
+          <button
+            type="button"
+            className={styles.teamCardBoardBtn}
+            onClick={() => navigate(`/teams/${agent.agent_id}/board`)}
+          >
+            <Columns3 size={13} />
+            {t("experts.teams.boardBtn")}
+          </button>
         </div>
 
         {localState === "failed" && friendlyError && (

@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Octop 轻应用 · 定位 / 功能 / 架构 / 实现</title>
+<style>
+  :root{
+    --ink:#1c2333; --muted:#5b6472; --line:#e4e8f0;
+    --accent:#4f46e5; --accent-2:#0ea5e9; --bg:#e9edf4;
+    --ok:#059669; --ok-bg:#e7f6f0; --plan:#7c3aed; --plan-bg:#f2ecfc;
+    --prop:#d97706; --prop-bg:#fdf3e3; --chip:#f3f5f9;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;background:var(--bg);overflow:hidden;
+    font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",-apple-system,"Segoe UI",sans-serif;
+    color:var(--ink)}
+  #viewport{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+  #stage{width:1280px;height:720px;position:relative;transform-origin:center center;flex:none}
+  .slide{position:absolute;inset:0;background:#fff;border-radius:14px;
+    box-shadow:0 12px 44px rgba(28,35,51,.13);padding:38px 56px 56px;
+    display:none;flex-direction:column;overflow:hidden;
+    --sec:#4f46e5;--sec-soft:#eef0fe}
+  .slide::before{content:"";position:absolute;top:0;left:0;right:0;height:5px;
+    background:linear-gradient(90deg,var(--sec),rgba(79,70,229,0) 90%)}
+  .slide.active{display:flex;animation:rise .45s ease both}
+  @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion: reduce){.slide.active{animation:none}}
+  /* section color themes */
+  .s-feat{--sec:#059669;--sec-soft:#e7f6f0}
+  .s-arch{--sec:#0284c7;--sec-soft:#e8f4fb}
+  .s-impl{--sec:#d97706;--sec-soft:#fdf3e3}
+  .s-road{--sec:#7c3aed;--sec-soft:#f2ecfc}
+  .kicker{font-size:13px;font-weight:800;letter-spacing:.2em;color:var(--sec);
+    text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .kicker::before{content:"";width:10px;height:10px;border-radius:3px;background:var(--sec)}
+  h2.title{font-size:32px;font-weight:800;line-height:1.25;margin-bottom:5px}
+  .subtitle{font-size:15.5px;color:var(--muted);margin-bottom:18px}
+  .body{flex:1;min-height:0}
+  .footer{position:absolute;left:56px;right:56px;bottom:18px;display:flex;justify-content:space-between;
+    font-size:11.5px;color:#9aa3b2;border-top:1px solid var(--line);padding-top:9px}
+  .footer b{color:var(--sec);font-weight:700}
+
+  /* cover */
+  .cover{justify-content:center;color:#fff;
+    background:
+      radial-gradient(1000px 560px at 88% -12%, rgba(99,102,241,.38), transparent 62%),
+      radial-gradient(760px 480px at -6% 112%, rgba(14,165,233,.30), transparent 60%),
+      linear-gradient(150deg,#141829 0%,#1b2140 55%,#232a55 100%)}
+  .cover::before{background:linear-gradient(90deg,#6366f1,#22d3ee 45%,transparent 92%);height:6px}
+  .cover .brand{font-size:14px;font-weight:800;letter-spacing:.32em;color:#a5b4fc;margin-bottom:24px}
+  .cover h1{font-size:60px;font-weight:900;line-height:1.18;margin-bottom:12px;letter-spacing:.01em}
+  .cover h1 em{font-style:normal;background:linear-gradient(90deg,#a5b4fc,#67e8f9);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .cover .tagline{font-size:20px;color:#c3cbe2;margin-bottom:34px}
+  .stats{display:flex;gap:14px;margin-bottom:32px}
+  .stat{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);
+    border-radius:13px;padding:13px 20px;text-align:center;min-width:150px}
+  .stat .v{font-size:27px;font-weight:900;background:linear-gradient(90deg,#a5b4fc,#67e8f9);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .stat .l{font-size:12px;color:#b9c2d9;margin-top:3px}
+  .cover .meta{display:flex;gap:26px;font-size:14px;color:#9aa5c4}
+  .cover .meta b{color:#e7eaf5;font-weight:600}
+  .cover .footer{border-top:1px solid rgba(255,255,255,.14);color:#8b96b5}
+
+  /* generic blocks */
+  .cols{display:flex;gap:20px;height:100%;min-height:0}
+  .col{flex:1;min-width:0}
+  .card{border:1px solid var(--line);border-radius:13px;padding:15px 18px;background:#fff;
+    box-shadow:0 1px 2px rgba(28,35,51,.04)}
+  .card h4{font-size:15.5px;font-weight:800;margin-bottom:9px;display:flex;align-items:center;gap:9px}
+  .ic{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+    font-size:17px;background:var(--sec-soft);flex:none}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--sec);flex:none}
+  .dot.g{background:var(--ok)} .dot.o{background:var(--prop)} .dot.p{background:var(--plan)}
+  ul.tick{list-style:none}
+  ul.tick li{font-size:15px;line-height:1.5;padding:4.5px 0 4.5px 23px;position:relative;color:#333b4a}
+  ul.tick li::before{content:"";position:absolute;left:3px;top:11px;width:8px;height:8px;border-radius:2px;
+    background:linear-gradient(135deg,var(--sec),#8b9cf0)}
+  ul.tick li b{color:var(--ink)}
+  ul.dash{list-style:none}
+  ul.dash li{font-size:14.5px;line-height:1.5;padding:3.5px 0 3.5px 18px;position:relative;color:#333b4a}
+  ul.dash li::before{content:"—";position:absolute;left:0;color:#b6bdc9}
+
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{font-size:12px;font-weight:800;color:var(--muted);text-align:left;letter-spacing:.06em;
+    padding:6.5px 10px;border-bottom:2px solid var(--line);background:var(--chip);white-space:nowrap}
+  th:first-child{border-radius:8px 0 0 0} th:last-child{border-radius:0 8px 0 0}
+  td{padding:6.5px 10px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.45}
+  tr:last-child td{border-bottom:none}
+  code{font-family:"SFMono-Regular",Consolas,"JetBrains Mono",monospace;font-size:.87em;
+    background:var(--chip);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:#37406b;white-space:nowrap}
+  .c-life{color:#059669} .c-struct{color:#4f46e5} .c-data{color:#0284c7}
+  .chip{display:inline-block;font-size:11.5px;font-weight:800;border-radius:999px;padding:2px 10px;margin-left:6px;vertical-align:2px;white-space:nowrap}
+  .chip.ok{color:var(--ok);background:var(--ok-bg)} .chip.plan{color:var(--plan);background:var(--plan-bg)}
+  .chip.prop{color:var(--prop);background:var(--prop-bg)}
+  .badge{font-size:11px;font-weight:700;border-radius:5px;padding:1px 8px;background:var(--sec-soft);color:var(--sec);white-space:nowrap}
+
+  /* flow boxes */
+  .flow{display:flex;align-items:stretch;gap:0}
+  .fbox{border:1.5px solid var(--line);border-radius:11px;background:#fbfcfe;padding:10px 13px;flex:1;min-width:0;position:relative}
+  .fbox h5{font-size:14px;font-weight:800;margin-bottom:3px;display:flex;align-items:center;gap:7px}
+  .fbox p{font-size:12.5px;color:var(--muted);line-height:1.45}
+  .fbox.hl{border-color:var(--sec);background:linear-gradient(180deg,#fff,var(--sec-soft))}
+  .farrow{display:flex;align-items:center;padding:0 7px;color:#aab2c2;font-size:19px;flex:none}
+  .nc{width:21px;height:21px;border-radius:50%;background:var(--sec);color:#fff;font-size:11.5px;font-weight:800;
+    display:inline-flex;align-items:center;justify-content:center;flex:none}
+  .stack{display:flex;flex-direction:column;gap:13px}
+  .band{border-radius:12px;border:1.5px solid var(--line);padding:11px 15px;background:#fbfcfe}
+  .band>h4{font-size:12.5px;font-weight:800;color:var(--sec);letter-spacing:.1em;margin-bottom:9px}
+
+  /* feature grid */
+  .fgrid{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:1fr 1fr;gap:14px;height:100%}
+  .fcard{border:1px solid var(--line);border-radius:13px;padding:14px 16px;background:linear-gradient(180deg,#fff,#fcfdfe);
+    box-shadow:0 1px 2px rgba(28,35,51,.04)}
+  .fcard .hd{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .fcard .hd h4{font-size:15.5px;font-weight:800;flex:1;min-width:0}
+  .fcard ul.dash li{font-size:13px;padding:2.5px 0 2.5px 16px}
+
+  /* layered architecture */
+  .layer{border:1.5px solid var(--line);border-radius:12px;background:#fbfcfe;padding:9px 13px;display:flex;gap:12px}
+  .ltag{width:78px;flex:none;display:flex;flex-direction:column;justify-content:center;gap:2px;
+    border-right:2px solid var(--sec-soft);padding-right:10px}
+  .ltag b{font-size:13.5px;color:var(--sec);line-height:1.3}
+  .ltag span{font-size:10.5px;color:var(--muted);letter-spacing:.05em}
+  .lboxes{flex:1;display:flex;gap:9px;min-width:0}
+  .larr{text-align:center;color:#aab2c2;font-size:13px;line-height:1;margin:3px 0}
+  .larr em{font-style:normal;color:var(--muted);font-size:11.5px;margin-left:8px}
+
+  /* defense bands */
+  .def{display:flex;gap:13px;align-items:flex-start;border:1px solid var(--line);border-left:4px solid var(--sec);
+    border-radius:11px;padding:10px 15px;background:#fff;box-shadow:0 1px 2px rgba(28,35,51,.04)}
+  .def .dn{font-size:19px;font-weight:900;color:var(--sec);opacity:.3;line-height:1.15;flex:none;width:36px}
+  .def h5{font-size:14.5px;font-weight:800;margin-bottom:2px}
+  .def p{font-size:13px;color:#4b5563;line-height:1.5}
+  .def .tag{margin-left:auto;flex:none;font-size:11px;font-weight:800;color:var(--sec);background:var(--sec-soft);
+    border-radius:999px;padding:2.5px 10px;white-space:nowrap}
+
+  /* steps (assistant) */
+  .steps{position:relative;padding-left:34px}
+  .steps::before{content:"";position:absolute;left:10.5px;top:10px;bottom:10px;width:2px;
+    background:linear-gradient(180deg,var(--sec),#c9d2f0)}
+  .step{position:relative;padding:6px 0}
+  .step .nc{position:absolute;left:-34px;top:7px}
+  .step h5{font-size:14px;font-weight:800;display:inline}
+  .step p{font-size:12.5px;color:var(--muted);line-height:1.45;margin-top:1px}
+
+  /* timeline */
+  .tl{display:flex;gap:14px;position:relative;margin-top:14px}
+  .tl::before{content:"";position:absolute;left:3%;right:3%;top:7px;height:3px;border-radius:2px;
+    background:linear-gradient(90deg,#10b981,#6366f1,#7c3aed,#d97706)}
+  .tl .stage{flex:1;min-width:0;display:flex;flex-direction:column}
+  .tl .tdot{width:15px;height:15px;border-radius:50%;margin:0 auto 10px;border:3.5px solid #fff;
+    box-shadow:0 0 0 2px currentColor;background:currentColor;color:#10b981;position:relative;z-index:1}
+  .tl .stage:nth-child(2) .tdot{color:#6366f1} .tl .stage:nth-child(3) .tdot{color:#7c3aed} .tl .stage:nth-child(4) .tdot{color:#d97706}
+  .tl .tcard{border:1.5px solid var(--line);border-radius:12px;padding:11px 13px;background:#fff;flex:1;
+    box-shadow:0 1px 2px rgba(28,35,51,.04)}
+  .tl .tcard.done{border-color:#bfe3cd;background:var(--ok-bg)}
+  .tl .tcard.prop{border-color:#ecd9b4;background:var(--prop-bg)}
+  .tl .ph{font-size:10.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .tl h5{font-size:14.5px;font-weight:800;margin:1px 0 6px}
+  .tl ul{list-style:none}
+  .tl li{font-size:12.5px;line-height:1.5;padding:2px 0 2px 13px;position:relative;color:#333b4a}
+  .tl li::before{content:"·";position:absolute;left:2px;font-weight:900;color:#9aa3b2}
+
+  /* tree */
+  .tree{font-family:"SFMono-Regular",Consolas,monospace;font-size:13px;line-height:1.35;background:var(--chip);
+    border:1px solid var(--line);border-radius:11px;padding:12px 15px}
+  .tree .tr{display:flex;align-items:center;gap:8px;padding:3.2px 0}
+  .tree .lb{color:#8b93a5;white-space:pre}
+  .tree .fn{color:#37406b;font-weight:600}
+  .tree .badge{margin-left:auto;font-family:inherit;font-size:10.5px}
+
+  /* tech tiles */
+  .tgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin-bottom:14px}
+  .ttile{border:1px solid var(--line);border-radius:11px;padding:10px 12px;background:linear-gradient(180deg,#fff,#fcfdfe)}
+  .ttile b{display:block;font-size:13.5px;margin-bottom:2px}
+  .ttile span{font-size:11.5px;color:var(--muted);line-height:1.4;display:block}
+
+  /* takeaway */
+  .kt{border:1px solid var(--line);border-radius:13px;padding:13px 15px;background:linear-gradient(180deg,#fff,#fcfdfe)}
+  .kt .hd{display:flex;align-items:center;gap:9px;margin-bottom:7px}
+  .kt h4{font-size:15px;font-weight:800}
+  .kt p{font-size:13px;color:#4b5563;line-height:1.55}
+
+  /* hud */
+  #bar{position:fixed;top:0;left:0;height:4px;background:linear-gradient(90deg,var(--accent),var(--accent-2));width:0;z-index:20;transition:width .3s}
+  #hud{position:fixed;right:18px;bottom:14px;display:flex;gap:8px;align-items:center;z-index:20;
+    background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:999px;padding:6px 10px;
+    font-size:13px;color:var(--muted);box-shadow:0 4px 14px rgba(28,35,51,.10)}
+  #hud button{border:none;background:var(--chip);width:28px;height:28px;border-radius:50%;cursor:pointer;
+    font-size:14px;color:var(--ink);line-height:1}
+  #hud button:hover{background:#e4e8f5}
+  #pageno{min-width:52px;text-align:center;font-variant-numeric:tabular-nums}
+  .hint{position:fixed;left:18px;bottom:14px;font-size:12px;color:#9aa3b2;z-index:20}
+
+  @media print{
+    html,body{overflow:visible;background:#fff}
+    #viewport{position:static;display:block}
+    #stage{width:auto;height:auto;transform:none!important}
+    .slide{display:flex!important;position:relative;inset:auto;width:1280px;height:720px;margin:0 auto 18px;
+      border-radius:0;box-shadow:none;page-break-after:always;animation:none}
+    #hud,#bar,.hint{display:none}
+  }
+</style>
+</head>
+<body>
+<div id="bar"></div>
+<div id="viewport"><div id="stage">
+
+<!-- ============ 1 封面 ============ -->
+<section class="slide cover active">
+  <div class="brand">OCTOP · SELF-HOSTED AI ASSISTANT PLATFORM</div>
+  <h1>轻应用 <em>Light Apps</em></h1>
+  <div class="tagline">Agent 生成的轻量数据应用 —— 单文件 HTML 界面 + 多表数据 + 默认 AI 助手</div>
+  <div class="stats">
+    <div class="stat"><div class="v">9</div><div class="l">Agent 工具</div></div>
+    <div class="stat"><div class="v">≤12</div><div class="l">表 / 应用</div></div>
+    <div class="stat"><div class="v">20k</div><div class="l">行 / 表</div></div>
+    <div class="stat"><div class="v">4</div><div class="l">级安全边界</div></div>
+    <div class="stat"><div class="v">M1–M3</div><div class="l">已落地 · 2026-10</div></div>
+  </div>
+  <div class="meta">
+    <span>范围：<b>定位 / 功能 / 架构 / 实现</b></span>
+    <span>分支：<b>feature/light-apps</b></span>
+    <span>日期：<b>2026-10</b></span>
+  </div>
+  <div class="footer"><span>Octop 轻应用概述</span><span>01</span></div>
+</section>
+
+<!-- ============ 2 定位 ============ -->
+<section class="slide">
+  <div class="kicker">定位 · Positioning</div>
+  <h2 class="title">一句话定位</h2>
+  <div class="subtitle">让 Agent 除了「回答」，还能「交付一个能用的小工具」</div>
+  <div class="body">
+    <div class="cols">
+      <div class="col card">
+        <h4><span class="ic">🧩</span>轻应用是什么</h4>
+        <ul class="tick">
+          <li><b>Agent 一句话生成的应用</b>：单文件 HTML 界面，由 Agent 通过工具全程创建、改版、维护</li>
+          <li><b>自带结构化数据</b>：每个应用挂若干张表（CSV 存储），界面与应用数据一体交付</li>
+          <li><b>默认自带 AI 助手</b>：打开即有面板，可对应用数据提问，不必用户自己接模型</li>
+          <li><b>平台级能力</b>：多用户、ACL 协作、审计、i18n，依托 Octop 自托管平台</li>
+          <li><b>对标场景</b>：登记表、台账、追踪器、看板、收集表、审批小工具</li>
+        </ul>
+      </div>
+      <div class="col card">
+        <h4><span class="ic">🚫</span>轻应用不是什么</h4>
+        <ul class="dash">
+          <li><b>不是低代码平台</b>：没有拖拽编辑器、没有应用市场，界面由 Agent 直接写 HTML</li>
+          <li><b>不是复杂业务系统</b>：不适合强事务、高并发写入、复杂业务逻辑</li>
+          <li><b>不是协同编辑套件</b>：不做多人同时编辑 HTML、评论、修订审阅</li>
+          <li><b>不是独立沙箱服务</b>：无独立进程，界面运行在宿主页内的 sandbox iframe</li>
+        </ul>
+        <div style="margin-top:13px;border-top:1px dashed var(--line);padding-top:12px;border-radius:10px;
+            background:linear-gradient(135deg,#f5f6ff,#f2f9ff);padding:12px 14px">
+          <p style="font-size:13.5px;color:#3c4356;line-height:1.6">
+            <b style="color:var(--ink)">差异化方向</b> —— 作为自托管平台，在
+            <b>权限、审计、数据主权、外部系统集成</b>上做强，
+            这些是同类「AI 生成小工具」能力通常缺失的。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span><b>定位</b> · Octop 轻应用概述</span><span>02</span></div>
+</section>
+
+<!-- ============ 3 平台位置 ============ -->
+<section class="slide">
+  <div class="kicker">定位 · Positioning</div>
+  <h2 class="title">在 Octop 平台中的位置</h2>
+  <div class="subtitle">轻应用是「Agent 的产物 + 用户的使用界面」，不是独立的 Agent</div>
+  <div class="body">
+    <div class="stack" style="gap:14px">
+      <div class="band">
+        <h4>创建链路 —— 需求如何变成应用</h4>
+        <div class="flow">
+          <div class="fbox"><h5><span class="nc">1</span>用户（Dashboard）</h5><p>与 Agent 对话提出需求；打开应用详情页使用</p></div>
+          <div class="farrow">→</div>
+          <div class="fbox hl"><h5><span class="nc">2</span>Agent（octop-harness / LangGraph）</h5><p>理解需求，调用 app_* 工具创建应用、写界面、录数据</p></div>
+          <div class="farrow">→</div>
+          <div class="fbox"><h5><span class="nc">3</span>轻应用（产物）</h5><p>app.html + 多张表，落在本 Agent 工作区</p></div>
+        </div>
+      </div>
+      <div class="band">
+        <h4>使用链路 —— 应用如何被消费</h4>
+        <div class="flow">
+          <div class="fbox"><h5><span class="nc">4</span>应用详情页</h5><p>沙箱 iframe 渲染 app.html；右侧助手面板；数据 / 导入入口</p></div>
+          <div class="farrow">→</div>
+          <div class="fbox"><h5><span class="nc">5</span>默认 AI 助手</h5><p>对所属 Agent 默认模型的一次受限调用，只读应用数据</p></div>
+          <div class="farrow">→</div>
+          <div class="fbox"><h5><span class="nc">6</span>用量归属</h5><p>助手消耗计入 Agent 额度（source=app_assistant），不引入新身份</p></div>
+        </div>
+      </div>
+      <div class="card" style="background:linear-gradient(135deg,#f7f8ff,#f4faff)">
+        <p style="font-size:14.5px;line-height:1.65">
+          <b>关键设计：</b>应用始终从属于一个 Agent（<code>light_apps.agent_id</code>），
+          由 Agent 所有者管理结构与数据；普通用户通过 ACL 获得查看 / 录入权限。
+          「会做应用的智能」与「应用本身」分离 —— 换模型、换提示词都不影响已交付的应用。</p>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span><b>定位</b> · Octop 轻应用概述</span><span>03</span></div>
+</section>
+
+<!-- ============ 4 功能全景（已落地） ============ -->
+<section class="slide s-feat">
+  <div class="kicker">功能 · Features</div>
+  <h2 class="title">功能全景 — 已落地<span class="chip ok">M1–M3 · 2026-10 实施</span></h2>
+  <div class="subtitle">六个能力块构成当前可用的最小闭环</div>
+  <div class="body">
+    <div class="fgrid">
+      <div class="fcard">
+        <div class="hd"><span class="ic">🗂️</span><h4>多表数据模型</h4><span class="chip ok">M1</span></div>
+        <ul class="dash">
+          <li>主表 <code>main</code> + 附加表，每表独立列定义与行存储</li>
+          <li>上限：12 表 / 应用，20 000 行，5 MB，50 列，单元格 10k 字符</li>
+          <li><code>app_add_table</code> 建表、<code>app_update_schema</code> 扩列</li>
+        </ul>
+      </div>
+      <div class="fcard">
+        <div class="hd"><span class="ic">🤖</span><h4>默认 AI 助手</h4><span class="chip ok">M2</span></div>
+        <ul class="dash">
+          <li>详情页右侧面板，SSE 流式问答；装上就有，与作者无关</li>
+          <li>只读工具 <code>app_tables</code> / <code>app_query_rows</code>，最多 4 轮</li>
+          <li>会话按「应用 + 用户」隔离存储，回放最近 12 条</li>
+        </ul>
+      </div>
+      <div class="fcard">
+        <div class="hd"><span class="ic">📥</span><h4>数据导入</h4><span class="chip ok">M3</span></div>
+        <ul class="dash">
+          <li>上传文件 → <code>inbound/imports/</code>，或直接读工作区文件</li>
+          <li>CSV / TSV / JSON / .xlsx / .xls；utf-8-sig → gb18030 回退</li>
+          <li>列映射 → 类型校验 → 追加 / 覆盖；坏行跳过计数</li>
+        </ul>
+      </div>
+      <div class="fcard">
+        <div class="hd"><span class="ic">🧰</span><h4>Agent 工具集</h4><span class="chip ok">M1–M3</span></div>
+        <ul class="dash">
+          <li>9 个 <code>app_*</code> 工具，随 Agent 配置注入</li>
+          <li>删应用强制人工审批（HITL）</li>
+          <li>工具异常以 JSON 返回给模型，不中断对话</li>
+        </ul>
+      </div>
+      <div class="fcard">
+        <div class="hd"><span class="ic">⚡</span><h4>iframe SDK</h4><span class="chip ok">M1</span></div>
+        <ul class="dash">
+          <li><code>octopApp.schema / tables / listRows / appendRow</code></li>
+          <li>postMessage 桥转发，iframe 不持有 JWT</li>
+          <li>读写均受应用 ACL 约束</li>
+        </ul>
+      </div>
+      <div class="fcard">
+        <div class="hd"><span class="ic">🔐</span><h4>协作与权限</h4><span class="chip ok">M1</span></div>
+        <ul class="dash">
+          <li>ACL 三级：view &lt; edit_data &lt; edit_structure</li>
+          <li>结构操作限所有者 / 管理员</li>
+          <li>协作者按授权查看与录入</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span><b>功能</b> · Octop 轻应用概述</span><span>04</span></div>
+</section>
+
+<!-- ============ 5 功能路线（规划） ============ -->
+<section class="slide s-road">
+  <div class="kicker">功能 · Features</div>
+  <h2 class="title">功能路线 — 规划中<span class="chip plan">设计稿 / 提议</span></h2>
+  <div class="subtitle">三条主线：数据入服（P0–P2）→ 外部数据（M4–M5）→ 外部动作（A，提议）</div>
+  <div class="body">
+    <div class="cols">
+      <div class="col card">
+        <h4><span class="ic">🗄️</span>数据入服<span class="chip plan">P0–P2</span></h4>
+        <ul class="tick" style="--sec:#7c3aed">
+          <li><b>行数据入库</b>：行 / schema 迁入 <code>light_app_rows</code>，乐观锁 CAS、幂等追加、懒迁移</li>
+          <li><b>可编辑表格</b>：行内增删改、排序筛选、CSV 导入导出；409 冲突提示</li>
+          <li><b>发布链接</b>：只读公开页 <code>/p/{token}</code>，默认关闭、可撤销、限流</li>
+          <li><b>实时刷新</b>：<code>data_version</code> 5s 轮询驱动表格与 iframe 刷新；不做 CRDT</li>
+        </ul>
+      </div>
+      <div class="col card">
+        <h4><span class="ic">🔌</span>外部数据<span class="chip plan">M4–M5</span></h4>
+        <ul class="tick" style="--sec:#7c3aed">
+          <li><b>MCP 只读快照</b>：选连接器 → 选工具 → 字段映射（result_path + column_map）</li>
+          <li><b>绑定表</b>：<code>light_app_sources</code> 记录源、模式与凭据归属</li>
+          <li><b>定时同步</b>：周期任务 + 租约领取 + 指数退避；replace 天然幂等</li>
+          <li><b>护栏</b>：仅 readOnlyHint 工具、max_rows 截断、失败不阻塞读取</li>
+        </ul>
+      </div>
+      <div class="col card">
+        <h4><span class="ic">🎛️</span>外部动作<span class="chip prop">A1–A3 提议</span></h4>
+        <ul class="tick" style="--sec:#d97706">
+          <li><b>协议统一 MCP</b>：复用连接器体系（凭据 / 网关适配器 / 自定义 MCP）</li>
+          <li><b>声明式动作绑定</b>：所有者配置 连接器 + 工具 + 参数映射；UI 按钮直达，不经过 LLM</li>
+          <li><b>治理</b>：非只读运行时确认、全量审计、每应用限流</li>
+          <li><b>四类基本服务</b>：记录写 · 通知 · 文件 · 日程，覆盖九成场景</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span><b>功能</b> · Octop 轻应用概述</span><span>05</span></div>
+</section>
+
+<!-- ============ 6 概念模型 ============ -->
+<section class="slide">
+  <div class="kicker">概念 · Model</div>
+  <h2 class="title">概念模型：应用 = 界面 + 多张表</h2>
+  <div class="subtitle">界面是「壳」，表是「芯」；助手读表，导入写表，Agent 管两者</div>
+  <div class="body">
+    <div class="cols">
+      <div class="col" style="flex:1.15">
+        <div class="card" style="height:100%">
+          <h4><span class="ic">🏗️</span>结构示意</h4>
+          <div class="band" style="margin-bottom:11px;border-color:#c9d2f0;background:#f7f8ff">
+            <h4 style="margin-bottom:7px">轻应用 <code>app_id</code><span class="badge" style="margin-left:8px">从属一个 Agent</span></h4>
+            <div class="flow" style="gap:9px">
+              <div class="fbox" style="flex:1.15"><h5>app.html</h5><p>单文件界面：内联 CSS/JS，沙箱 iframe 渲染，经 SDK 读写数据</p></div>
+              <div class="fbox" style="flex:1.05"><h5>manifest.json</h5><p>应用元信息 + 表清单</p></div>
+            </div>
+          </div>
+          <div class="flow" style="gap:9px;margin-bottom:11px">
+            <div class="fbox hl"><h5>表 main<span class="badge" style="margin-left:6px">主表</span></h5><p>schema.json + data.csv，创建时由 columns 生成</p></div>
+            <div class="fbox"><h5>表 orders</h5><p>tables/orders.*，Agent 建附加表</p></div>
+            <div class="fbox"><h5>表 customers</h5><p>…最多 12 张</p></div>
+          </div>
+          <p style="font-size:13px;color:var(--muted);line-height:1.6">
+            列类型：<code>string / text / integer / number / boolean / date / datetime / enum</code>；
+            附加表 key 须匹配 <code>^[A-Za-z_][A-Za-z0-9_]{0,63}$</code>，
+            保留字 <code>app / data / schema / manifest / tables</code> 不可用。</p>
+        </div>
+      </div>
+      <div class="col">
+        <div class="card" style="height:100%">
+          <h4><span class="ic">👥</span>三个角色如何使用模型</h4>
+          <ul class="tick">
+            <li><b>Agent</b>：建应用、建表、扩列、写 HTML、逐行 / 批量写数据 —— 全部经工具完成</li>
+            <li><b>应用读者</b>：iframe 界面经 SDK 读表、按权限追加行；助手对表数据提问</li>
+            <li><b>应用维护者</b>：Dashboard 上传 CSV 导入；P1 后直接在数据表格里改</li>
+          </ul>
+          <div style="margin-top:11px;border-top:1px dashed var(--line);padding-top:11px">
+            <h4 style="font-size:14.5px;margin-bottom:7px"><span class="dot"></span>为什么行数据先存 CSV 文件</h4>
+            <ul class="dash">
+              <li>Agent 可用 <code>read_file</code> 直接看到列定义与数据，与工作区习惯一致</li>
+              <li>零迁移上远程后端（COS / S3 / OSS / OBS / docker 统一经 <code>BackendWorkspace</code>）</li>
+              <li>代价是「整文件读改写」，由 P0 行数据入库解决</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span><b>概念</b> · Octop 轻应用概述</span><span>06</span></div>
+</section>
+
+<!-- ============ 7 架构总览 ============ -->
+<section class="slide s-arch">
+  <div class="kicker">架构 · Architecture</div>
+  <h2 class="title">系统架构总览</h2>
+  <div class="subtitle">传输层（HTTP / postMessage）只做适配，领域规则全部在 infra/apps</div>
+  <div class="body">
+    <div class="stack" style="gap:0">
+      <div class="layer">
+        <div class="ltag"><b>浏览器</b><span>DASHBOARD</span></div>
+        <div class="lboxes">
+          <div class="fbox hl"><h5>沙箱 iframe：app.html</h5><p>sandbox 隔离、无同源、无网络；仅经 <code>window.octopApp</code> 桥通信</p></div>
+          <div class="fbox"><h5>宿主页 Detail.tsx</h5><p>APP_SDK 桥转发 · 助手面板 · 数据 / 导入入口</p></div>
+          <div class="fbox"><h5>api/modules/apps.ts</h5><p>类型化 API 客户端</p></div>
+        </div>
+      </div>
+      <div class="larr">▼<em>postMessage（SDK 白名单） · HTTP + JWT（/api/apps/*）</em></div>
+      <div class="layer">
+        <div class="ltag"><b>接入层</b><span>FASTAPI</span></div>
+        <div class="lboxes">
+          <div class="fbox"><h5>api/routers/apps.py</h5><p>路由 · Pydantic 模型 · 错误映射 —— 薄适配层，不做领域规则</p></div>
+          <div class="fbox"><h5>认证 / ACL 校验</h5><p>JWT → 当前用户；应用级权限（view / edit_data / edit_structure）</p></div>
+        </div>
+      </div>
+      <div class="larr">▼<em>函数调用（进程内）</em></div>
+      <div class="layer">
+        <div class="ltag"><b>领域层</b><span>INFRA/APPS</span></div>
+        <div class="lboxes">
+          <div class="fbox hl"><h5>service.py</h5><p>建表 / 读写 / 校验 / 导入 / 计数；按应用 asyncio.Lock</p></div>
+          <div class="fbox"><h5>models.py</h5><p>列定义 / 行校验 / CSV 序列化 / 上限常量</p></div>
+          <div class="fbox"><h5>tools.py → harness</h5><p>9 个 StructuredTool 注入 LangGraph Agent；助手走受限 bind_tools 循环</p></div>
+        </div>
+      </div>
+      <div class="larr">▼<em>BackendWorkspace 抽象 · RepoBundle</em></div>
+      <div class="layer">
+        <div class="ltag"><b>存储层</b><span>STORAGE</span></div>
+        <div class="lboxes">
+          <div class="fbox"><h5>Agent 工作区文件</h5><p>本地 / COS / S3 / OSS / OBS / docker；原子写 + pending 日志</p></div>
+          <div class="fbox"><h5>控制面 DB</h5><p>light_apps · light_app_tables · collaborators · assistant_messages（SQLite / PostgreSQL）</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span><b>架构</b> · Octop 轻应用概述</span><span>07</span></div>
+</section>
+
+<!-- ============ 8 数据与存储 ============ -->
+<section class="slide s-arch">
+  <div class="kicker">架构 · Architecture</div>
+  <h2 class="title">数据与存储布局</h2>
+  <div class="subtitle">状态与产物分离：内容文件在 Agent 工作区，元数据 / ACL 在控制面 DB</div>
+  <div class="body">
+    <div class="cols">
+      <div class="col" style="flex:1.05">
+        <div class="card" style="height:100%">
+          <h4><span class="ic">📁</span>工作区 <code style="font-size:12px">apps/&lt;app_id&gt;/</code></h4>
+          <div class="tree">
+            <div class="tr"><span class="fn">app.html</span><span class="badge">单文件界面 · Agent 唯一必写产物</span></div>
+            <div class="tr"><span class="fn">manifest.json</span><span class="badge">元信息 + 表清单</span></div>
+            <div class="tr"><span class="fn">schema.json</span><span class="badge">主表列定义</span></div>
+            <div class="tr"><span class="fn">data.csv</span><span class="badge">主表行</span></div>
+            <div class="tr"><span class="lb">tables/</span><span class="badge">附加表目录</span></div>
+            <div class="tr"><span class="lb">  orders.schema.json</span><span class="badge">附加表列</span></div>
+            <div class="tr"><span class="lb">  orders.csv</span><span class="badge">附加表行</span></div>
+            <div class="tr"><span class="lb">inbound/imports/</span><span class="badge">待导入上传</span></div>
+          </div>
+          <p style="font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.6">
+            写路径：读全量 → 校验 → 重渲染 → <b style="color:var(--ink)">原子写</b>
+            （<code>.new</code> 暂存 + pending 日志恢复）；同表并发由按应用
+            <code>asyncio.Lock</code> 串行化，不同表文件分离互不覆盖。</p>
+        </div>
+      </div>
+      <div class="col">
+        <div class="card" style="height:100%">
+          <h4><span class="ic">🗄️</span>控制面 DB（v22 迁移）</h4>
+          <table>
+            <tr><th style="width:168px">表</th><th>内容</th></tr>
+            <tr><td><code>light_apps</code></td><td>应用元数据：名称、描述、agent_id、owner、row_count、data_bytes</td></tr>
+            <tr><td><code>light_app_tables</code></td><td>表清单：table_key、label、行数、体积；列表页零工作区 I/O</td></tr>
+            <tr><td><code>light_app_collaborators</code></td><td>协作者与权限（view / edit_data / edit_structure）</td></tr>
+            <tr><td><code>light_app_assistant_messages</code></td><td>助手会话历史，按 (app_id, user_id) 隔离，裁剪 200 条</td></tr>
+          </table>
+          <div style="margin-top:10px;border-radius:10px;background:var(--sec-soft);padding:9px 13px">
+            <p style="font-size:12.5px;color:#3c4356;line-height:1.55">
+              <b>P0 之后新增</b>：<code>light_app_rows</code>（values_json + 乐观锁）、
+              <code>light_app_data_sources</code>、<code>light_app_publications</code>；
+              行数据以 DB 为权威，CSV 降级为导出 / 交换格式。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span><b>架构</b> · Octop 轻应用概述</span><span>08</span></div>
+</section>
+
+<!-- ============ 9 安全模型 ============ -->
+<section class="slide s-arch">
+  <div class="kicker">架构 · Architecture</div>
+  <h2 class="title">安全模型：四道纵深边界</h2>
+  <div class="subtitle">沙箱隔离 → 桥白名单 → 应用 ACL → 破坏性操作审批</div>
+  <div class="body">
+    <div class="stack" style="gap:10px">
+      <div class="def">
+        <div class="dn">01</div>
+        <div style="flex:1;min-width:0"><h5>iframe 沙箱</h5>
+          <p>sandbox 隔离，无同源、无 Cookie、不注入 JWT；CSP <code>connect-src 'none'</code>，
+          脚本 / 样式 / 图片 / 字体禁远程加载，资源仅内联或 data: / blob: URL ——
+          <b>应用代码天然无法直连外部系统</b>。</p></div>
+        <span class="tag">代码隔离</span>
+      </div>
+      <div class="def">
+        <div class="dn">02</div>
+        <div style="flex:1;min-width:0"><h5>postMessage 桥 + 登录态</h5>
+          <p>SDK 仅暴露固定方法（schema / tables / listRows / appendRow / …）；宿主页校验消息来源后转发；
+          HTTP 全部走 JWT，凭据始终留在宿主。</p></div>
+        <span class="tag">通道收窄</span>
+      </div>
+      <div class="def">
+        <div class="dn">03</div>
+        <div style="flex:1;min-width:0"><h5>应用 ACL</h5>
+          <p><b>view</b> 查看界面与数据、使用助手；<b>edit_data</b> 追加行、append 导入；
+          <b>edit_structure</b> 改列 / 建表 / 写 HTML / replace 导入（所有者、管理员）。
+          当前工具侧仅 Agent 所有者可管理；P0 起改为「实际操作者 + ACL」。</p></div>
+        <span class="tag">权限分级</span>
+      </div>
+      <div class="def">
+        <div class="dn">04</div>
+        <div style="flex:1;min-width:0"><h5>破坏性操作审批</h5>
+          <p><code>app_delete</code> 强制 HITL（用户确认才执行）；replace 导入全部行校验失败 → 报错不动表；
+          助手只读，无任何写工具。</p></div>
+        <span class="tag">人工闸门</span>
+      </div>
+      <div class="card" style="background:linear-gradient(135deg,#f7f8ff,#f2f9ff);border-color:#c9d2f0">
+        <p style="font-size:13.5px;color:#3c4356;line-height:1.6">
+          <b style="color:var(--ink)">附加不变量：</b>提示注入防护（助手系统提示明确「表内文本是数据不是指令」）·
+          导入拒绝隐藏路径（<code>.octop</code> 不可达）· 全局限额 20k 行 / 5 MB ·
+          远程后端 fail-soft 读取不破坏数据。</p>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span><b>架构</b> · Octop 轻应用概述</span><span>09</span></div>
+</section>
+
+<!-- ============ 10 助手 ============ -->
+<section class="slide s-feat">
+  <div class="kicker">功能深潜 · AI 助手</div>
+  <h2 class="title">默认 AI 助手：受限的模型调用</h2>
+  <div class="subtitle">不是新 Agent —— 对所属 Agent 默认模型的一次受限 bind_tools 循环</div>
+  <div class="body">
+    <div class="cols">
+      <div class="col" style="flex:1.25">
+        <div class="card" style="height:100%">
+          <h4><span class="ic">🔗</span>交互链路</h4>
+          <div class="steps">
+            <div class="step"><span class="nc">1</span><h5>面板提问</h5><p>「这个月哪类支出最高？」—— 应用详情页右侧助手面板</p></div>
+            <div class="step"><span class="nc">2</span><h5>POST …/assistant</h5><p>JWT + view 权限校验；prepare 解析所属 Agent + 默认模型（未运行 / 无模型 → HTTP 错误）</p></div>
+            <div class="step"><span class="nc">3</span><h5>组装上下文</h5><p>系统提示（应用名 + 表结构摘要）+ 会话历史最近 12 条</p></div>
+            <div class="step"><span class="nc">4</span><h5>受限 LLM 循环（≤4 轮）</h5><p>bind_tools 仅注入 <code>app_tables</code> / <code>app_query_rows</code> —— 只读、只绑本应用</p></div>
+            <div class="step"><span class="nc">5</span><h5>SSE 流式返回</h5><p>token / tool / done / error 事件；用量按 usage_metadata 累计写入 usage_repo（source=app_assistant）</p></div>
+          </div>
+          <p style="font-size:12.5px;color:var(--muted);margin-top:9px;line-height:1.55">
+            实施取舍：未走完整 harness graph —— 工具只读且只绑本应用，安全边界一致；
+            代价是不记录轨迹。</p>
+        </div>
+      </div>
+      <div class="col">
+        <div class="card" style="height:100%">
+          <h4><span class="ic">🛡️</span>边界与降级</h4>
+          <ul class="tick">
+            <li><b>权限</b>：跟随应用 ACL，无 view 权限则不显示助手</li>
+            <li><b>隔离</b>：会话按 (应用, 用户) 隔离；跨应用不可见</li>
+            <li><b>不写数据</b>：写操作必须经显式工具，避免「问一句就改表」</li>
+            <li><b>失败降级</b>：Agent 未运行 / 无模型 → HTTP 错误；轮数超限 → 提示换问法；空表正常作答</li>
+            <li><b>成本</b>：计入 Agent 用量，面板标注「消耗 Agent 额度」</li>
+          </ul>
+          <div style="margin-top:12px;border-radius:10px;background:var(--sec-soft);padding:9px 13px">
+            <p style="font-size:12.5px;color:#3c4356;line-height:1.55">
+              <b>会话存储</b>：<code>light_app_assistant_messages</code>（v22），
+              插入时裁剪至 200 条；面板重开经 history 端点回填。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span><b>功能</b> · Octop 轻应用概述</span><span>10</span></div>
+</section>
+
+<!-- ============ 11 导入 ============ -->
+<section class="slide s-feat">
+  <div class="kicker">功能深潜 · 数据导入</div>
+  <h2 class="title">数据导入：外部数据的第一层</h2>
+  <div class="subtitle">导入 = 往某张表灌数据；确定性优先，LLM 不参与解析</div>
+  <div class="body">
+    <div class="stack" style="gap:13px">
+      <div class="band">
+        <h4>导入流程</h4>
+        <div class="flow">
+          <div class="fbox"><h5><span class="nc">1</span>取得原始行</h5><p>上传文件 / 工作区文件 /（M4：MCP 只读工具）</p></div>
+          <div class="farrow">→</div>
+          <div class="fbox"><h5><span class="nc">2</span>列映射</h5><p>同名列自动映射；显式 mapping 覆盖；未知目标列报错</p></div>
+          <div class="farrow">→</div>
+          <div class="fbox"><h5><span class="nc">3</span>类型校验</h5><p>复用 validate_row；坏行跳过计数（≤5 条明细）</p></div>
+          <div class="farrow">→</div>
+          <div class="fbox hl"><h5><span class="nc">4</span>写入</h5><p>append 追加 / replace 覆盖（临时文件原子替换）</p></div>
+        </div>
+      </div>
+      <div class="cols">
+        <div class="col" style="flex:1.35">
+          <div class="card" style="height:100%">
+            <h4><span class="ic">📦</span>三种来源</h4>
+            <table>
+              <tr><th style="width:150px">来源</th><th>规则</th></tr>
+              <tr><td>上传 <code>upload</code></td><td>multipart → <code>inbound/imports/</code>；沿用 max_upload_bytes；Agent 无需在运行</td></tr>
+              <tr><td>工作区文件 <code>workspace_file</code></td><td>拒绝隐藏路径（含 .octop）；要求 edit_structure</td></tr>
+              <tr><td>外部源 <code>external</code></td><td>M4：MCP 只读工具 + result_path 取数组 + 映射（未实施）</td></tr>
+            </table>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card" style="margin-bottom:12px">
+            <h4><span class="ic">📄</span>格式与编码</h4>
+            <ul class="dash">
+              <li>CSV / TSV（csv 模块）· JSON 数组 · .xlsx（openpyxl）· .xls（xlrd）</li>
+              <li>解码 utf-8-sig → gb18030 回退（与知识库一致）</li>
+              <li>依赖复用，不新增包</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h4><span class="ic">🧱</span>护栏</h4>
+            <ul class="dash">
+              <li>20k 行 / 5 MB 上限沿用全局常量</li>
+              <li>append 需 edit_data；replace 需 edit_structure</li>
+              <li>replace 全部行校验失败 → 报错不动表</li>
+              <li>M5：定时同步 + 租约 + 退避，replace 天然幂等</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span><b>功能</b> · Octop 轻应用概述</span><span>11</span></div>
+</section>
+
+<!-- ============ 12 Agent 工具集 ============ -->
+<section class="slide s-impl">
+  <div class="kicker">实现 · Agent 接口</div>
+  <h2 class="title">Agent 工具集（infra/apps/tools.py）</h2>
+  <div class="subtitle">9 个 StructuredTool，随 HarnessAgentConfig.tools 注入；删除是唯一强制 HITL 操作
+    <span style="margin-left:14px;font-size:12.5px">
+      <span class="dot g" style="display:inline-block;vertical-align:1px"></span> 生命周期
+      <span class="dot" style="display:inline-block;vertical-align:1px;margin-left:10px"></span> 结构
+      <span class="dot" style="display:inline-block;vertical-align:1px;margin-left:10px;background:#0284c7"></span> 数据
+    </span></div>
+  <div class="body">
+    <div class="cols">
+      <div class="col" style="flex:1.3">
+        <table>
+          <tr><th style="width:206px">工具</th><th>作用</th></tr>
+          <tr><td><code class="c-life">app_list</code></td><td>列出本 Agent 创建的应用，附每应用表清单</td></tr>
+          <tr><td><code class="c-life">app_create</code></td><td>创建应用：名称 + 1–50 列定义 → 生成主表</td></tr>
+          <tr><td><code class="c-life">app_delete</code></td><td><b>删除应用与全部数据</b> —— 强制用户审批</td></tr>
+          <tr><td><code class="c-struct">app_add_table</code></td><td>为应用新增附加表（独立列定义与 CSV）</td></tr>
+          <tr><td><code class="c-struct">app_update_schema</code></td><td>追加列；历史数据保留，不改不删既有列</td></tr>
+          <tr><td><code class="c-struct">app_write_html</code></td><td>整页写入界面（替换上一版）</td></tr>
+          <tr><td><code class="c-data">app_read_data</code></td><td>分页读表（≤500 行 / 次），返回列定义 + 行</td></tr>
+          <tr><td><code class="c-data">app_append_row</code></td><td>追加一行，值按列类型强制校验 / 转换</td></tr>
+          <tr><td><code class="c-data">app_import_rows</code></td><td>从工作区文件批量导入（CSV/TSV/JSON/Excel）</td></tr>
+        </table>
+      </div>
+      <div class="col">
+        <div class="card" style="height:100%">
+          <h4><span class="ic">💡</span>设计要点</h4>
+          <ul class="tick">
+            <li><b>table 参数向后兼容</b>：多表工具的 <code>table</code> 均可选、缺省 <code>main</code>，既有提示词与生成页面无需改动</li>
+            <li><b>归属校验</b>：仅 Agent 所有者可管理（is_agent_owner + agent_id / owner 双重比对）</li>
+            <li><b>错误即返回值</b>：异常序列化为 JSON 返回给模型，不中断对话</li>
+            <li><b>工具登记</b>：tool_catalog 注册 + i18n 显示名 + light-apps 专家提示词同步</li>
+            <li>P1 计划新增：<code>app_update_row</code> / <code>app_delete_row</code>（CAS）、<code>app_export_csv</code></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span><b>实现</b> · Octop 轻应用概述</span><span>12</span></div>
+</section>
+
+<!-- ============ 13 技术栈 ============ -->
+<section class="slide s-impl">
+  <div class="kicker">实现 · Technology</div>
+  <h2 class="title">实现技术栈</h2>
+  <div class="subtitle">全部构建在 Octop 既有骨架之上，轻应用未引入任何新服务或新依赖</div>
+  <div class="body">
+    <div class="tgrid">
+      <div class="ttile"><b>Python 3.12+ · asyncio</b><span>无线程模型，阻塞 I/O 走 run_in_executor</span></div>
+      <div class="ttile"><b>FastAPI + uvicorn</b><span>Pydantic 请求 / 响应模型 · Scalar API 文档</span></div>
+      <div class="ttile"><b>SQLite WAL / PostgreSQL</b><span>双栈同构；迁移 022 成对维护（sql + pg.sql）</span></div>
+      <div class="ttile"><b>octop-harness（LangGraph）</b><span>工具 = LangChain StructuredTool；助手 = bind_tools 受限循环</span></div>
+      <div class="ttile"><b>React 18 + Ant Design 5</b><span>TypeScript · i18next 双语（zh / en）</span></div>
+      <div class="ttile"><b>Vite 构建</b><span>产物打进 Python wheel（src/octop/dashboard）</span></div>
+      <div class="ttile"><b>SSE 流式</b><span>复用 chat 的 format_sse；type：token / tool / done / error</span></div>
+      <div class="ttile"><b>BackendWorkspace</b><span>本地 / COS / S3 / OSS / OBS / docker 统一文件抽象</span></div>
+    </div>
+    <div class="card">
+      <h4><span class="ic">⚙️</span>关键实现机制</h4>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 26px">
+        <ul class="dash">
+          <li><b>原子写</b>：<code>&lt;path&gt;.new</code> 暂存 + pending 日志，崩溃后可恢复 / 回滚</li>
+          <li><b>并发</b>：按应用 <code>asyncio.Lock</code>；不同表文件分离；P0 起由 DB 事务 + 乐观锁取代</li>
+          <li><b>校验单源</b>：<code>validate_row</code> 同时服务工具写、HTTP 写、导入三条路径</li>
+          <li><b>计数自愈</b>：表行数与 CSV 漂移时读取即回写重算汇总</li>
+        </ul>
+        <ul class="dash">
+          <li><b>用量核算</b>：助手循环内按 usage_metadata 累计 → usage_repo（source=app_assistant）</li>
+          <li><b>i18n</b>：错误码 / 工具名进后端 en·zh 包；前端 apiErrors 同步；单测校验键位对齐</li>
+          <li><b>跨平台</b>：测试不假设 POSIX；CI 覆盖 Linux 与 Windows</li>
+          <li><b>质量门</b>：uv run pytest · ruff · mypy --strict · tsc -b · make all</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span><b>实现</b> · Octop 轻应用概述</span><span>13</span></div>
+</section>
+
+<!-- ============ 14 演进路线 ============ -->
+<section class="slide s-road">
+  <div class="kicker">路线 · Roadmap</div>
+  <h2 class="title">演进路线</h2>
+  <div class="subtitle">先交付闭环，再补正确性（数据入库），最后打开边界（外部系统）</div>
+  <div class="body">
+    <div class="tl">
+      <div class="stage">
+        <div class="tdot"></div>
+        <div class="tcard done">
+          <div class="ph" style="color:var(--ok)">已落地 · 2026-10</div>
+          <h5>M1 多表 / M2 助手 / M3 导入</h5>
+          <ul><li>多表模型 + iframe SDK + 9 工具</li><li>助手面板（SSE / 只读 / 会话隔离）</li><li>上传 / 工作区文件导入，CSV·Excel·JSON</li></ul>
+        </div>
+      </div>
+      <div class="stage">
+        <div class="tdot"></div>
+        <div class="tcard">
+          <div class="ph">短期 · M4–M5</div>
+          <h5>外部数据源 + 自动同步</h5>
+          <ul><li>MCP 只读工具快照同步（result_path + 映射）</li><li>绑定表 light_app_sources</li><li>周期任务：租约领取 + 指数退避</li></ul>
+        </div>
+      </div>
+      <div class="stage">
+        <div class="tdot"></div>
+        <div class="tcard">
+          <div class="ph">P0 → P1 → P2</div>
+          <h5>数据入服与可维护性</h5>
+          <ul><li>P0 行数据入库 / CAS / 幂等 / 懒迁移</li><li>P1 可编辑表格 + MCP 手动同步</li><li>P2 发布链接 / 定时同步 / data_version 刷新</li></ul>
+        </div>
+      </div>
+      <div class="stage">
+        <div class="tdot"></div>
+        <div class="tcard prop">
+          <div class="ph" style="color:var(--prop)">提议 · A1–A3</div>
+          <h5>外部系统动作通道</h5>
+          <ul><li>协议统一 MCP（复用连接器体系）</li><li>声明式动作绑定 + run 端点 + 确认 / 审计</li><li>四类基本服务：记录写 · 通知 · 文件 · 日程</li></ul>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px;background:linear-gradient(135deg,#faf8ff,#f4faff)">
+      <p style="font-size:14px;line-height:1.7">
+        <b>外部动作通道（提议）核心结论：</b>Agent 侧经连接器已具备外部操作能力；
+        缺的是「应用 UI → 外部系统」的确定性通路。方案：iframe 只能调用<b>预先注册的动作 key</b>
+        （所有者绑定 连接器 + 工具 + 参数映射），服务端执行 MCP 调用，非只读工具运行时确认，
+        全量审计 + 每应用限流。MVP 仅网关模式连接器，远程 MCP 与点击者身份二期跟进。</p>
+    </div>
+  </div>
+  <div class="footer"><span><b>路线</b> · Octop 轻应用概述</span><span>14</span></div>
+</section>
+
+<!-- ============ 15 小结 ============ -->
+<section class="slide">
+  <div class="kicker">小结</div>
+  <h2 class="title">一页带走</h2>
+  <div class="body" style="margin-top:4px">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:14px">
+      <div class="kt"><div class="hd"><span class="ic">🧭</span><h4>定位</h4></div>
+        <p>Agent 交付的轻量数据应用：单文件 HTML + 多表 + 默认助手；强在自托管平台的权限 / 审计 / 数据主权。</p></div>
+      <div class="kt"><div class="hd"><span class="ic">📦</span><h4>现状</h4></div>
+        <p>多表、助手、导入已落地；工作区 CSV + 控制面 DB 双轨；下一步数据入库与外部数据源。</p></div>
+      <div class="kt"><div class="hd"><span class="ic">🏗️</span><h4>架构</h4></div>
+        <p>沙箱 iframe ⇄ postMessage 桥 ⇄ FastAPI ⇄ AppService ⇄ BackendWorkspace / DB；领域规则全部在 infra/apps。</p></div>
+      <div class="kt"><div class="hd"><span class="ic">🧪</span><h4>实现</h4></div>
+        <p>LangGraph 工具循环 + StructuredTool；受限 bind_tools 助手；原子写 + 锁；SQLite/PG 双栈；零新增依赖。</p></div>
+    </div>
+    <div class="card">
+      <h4><span class="ic">📎</span>关键文件索引</h4>
+      <table>
+        <tr>
+          <td style="width:33%"><b>领域服务</b><br><code>src/octop/infra/apps/service.py</code></td>
+          <td style="width:33%"><b>Agent 工具</b><br><code>src/octop/infra/apps/tools.py</code></td>
+          <td style="width:34%"><b>HTTP 路由</b><br><code>src/octop/api/routers/apps.py</code></td>
+        </tr>
+        <tr>
+          <td><b>模型与校验</b><br><code>src/octop/infra/apps/models.py</code></td>
+          <td><b>迁移（v22）</b><br><code>src/octop/infra/db/migrations/022_light_apps*.sql</code></td>
+          <td><b>前端</b><br><code>dashboard/src/pages/Apps/Detail.tsx</code></td>
+        </tr>
+        <tr>
+          <td><b>设计文档</b><br><code>docs/light-apps-*.md</code>（3 篇）</td>
+          <td><b>助手 / 导入</b><br><code>src/octop/infra/apps/assistant.py</code> · <code>importer.py</code></td>
+          <td><b>连接器 / MCP</b><br><code>src/octop/infra/connectors/</code></td>
+        </tr>
+      </table>
+    </div>
+  </div>
+  <div class="footer"><span><b>小结</b> · Octop 轻应用概述 · 完</span><span>15</span></div>
+</section>
+
+</div></div>
+
+<div class="hint">← / → 翻页 · Home/End 首尾 · F 全屏 · P 打印</div>
+<div id="hud">
+  <button id="prev" title="上一页">‹</button>
+  <span id="pageno"></span>
+  <button id="next" title="下一页">›</button>
+  <button id="fs" title="全屏">⛶</button>
+</div>
+
+<script>
+(function(){
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var cur = 0;
+  var bar = document.getElementById('bar');
+  var pageno = document.getElementById('pageno');
+  function show(i){
+    cur = Math.max(0, Math.min(slides.length - 1, i));
+    slides.forEach(function(s, k){ s.classList.toggle('active', k === cur); });
+    pageno.textContent = (cur + 1) + ' / ' + slides.length;
+    bar.style.width = ((cur + 1) / slides.length * 100) + '%';
+    if (history.replaceState) history.replaceState(null, '', '#' + (cur + 1));
+  }
+  function fit(){
+    var s = Math.min(window.innerWidth / 1280, window.innerHeight / 720) * 0.97;
+    document.getElementById('stage').style.transform = 'scale(' + s + ')';
+  }
+  function fs(){
+    try{
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen();
+    }catch(e){}
+  }
+  document.getElementById('prev').addEventListener('click', function(){ show(cur - 1); });
+  document.getElementById('next').addEventListener('click', function(){ show(cur + 1); });
+  document.getElementById('fs').addEventListener('click', fs);
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { show(cur + 1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { show(cur - 1); e.preventDefault(); }
+    else if (e.key === 'Home') { show(0); e.preventDefault(); }
+    else if (e.key === 'End') { show(slides.length - 1); e.preventDefault(); }
+    else if (e.key === 'f' || e.key === 'F') { fs(); }
+    else if (e.key === 'p' || e.key === 'P') { window.print(); }
+  });
+  window.addEventListener('resize', fit);
+  var h = parseInt((location.hash || '').replace('#', ''), 10);
+  show(isNaN(h) ? 0 : h - 1);
+  fit();
+})();
+</script>
+</body>
+</html>

@@ -34,6 +34,14 @@ class CronCreateBody(BaseModel):
     model: str | None = None
     task_type: str = "text"
     mcp_servers: list[str] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Job metadata. ``allow_writes: true`` lets this job replay a "
+            "mail-write already approved in its session; omit it to keep the "
+            "job write-blocked (the default)."
+        ),
+    )
 
 
 class CronPatchBody(BaseModel):
@@ -153,6 +161,9 @@ async def create_cron(
         model=(body.model or "").strip() or None,
         task_type=normalize_cron_task_type(body.task_type),
         mcp_servers=mcp_servers,
+        # Only the explicit write opt-in is honoured from the client; other
+        # meta keys are internal bookkeeping (drive kind, wake markers).
+        meta={"allow_writes": True} if body.meta.get("allow_writes") else {},
         username=user.username,
     )
     row = await _get_cron_manager(server).create(spec)

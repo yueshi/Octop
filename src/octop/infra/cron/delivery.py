@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -45,6 +46,8 @@ class CronDeliveryCommand:
     task_type: CronTaskType
     model: str | None
     mcp_servers: tuple[str, ...]
+    meta: dict[str, Any] = field(default_factory=dict)
+    usage_source: str = "cron"
 
 
 class CronDeliveryService:
@@ -136,17 +139,31 @@ class CronDeliveryService:
         command: CronDeliveryCommand,
         session: SessionRow,
     ) -> None:
+        from octop.infra.agents.teams.drive import (
+            TEAM_DRIVE_KIND,
+            wake_frame_text,
+        )
+
+        is_wake = command.meta.get("kind") == TEAM_DRIVE_KIND
+        if is_wake:
+            await self._prepare_team_wake(command)
         request = await self._build_agent_request(command, session)
         tracker = TurnHistoryTracker.from_request(request)
         usage = UsageTracker()
         parts: list[str] = []
         interaction_required = False
+        hitl_request: dict[str, Any] | None = None
         saw_tool_call = False
         emitted_tool_error_ids: set[str] = set()
+        # A wake with no tool call produced nothing of substance: drop the turn
+        # from the room entirely instead of posting "nothing to do" bubbles.
+        wake_noop = False
         try:
             from octop.infra.connectors.gateway.adapters.agently_cli import write_scope
 
-            with write_scope(allowed=False):
+            # §7.4-5: cron runs stay write-blocked until this session approved
+            # a mail-write once; the approval then unlocks later turns.
+            with write_scope(allowed=self._job_write_approved(command)):
                 async for chunk in self._agent_manager.stream(command.agent_id, request):
                     tracker.observe(chunk)
                     usage.observe(chunk)
@@ -165,31 +182,154 @@ class CronDeliveryService:
                         parts.append(str(chunk.get("content") or chunk.get("text") or ""))
                     elif kind == "hitl_required":
                         interaction_required = True
-            if interaction_required:
+                        req = chunk.get("request")
+                        hitl_request = req if isinstance(req, dict) else None
+            if interaction_required and hitl_request is None:
+                # An interrupt without a request payload cannot be registered
+                # or resumed — stay loud instead of dropping it silently.
                 raise RuntimeError("cron agent run requires user interaction")
             outbound = strip_thinking("".join(parts)).strip()
-            if not outbound:
+            if is_wake:
+                if not saw_tool_call:
+                    wake_noop = True
+            elif not outbound and not interaction_required:
                 raise RuntimeError("cron agent run produced no visible response")
         finally:
-            # ``fresh_thread`` already put an empty thread on the session, so a run
-            # that raised before this left a conversation with no rows at all.
-            self._project_best_effort(session.thread_id, tracker.inputs)
-            self._remember_thread_title(session, command)
+            if not wake_noop:
+                inputs = tracker.inputs
+                if is_wake:
+                    inputs = [item for item in inputs if not wake_frame_text(item, command.prompt)]
+                self._project_best_effort(session.thread_id, inputs)
+                self._remember_thread_title(session, command)
         if usage.usage is not None:
+            from octop.infra.agents.teams.service import usage_owner_id  # noqa: PLC0415
+
+            owner = usage_owner_id(self._agent_manager.get_row(command.agent_id))
             record_turn_usage(
                 self._repos.usage_repo,
                 agent_id=command.agent_id,
                 user_id=session.user_id,
                 thread_id=session.thread_id,
                 usage=usage.usage,
-                source="cron",
+                source=command.usage_source,
+                team_id=owner,
+                runtime_repo=(self._repos.team_runtime_repo if owner else None),
             )
-        await self._gateway.push_session_text(
-            session,
-            outbound,
-            title_source=command.prompt,
+        if wake_noop:
+            from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+            METRICS.inc("team_wake_noop_total")
+            return
+        if outbound:
+            await self._gateway.push_session_text(
+                session,
+                outbound,
+                title_source=command.prompt,
+            )
+            await self._notify_best_effort(session, command.agent_id, outbound)
+        if interaction_required:
+            await self._handle_cron_hitl(command, session, hitl_request)
+
+    async def _handle_cron_hitl(
+        self,
+        command: CronDeliveryCommand,
+        session: SessionRow,
+        hitl_request: dict[str, Any] | None,
+    ) -> None:
+        """§7.3/§7.4-2: a cron turn that hit HITL suspends instead of failing.
+
+        The pause registers on the session's thread so the room card hydrates
+        and ``/chat/hitl/resume`` works, then the owner gets one targeted
+        ``approval_required`` push. ``register`` itself merges an identical
+        re-escalation into the existing pause; an old record coming back means
+        the creator was already notified, so the push is skipped.
+        """
+        from octop.infra.gateway.hitl.coordinator import HitlStreamContext
+        from octop.infra.gateway.hitl.format import normalize_hitl_request
+
+        record = self._gateway.processor.hitl_coordinator.register_from_request(
+            normalize_hitl_request(hitl_request or {}),
+            ctx=HitlStreamContext(
+                thread_id=session.thread_id,
+                agent_id=command.agent_id,
+                user_id=session.user_id,
+                session_key=command.session_key,
+                channel_type=session.channel_type,
+            ),
         )
-        await self._notify_best_effort(session, command.agent_id, outbound)
+        from octop.infra.agents.teams import is_team_agent  # noqa: PLC0415
+        from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+        METRICS.inc("cron_hitl_total")
+        if record.created_at < time.time() - 5.0:
+            return
+        row = self._agent_manager.get_row(command.agent_id)
+        await self._gateway.notify_hitl_pending(
+            session.user_id,
+            {
+                "type": "approval_required",
+                "agent_id": command.agent_id,
+                "team_id": command.agent_id if is_team_agent(row) else None,
+                "thread_id": session.thread_id,
+                "pending_id": record.pending_id,
+                "task_id": record.task_id,
+                "deep_link": f"/chat/{command.agent_id}/{session.thread_id}",
+            },
+        )
+
+    def _job_write_approved(self, command: CronDeliveryCommand) -> bool:
+        """§7.4-5: may this cron job replay an approved mail-write?
+
+        Two conditions, both required:
+
+        * the job opted in explicitly (``meta["allow_writes"]``) — the
+          approval lives in the session, and a cron session is also the
+          agent's own DM thread, so an unscoped unlock turned a single chat
+          approval into permanent unattended mail rights for every later run
+          of that agent;
+        * the session already approved a mail-write action.
+
+        The opt-in is per job, so enabling one job never enables another.
+        """
+        if not command.meta.get("allow_writes"):
+            return False
+        return self._session_write_approved(command.session_key)
+
+    def _session_write_approved(self, session_key: str) -> bool:
+        """§7.4-5: True when this session already approved a mail-write once."""
+        from octop.infra.connectors.gateway.adapters.agently_cli import (  # noqa: PLC0415
+            is_write_action_name,
+        )
+
+        for row in self._repos.hitl_repo.list_by_session(session_key, status="approved"):
+            for action in row.payload.get("action_requests") or []:
+                if isinstance(action, dict) and is_write_action_name(str(action.get("name"))):
+                    return True
+        return False
+
+    async def _prepare_team_wake(self, command: CronDeliveryCommand) -> None:
+        """Auto-start a stopped host and reap stale dispatches before the wake turn."""
+        from octop.infra.agents.teams.drive import reap_stale_tasks  # noqa: PLC0415
+        from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+        METRICS.inc("team_wake_total")
+        agent_manager = self._agent_manager
+        if agent_manager.get_agent(command.agent_id) is None:
+            # A stopped host must not silently drop its schedule: auto-start
+            # keeps autonomy semantics; a failed start fails this run loudly.
+            await agent_manager.start(command.agent_id)
+        try:
+            boot_ts = int(agent_manager.started_at)
+        except (TypeError, ValueError):
+            boot_ts = 0
+        reaped = reap_stale_tasks(
+            team_id=command.agent_id,
+            task_repo=self._repos.team_task_repo,
+            jobs=getattr(agent_manager, "team_jobs", None),
+            boot_ts=boot_ts,
+        )
+        if reaped:
+            METRICS.inc("team_tasks_stale_reaped_total", len(reaped))
 
     async def _build_agent_request(
         self,
@@ -340,6 +480,7 @@ class CronDeliveryService:
 
 def command_from_row(row: Any) -> CronDeliveryCommand:
     """Build a delivery command from a persisted cron row."""
+    meta = getattr(row, "meta", None)
     return CronDeliveryCommand(
         cron_id=str(row.cron_id),
         cron_name=str(row.name),
@@ -351,6 +492,7 @@ def command_from_row(row: Any) -> CronDeliveryCommand:
         task_type=normalize_cron_task_type(str(row.task_type)),
         model=str(row.model) if row.model else None,
         mcp_servers=tuple(str(name) for name in row.mcp_servers),
+        meta=dict(meta) if isinstance(meta, dict) else {},
     )
 
 

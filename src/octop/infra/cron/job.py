@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from octop.infra.cron.delivery import CronDeliveryCommand
 from octop.infra.cron.task_type import normalize_cron_task_type
@@ -35,6 +35,7 @@ class CronJob:
         delivery_service: CronDeliveryService,
         cron_repo: CronJobRepo,
         audit_repo: AuditRepo,
+        meta: dict[str, Any] | None = None,
     ) -> None:
         self._cron_id = cron_id
         self._name = name
@@ -46,6 +47,7 @@ class CronJob:
         self._task_type = normalize_cron_task_type(task_type)
         self._mcp_servers = list(mcp_servers or [])
         self._user_id = user_id
+        self._meta = dict(meta or {})
         self._delivery_service = delivery_service
         self._cron_repo = cron_repo
         self._audit_repo = audit_repo
@@ -70,6 +72,7 @@ class CronJob:
             task_type=row.task_type,
             mcp_servers=list(row.mcp_servers),
             user_id=row.user_id,
+            meta=dict(getattr(row, "meta", None) or {}),
             delivery_service=delivery_service,
             cron_repo=cron_repo,
             audit_repo=audit_repo,
@@ -94,6 +97,7 @@ class CronJob:
                     task_type=self._task_type,
                     model=self._model,
                     mcp_servers=tuple(self._mcp_servers),
+                    meta=dict(self._meta),
                 )
             )
         except Exception as exc:

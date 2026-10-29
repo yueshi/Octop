@@ -1179,10 +1179,19 @@ class AppService:
                         errors.append(f"row {index + 1}: {exc.message}")
                     continue
             if mode == IMPORT_MODE_REPLACE:
-                if clean and not imported_rows:
+                # Replace always writes the whole table, so an empty result
+                # wipes it. That is never what "import zero records" means:
+                # either every row failed validation, or the source returned
+                # nothing (a connector can transiently do that). Refuse both
+                # instead of destroying the user's data.
+                if not imported_rows:
                     raise _invalid(
                         ErrorCode.APP_ROW_INVALID,
-                        "every row failed validation; table left unchanged",
+                        (
+                            "every row failed validation; table left unchanged"
+                            if clean
+                            else "no records to import; table left unchanged"
+                        ),
                         errors=errors,
                     )
                 rows = imported_rows

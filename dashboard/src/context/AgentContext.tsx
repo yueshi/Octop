@@ -65,6 +65,8 @@ export interface OctopAgent {
   bootstrap_pending?: boolean;
   /** ``expert`` (default) or ``team`` host. */
   kind?: "expert" | "team" | string;
+  /** True when this agent runs as a digital employee. */
+  autonomy_enabled?: boolean;
   /** Member agent ids when ``kind === "team"``. */
   member_ids?: string[];
   welcome_message?: string | null;

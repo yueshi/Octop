@@ -92,6 +92,7 @@ if TYPE_CHECKING:
     from octop.config import OctopConfig
     from octop.infra.agents.experts.catalog import ExpertCatalog
     from octop.infra.agents.plugins.manager import PluginManager
+    from octop.infra.agents.teams.jobs import TeamJobTracker
     from octop.infra.cron.manager import CronManager
     from octop.infra.db.repos.agents import AgentRow
     from octop.infra.db.services import RepoBundle
@@ -149,6 +150,11 @@ _MEMORY_NS_PREFIX = "agent_"
 _AGENT_STATES_NEEDING_MODEL_RELOAD = frozenset({"failed", "created"})
 
 _HARNESS_AGENT_CONFIG_FIELDS = frozenset(item.name for item in fields(HarnessAgentConfig))
+
+
+def _split_tool_names(raw: str) -> set[str]:
+    """Parse a comma-separated tool-name policy field."""
+    return {part.strip() for part in str(raw or "").split(",") if part.strip()}
 
 
 def _memory_namespace(agent_id: str) -> str:
@@ -480,6 +486,7 @@ class AgentManager:
         self._proactive_scheduler: ProactiveCareScheduler | None = None
         self._team_processor: Any | None = None
         self._hitl_session_store: HitlSessionPolicyStore | None = None
+        self._task_notify: Any | None = None
         from octop.infra.agents.teams import TeamJobTracker, TeamService
 
         self._team_jobs = TeamJobTracker()
@@ -489,6 +496,10 @@ class AgentManager:
             workspace_for=self.workspace_for_agent,
         )
         self._harness_manager: HarnessAgentManager | None = None
+        self._team_autopilot: Any | None = None
+        # Process boot time: stale-task reaping treats in-flight locks as lost
+        # only for work last touched before this moment (see teams/drive.py).
+        self.started_at = int(time.time())
         self.memory_slim = MemorySlimCoordinator(self)
         self._lock = asyncio.Lock()
         # Serialize start/reload per agent so parallel provider reloads cannot
@@ -583,6 +594,19 @@ class AgentManager:
         """Attach the process-wide CronManager (must be set before boot())."""
         self._cron_manager = cron_manager
 
+    @property
+    def cron_manager(self) -> CronManager | None:
+        return self._cron_manager
+
+    @property
+    def team_jobs(self) -> TeamJobTracker:
+        return self._team_jobs
+
+    def team_inbox(self) -> Any | None:
+        """Harness inbox for team dispatches, when the harness manager is attached."""
+        team = getattr(self._harness_manager, "team", None)
+        return getattr(team, "inbox", None)
+
     def set_proactive_scheduler(self, scheduler: ProactiveCareScheduler) -> None:
         """Attach the process-wide proactive-care scheduler (optional; used after create/delete)."""
         self._proactive_scheduler = scheduler
@@ -596,6 +620,14 @@ class AgentManager:
     def set_hitl_session_store(self, store: HitlSessionPolicyStore | None) -> None:
         """Attach the thread-scoped HITL bypass store (set before boot())."""
         self._hitl_session_store = store
+
+    def set_task_notify(self, notify: Any | None) -> None:
+        """Attach the WS push behind team board events (optional; board tools only)."""
+        self._task_notify = notify
+
+    def set_team_autopilot(self, autopilot: Any | None) -> None:
+        """Attach the runtime control plane used by ``drive_*`` tools (phase 3)."""
+        self._team_autopilot = autopilot
 
     @property
     def teams(self) -> Any:
@@ -1105,6 +1137,11 @@ class AgentManager:
             )
         except OSError:
             logger.exception("rmtree failed for %s; agent removed from DB anyway", workspace_dir)
+        # Unschedule + delete cron rows BEFORE the agent row: the FK cascade
+        # would silently remove the rows while APScheduler keeps firing them.
+        if self._cron_manager is not None:
+            for job in self._repos.cron_repo.list_by_agent(agent_id):
+                await self._cron_manager.delete(job.cron_id)
         self._repos.agent_repo.delete(agent_id)
         if self._proactive_scheduler is not None:
             self._proactive_scheduler.cancel(agent_id)
@@ -3778,6 +3815,9 @@ class AgentManager:
         from octop.infra.agents.teams import is_team_agent  # noqa: PLC0415
 
         team_host = is_team_agent(row)
+        # Digital employees are single-agent teams: they own a goal/task board
+        # of their own (docs/digital-employee-plan.md S1.3).
+        autonomous = bool(getattr(row, "autonomy_enabled", 0))
 
         cron_tools: list[Any] | None = None
         if not team_host and self._cron_manager is not None:
@@ -3829,6 +3869,58 @@ class AgentManager:
             # long as a single app tool is still callable.
             light_app_tools_enabled = bool(set(APP_TOOL_NAMES) - tools_disabled_set(cfg))
 
+        team_board_tools: list[Any] = []
+        if team_host or autonomous:
+            from octop.infra.agents.teams import (  # noqa: PLC0415
+                TeamCoordinator,
+                build_team_board_tools,
+            )
+
+            team_board_tools = build_team_board_tools(
+                goal_repo=self._repos.team_goal_repo,
+                task_repo=self._repos.team_task_repo,
+                deliverable_repo=self._repos.goal_deliverable_repo,
+                agent_repo=self._repos.agent_repo,
+                task_notify=self._task_notify,
+                event_recorder=TeamCoordinator(
+                    event_repo=self._repos.team_event_repo,
+                    runtime_repo=self._repos.team_runtime_repo,
+                ),
+                wait_repo=self._repos.team_wait_repo,
+                runtime_repo=self._repos.team_runtime_repo,
+                # A digital employee has no dispatch semantics: it owns its
+                # tasks, so it may not hand them to another agent.
+                self_only=autonomous and not team_host,
+                # Roster check for assignees. The decision path already
+                # validates against it; the tool path must too, or a host can
+                # dispatch this team's work to any agent id in the system.
+                member_ids_fn=(
+                    (lambda team_id: set(self._teams.member_ids(team_id))) if team_host else None
+                ),
+            )
+
+        team_drive_tools: list[Any] = []
+        if team_host and self._cron_manager is not None:
+            from octop.infra.agents.teams import build_team_drive_tools  # noqa: PLC0415
+
+            team_drive_tools = build_team_drive_tools(
+                cron_manager=self._cron_manager,
+                task_repo=self._repos.team_task_repo,
+                agent_repo=self._repos.agent_repo,
+                cron_repo=self._repos.cron_repo,
+                user_repo=self._repos.user_repo,
+                team_inbox=self.team_inbox(),
+                autopilot=self._team_autopilot,
+            )
+
+        team_ask_tools: list[Any] = []
+        if team_host or autonomous:
+            from octop.infra.agents.teams.ask_creator import (  # noqa: PLC0415
+                build_ask_creator_tool,
+            )
+
+            team_ask_tools = [build_ask_creator_tool()]
+
         from octop_harness.plugins import PluginRegistry, build_plugin_tools  # noqa: PLC0415
 
         from octop.infra.agents.plugins.plugin_tool_defaults import (  # noqa: PLC0415
@@ -3878,6 +3970,9 @@ class AgentManager:
                     *knowledge_tools,
                     *mobile_tools,
                     *app_tools,
+                    *team_board_tools,
+                    *team_drive_tools,
+                    *team_ask_tools,
                 ]
             },
         )
@@ -3936,6 +4031,9 @@ class AgentManager:
         merged_tools.extend(knowledge_tools)
         merged_tools.extend(mobile_tools)
         merged_tools.extend(app_tools)
+        merged_tools.extend(team_board_tools)
+        merged_tools.extend(team_drive_tools)
+        merged_tools.extend(team_ask_tools)
         merged_tools.extend(plugin_tools)
         # agent_list / ask_agent: PeerAgentMiddleware (team_enabled=True), not config.tools.
 
@@ -3973,6 +4071,26 @@ class AgentManager:
                     self._repos.user_repo.get(row.user_id) if row.user_id else None
                 ),
             )
+
+        if autonomous and not team_host:
+            # A digital employee gets its board tools but no dispatch path;
+            # without the briefing it does not know it is expected to run the
+            # work itself or to escalate instead of guessing.
+            from octop.i18n import tr  # noqa: PLC0415
+            from octop.infra.utils.locale import locale_from_user_row  # noqa: PLC0415
+
+            locale = locale_from_user_row(
+                self._repos.user_repo.get(row.user_id) if row.user_id else None
+            )
+            briefing = tr("teams.employee_briefing", locale)
+            # ``responsible_scope`` is the job description; without it the
+            # agent knows the board mechanics but not what it is for.
+            policy_repo = getattr(self._repos, "autonomy_policy_repo", None)
+            if policy_repo is not None:
+                scope = policy_repo.get(row.agent_id).responsible_scope.strip()
+                if scope:
+                    briefing = f"{briefing}\n\n{tr('teams.employee_scope', locale, scope=scope)}"
+            system_prompt = f"{system_prompt}\n\n{briefing}" if system_prompt else briefing
 
         mcp_server_configs: dict[str, Any] = {}
         if not team_host:
@@ -4104,9 +4222,26 @@ class AgentManager:
             )
             if team_host:
                 disabled = set(host_tools_disabled(disabled))
+            if autonomous and not team_host:
+                # The job spec can narrow the tool surface. Deny and allow are
+                # comma-separated tool names; deny wins, and an allow list
+                # disables every builtin it does not name.
+                autonomy_policy_repo = getattr(self._repos, "autonomy_policy_repo", None)
+                if autonomy_policy_repo is not None:
+                    spec = autonomy_policy_repo.get(row.agent_id)
+                    denied = _split_tool_names(spec.tool_scope_deny)
+                    allowed = _split_tool_names(spec.tool_scope_allow)
+                    disabled |= denied
+                    if allowed:
+                        from octop.infra.agents.settings.tool_catalog import (  # noqa: PLC0415
+                            BUILTIN_TOOL_CATALOG,
+                        )
+
+                        builtin = {item.name for item in BUILTIN_TOOL_CATALOG}
+                        disabled |= {name for name in builtin if name not in allowed}
             harness_cfg.tools_disabled = frozenset(disabled)
         applied = policy.apply_to_config(harness_cfg)
-        applied = self._apply_team_host_config(applied, row)
+        applied = self._apply_team_host_config(applied, row, builtin_tools=merged_tools)
         applied = self._merge_agently_write_interrupts(
             applied, self._connector_uid_for(row) if not team_host else None
         )
@@ -4214,13 +4349,68 @@ class AgentManager:
             return cfg
         return replace(cfg, interrupt_on={**(cfg.interrupt_on or {}), **extra})
 
-    def _apply_team_host_config(self, cfg: HarnessAgentConfig, row: Any) -> HarnessAgentConfig:
+    def _ask_creator_interrupt(
+        self,
+        cfg: HarnessAgentConfig,
+        *,
+        enabled: bool,
+    ) -> dict[str, Any]:
+        """Interrupt config for the ``ask_creator`` tool (INV-1).
+
+        The tool body always returns ``HEADLESS_FALLBACK`` — the only thing
+        that turns the call into a real pause is the graph-level
+        ``interrupt_on`` entry.  Any agent that carries the tool must carry
+        the interrupt too, or the escalation channel silently self-answers.
+
+        ``enabled`` mirrors the tool-mount condition in
+        ``_build_harness_config`` (``team_host or autonomy_enabled``).  It is
+        taken from the agent row rather than from the assembled tool list so
+        that callers which do not assemble tools (tests, offline paths) still
+        get the interrupt instead of silently losing it.
+        """
+        if "interrupt_on" not in _HARNESS_AGENT_CONFIG_FIELDS or not enabled:
+            return {}
+        from octop.infra.agents.teams.ask_creator import (  # noqa: PLC0415
+            ASK_CREATOR_TOOL_NAME,
+        )
+
+        return {
+            "interrupt_on": {
+                **(getattr(cfg, "interrupt_on", None) or {}),
+                ASK_CREATOR_TOOL_NAME: {
+                    "allowed_decisions": ["respond"],
+                    "description": "The host is asking its creator to decide.",
+                },
+            }
+        }
+
+    def _apply_team_host_config(
+        self,
+        cfg: HarnessAgentConfig,
+        row: Any,
+        *,
+        builtin_tools: list[Any] | None = None,
+    ) -> HarnessAgentConfig:
         from octop.infra.agents.teams import host_system_prompt, host_tools_disabled, is_team_agent
 
         if not is_team_agent(row):
+            plain: dict[str, Any] = {}
             if "peer_invoke_mode" in _HARNESS_AGENT_CONFIG_FIELDS:
-                return replace(cfg, peer_invoke_mode="sync")
-            return cfg
+                plain["peer_invoke_mode"] = "sync"
+            autonomous = bool(getattr(row, "autonomy_enabled", 0))
+            if autonomous and "team_enabled" in _HARNESS_AGENT_CONFIG_FIELDS:
+                # A digital employee runs unattended and has no dispatch
+                # semantics: a peer call blocks its turn synchronously and
+                # the work never reaches the board, so nobody settles it.
+                # Removing the peer middleware also removes ``agent_list``.
+                plain["team_enabled"] = False
+            # INV-1: an agent carrying the ask_creator tool must also carry the
+            # matching interrupt. The tool body always returns
+            # HEADLESS_FALLBACK, so without the interrupt the escalation
+            # channel silently self-answers. A digital employee
+            # (autonomy_enabled) carries the tool, so it needs this too.
+            plain.update(self._ask_creator_interrupt(cfg, enabled=autonomous))
+            return replace(cfg, **plain) if plain else cfg
         updates: dict[str, Any] = {}
         if "tools_disabled" in _HARNESS_AGENT_CONFIG_FIELDS:
             updates["tools_disabled"] = host_tools_disabled(
@@ -4235,7 +4425,14 @@ class AgentManager:
         if "skills_dir" in _HARNESS_AGENT_CONFIG_FIELDS:
             updates["skills_dir"] = None
         if "tools" in _HARNESS_AGENT_CONFIG_FIELDS:
-            updates["tools"] = None
+            # Hosts keep only the Octop-injected built-ins (board / drive tools);
+            # user-configured tool lists never leak onto a team host.
+            updates["tools"] = list(builtin_tools or []) or None
+        # ask_creator is a question pause, not an approval gate: respond only,
+        # and always on so the escalation channel exists regardless of the
+        # global HITL policy (mirrors ask_user_question). INV-1: the interrupt
+        # follows the tool, not the agent kind.
+        updates.update(self._ask_creator_interrupt(cfg, enabled=True))
         if "subagents_auto_load" in _HARNESS_AGENT_CONFIG_FIELDS:
             updates["subagents_auto_load"] = False
         if "bootstrap_enabled" in _HARNESS_AGENT_CONFIG_FIELDS:

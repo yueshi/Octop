@@ -127,6 +127,9 @@ class Gateway:
         self._cli_channel: CliChannel | None = None
         self._runtime_status: dict[str, ChannelRuntimeStatus] = {}
         self._history_backfill = HistoryBackfillQueue()
+        self._team_coordinator: Any | None = None
+        self._team_autopilot: Any | None = None
+        self._team_dispatcher: Any | None = None
 
     def replace_repos(self, repos: RepoBundle) -> None:
         """Point channel/thread persistence at a rebound control-plane pool."""
@@ -138,10 +141,32 @@ class Gateway:
         if self._processor is not None:
             self._processor.replace_thread_message_repo(repos.thread_message_repo)
             self._processor.hitl_coordinator.session_policies.replace_repo(repos.thread_repo)
+        if self._team_coordinator is not None:
+            self._team_coordinator.replace_repos(repos)
+        if self._team_dispatcher is not None:
+            self._team_dispatcher.replace_repos(repos)
+        if self._team_autopilot is not None:
+            self._team_autopilot.replace_repos(repos)
 
     @property
     def ws_hub(self) -> WebSocketHub:
         return self._ws_hub
+
+    @property
+    def team_coordinator(self) -> Any | None:
+        return self._team_coordinator
+
+    @property
+    def team_autopilot(self) -> Any | None:
+        return self._team_autopilot
+
+    def push_team_frame(self, team_id: str, frame: dict[str, Any]) -> None:
+        """Best-effort sync hook for the team coordinator/board tools."""
+        row = self._repos.agent_repo.get(team_id)
+        if row is None or row.user_id is None:
+            return
+        loop = asyncio.get_running_loop()
+        loop.create_task(self._ws_hub.push_to_user(int(row.user_id), frame))
 
     @property
     def steer(self) -> SteerCoordinator:
@@ -230,6 +255,79 @@ class Gateway:
         )
 
         install_channel_thinking_clean()
+        from octop.infra.agents.teams.coordinator import TeamCoordinator  # noqa: PLC0415
+        from octop.infra.agents.teams.decision import (  # noqa: PLC0415
+            DecisionRunner,
+            provider_plan_fn,
+        )
+        from octop.infra.agents.teams.dispatcher import TeamDispatcher  # noqa: PLC0415
+        from octop.infra.agents.teams.runtime import TeamAutopilot  # noqa: PLC0415
+
+        def shadow_gate(team_id: str) -> bool:
+            """Opt-in per team: config key ``team_shadow_decisions`` (phase 2).
+
+            Decisions burn tokens on the team's own model, so they only run
+            when the team config asks for them.
+            """
+            try:
+                return bool(self._agent_manager.get_config(team_id).get("team_shadow_decisions"))
+            except Exception:
+                return False
+
+        async def team_notify(team_id: str, text: str) -> None:
+            """Deliver a decision notice to the team's current room."""
+            target = await autopilot.resolve_target(team_id)
+            if target is None:
+                return
+            session = self._thread_registry.get_session(target.session_key)
+            if session is not None:
+                await self.push_session_text(session, text, title_source=text)
+
+        def team_frame(team_id: str, frame: dict[str, Any]) -> None:
+            """Best-effort dashboard frame for runtime/task/wait/decision changes."""
+            self.push_team_frame(team_id, frame)
+
+        autopilot = TeamAutopilot(
+            repos=self._repos,
+            agent_manager=self._agent_manager,
+            thread_registry=self._thread_registry,
+            notify=team_notify,
+            frame_notify=team_frame,
+        )
+        dispatcher = TeamDispatcher(
+            repos=self._repos,
+            resolve_target=autopilot.resolve_target,
+            submit_peer=autopilot.submit_peer,
+        )
+        from octop.infra.agents.teams.service import is_team_agent  # noqa: PLC0415
+
+        coordinator = TeamCoordinator(
+            event_repo=self._repos.team_event_repo,
+            runtime_repo=self._repos.team_runtime_repo,
+            task_repo=self._repos.team_task_repo,
+            wait_repo=self._repos.team_wait_repo,
+            dispatcher=dispatcher,
+            shadow_gate=shadow_gate,
+            apply_plans=True,
+            frame_notify=team_frame,
+            # A digital employee decides inside its own turn; only multi-agent
+            # teams run a separate decision pass.
+            solo_gate=lambda team_id: not is_team_agent(self._repos.agent_repo.get(team_id)),
+        )
+        decision_runner = DecisionRunner(
+            repos=self._repos,
+            plan_fn=provider_plan_fn(agent_manager=self._agent_manager, repos=self._repos),
+            event_recorder=coordinator,
+            notify=autopilot.notify,
+            member_ids_fn=lambda team_id: set(self._agent_manager.teams.member_ids(team_id)),
+        )
+        coordinator.bind_decision_runner(decision_runner)
+        dispatcher.bind_recorder(coordinator)
+        autopilot.bind_coordinator(coordinator)
+        self._team_coordinator = coordinator
+        self._team_autopilot = autopilot
+        self._team_dispatcher = dispatcher
+
         self._processor = GlobalProcessor(
             agent_manager=self._agent_manager,
             thread_registry=self._thread_registry,
@@ -242,11 +340,17 @@ class Gateway:
             provider_repo=self._repos.provider_repo,
             dispatcher=self._dispatcher,
             usage_repo=self._repos.usage_repo,
+            runtime_repo=self._repos.team_runtime_repo,
             thread_message_repo=self._repos.thread_message_repo,
             gateway=self,
+            hitl_repo=self._repos.hitl_repo,
             trajectory_service=self._trajectory_service,
             history_archive=self._history_archive,
+            team_coordinator=coordinator,
         )
+        hitl_store = getattr(self._processor.hitl_coordinator, "store", None)
+        if hitl_store is not None:
+            coordinator.bind_approval_expire(hitl_store.expire_for_task)
 
         self._channel_manager = ChannelManager(channels={})
         self._channel_manager.set_pre_lock_handler(self._preempt_cancel_on_stop)
@@ -526,6 +630,10 @@ class Gateway:
                 "agent_name": agent_name,
             },
         )
+
+    async def notify_hitl_pending(self, user_id: int, frame: dict[str, Any]) -> None:
+        """Push a HITL pause (§7.4-2 ``approval_required``) to one user's sockets."""
+        await self._ws_hub.push_to_user(user_id, frame)
 
     def _require_channel_manager(self) -> ChannelManager:
         if self._channel_manager is None:

@@ -18,6 +18,9 @@ async def test_setup_required_then_login(client):
     assert r.json()["setup_required"] is True
     r = await c.post("/api/auth/login", json={"username": "x", "password": "y"})
     assert r.status_code == 503 and r.json()["setup_required"] is True
+    # Public webhook ingress stays locked down until the first admin exists.
+    r = await c.post("/api/hooks/src-1", json={})
+    assert r.status_code == 503 and r.json()["setup_required"] is True
     r = await bootstrap_admin(c, home, username="alice", password="TestPass12")
     assert r.status_code == 201
     r = await c.post("/api/auth/login", json={"username": "alice", "password": "TestPass12"})

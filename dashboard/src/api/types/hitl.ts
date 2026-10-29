@@ -32,6 +32,12 @@ export interface HitlPendingPayload {
 
 /** Tool whose HITL pause is a question for the user, not an approval. */
 export const ASK_USER_TOOL_NAME = "ask_user_question";
+/** Team-host escalation pause rides the same ask-card channel. */
+export const ASK_CREATOR_TOOL_NAME = "ask_creator";
+export const ASK_TOOL_NAMES: ReadonlySet<string> = new Set([
+  ASK_USER_TOOL_NAME,
+  ASK_CREATOR_TOOL_NAME,
+]);
 
 export interface AskOption {
   label: string;
@@ -138,7 +144,7 @@ export function extractAskQuestions(
 ): AskQuestion[] {
   if (!actions?.length) return [];
   for (const action of actions) {
-    if (action.name !== ASK_USER_TOOL_NAME) continue;
+    if (!ASK_TOOL_NAMES.has(action.name)) continue;
     const args = parseActionArgs(action.args);
     const questions = questionsFromUnknown(args.questions ?? args);
     if (questions.length > 0) return questions;
@@ -147,5 +153,5 @@ export function extractAskQuestions(
 }
 
 export function isAskHitl(actions: HitlActionRequest[] | undefined): boolean {
-  return Boolean(actions?.some((a) => a.name === ASK_USER_TOOL_NAME));
+  return Boolean(actions?.some((a) => ASK_TOOL_NAMES.has(a.name)));
 }

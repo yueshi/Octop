@@ -15,8 +15,6 @@ import {
   AppWindow,
   Bot,
   Clock,
-  Database,
-  FileCode,
   MessageSquareText,
   Table2,
   User,
@@ -29,7 +27,6 @@ import { appsApi, type AppSummary } from "../../api/modules/apps";
 import PageShell from "../../layouts/PageShell";
 import { apiErrorMessage } from "../../utils/apiError";
 import { formatServerDateTime } from "../../utils/formatMessageTime";
-import { formatBytes } from "../../utils/formatBytes";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
 
 const { Text, Paragraph } = Typography;
@@ -192,28 +189,6 @@ export default function AppsPage() {
                     </MetaItem>
                   </Space>
                   <Space size={12} wrap>
-                    <MetaItem
-                      icon={
-                        <FileCode size={12} color="var(--fn-color-warning)" />
-                      }
-                      title={t("apps.interfaceFile")}
-                    >
-                      {t("apps.interfaceSize", {
-                        size: formatBytes(app.html_bytes),
-                      })}
-                    </MetaItem>
-                    <MetaItem
-                      icon={
-                        <Database size={12} color="var(--fn-color-success)" />
-                      }
-                      title={t("apps.dataFile")}
-                    >
-                      {t("apps.dataSize", {
-                        size: formatBytes(app.data_bytes),
-                      })}
-                    </MetaItem>
-                  </Space>
-                  <Space size={12} wrap style={{ marginTop: 4 }}>
                     <MetaItem
                       icon={<Table2 size={12} color="var(--fn-color-info)" />}
                     >

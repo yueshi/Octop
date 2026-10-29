@@ -41,6 +41,7 @@ from octop.infra.gateway.hitl.coordinator import (
     iter_with_session_auto_approve,
 )
 from octop.infra.gateway.hitl.format import normalize_hitl_request
+from octop.infra.gateway.hitl.store import HitlPendingStore
 from octop.infra.gateway.hitl.stream_compat import install_harness_hitl_compat
 from octop.infra.gateway.media.attachment_hints import (
     content_blocks_need_vision,
@@ -158,11 +159,14 @@ class GlobalProcessor:
         provider_repo: Any | None = None,
         dispatcher: SlashDispatcher,
         usage_repo: Any | None = None,
+        runtime_repo: Any | None = None,
         thread_message_repo: Any | None = None,
         gateway: Any | None = None,
         hitl: HitlChannelCoordinator | None = None,
+        hitl_repo: Any | None = None,
         trajectory_service: Any | None = None,
         history_archive: Any | None = None,
+        team_coordinator: Any | None = None,
     ) -> None:
         self._agent_manager = agent_manager
         self._thread_registry = thread_registry
@@ -181,11 +185,23 @@ class GlobalProcessor:
         )
         self._dispatcher = dispatcher
         self._usage_repo = usage_repo
+        self._runtime_repo = runtime_repo
         self._thread_message_repo = thread_message_repo
         self._gateway = gateway
-        self._hitl = hitl or HitlChannelCoordinator()
+        self._hitl = hitl or HitlChannelCoordinator(
+            store=(
+                HitlPendingStore(repo=hitl_repo, event_recorder=team_coordinator)
+                if hitl_repo is not None
+                else None
+            )
+        )
+        if hitl_repo is not None:
+            # Recover still-open pauses from the ``hitl_pending`` table so a
+            # restart does not drop an approval the creator never answered.
+            self._hitl.store.load_persisted()
         self._trajectory_service = trajectory_service
         self._history_archive = history_archive
+        self._team_coordinator = team_coordinator
         self.teams = TeamManager(
             agent_manager=agent_manager,
             thread_registry=thread_registry,
@@ -193,6 +209,9 @@ class GlobalProcessor:
             thread_message_repo=thread_message_repo,
             gateway=gateway,
             hitl_coordinator=self._hitl,
+            usage_repo=self._usage_repo,
+            runtime_repo=self._runtime_repo,
+            event_recorder=self._team_coordinator,
         )
 
     async def _begin_history(
@@ -658,6 +677,14 @@ class GlobalProcessor:
         session_key = session_key_from_message(msg, agent_id=agent_id)
         channel_type = msg.channel_type or "unknown"
         im_meta = session_metadata_from_message(msg)
+        if is_team_agent(agent_row) and self._team_coordinator is not None:
+            # Shadow ledger: a user message reached a team host over IM (v2 §11.2).
+            self._team_coordinator.record_user_message(
+                team_id=agent_id,
+                session_key=session_key,
+                channel_type=channel_type,
+                excerpt=str(msg.text or ""),
+            )
 
         cmd = parse_slash(msg.text)
         locale = resolve_user_locale(
@@ -974,6 +1001,14 @@ class GlobalProcessor:
         channel_type = msg.channel_type or "unknown"
         im_meta = session_metadata_from_message(msg)
         meta = msg.metadata or {}
+        if team_host and self._team_coordinator is not None:
+            # Shadow ledger: a user message reached a team host (v2 §11.2).
+            self._team_coordinator.record_user_message(
+                team_id=agent_id,
+                session_key=session_key,
+                channel_type=channel_type,
+                excerpt=str(msg.text or ""),
+            )
         locale = resolve_user_locale(
             user_repo=self._user_repo,
             user_id=user_id,
@@ -1730,12 +1765,17 @@ class GlobalProcessor:
     ) -> None:
         if self._usage_repo is None or not usage:
             return
+        from octop.infra.agents.teams.service import usage_owner_id  # noqa: PLC0415
+
+        owner = usage_owner_id(self._agent_manager.get_row(agent_id))
         record_turn_usage(
             self._usage_repo,
             agent_id=agent_id,
             user_id=user_id,
             thread_id=thread_id,
             usage=usage,
+            team_id=owner,
+            runtime_repo=(self._runtime_repo if owner else None),
         )
 
     async def _persist_incomplete_turn(

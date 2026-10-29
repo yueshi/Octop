@@ -1,0 +1,45 @@
+-- Schema v23: goal deliverables for expert/team goals.
+-- A deliverable is the user-defined expected output plus the actual artifact
+-- (workspace file / link / text) attached after execution.
+
+CREATE TABLE IF NOT EXISTS goal_deliverables (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  deliverable_id   TEXT NOT NULL UNIQUE,
+  goal_id          TEXT NOT NULL REFERENCES team_goals(goal_id) ON DELETE CASCADE,
+  title            TEXT NOT NULL,
+  description      TEXT NOT NULL DEFAULT '',
+  format           TEXT NOT NULL DEFAULT '',
+  required         INTEGER NOT NULL DEFAULT 1,
+  status           TEXT NOT NULL DEFAULT 'pending',
+  task_id          TEXT REFERENCES team_tasks(task_id) ON DELETE SET NULL,
+  artifact_type    TEXT NOT NULL DEFAULT 'none',
+  artifact_ref     TEXT NOT NULL DEFAULT '',
+  artifact_name    TEXT NOT NULL DEFAULT '',
+  artifact_agent_id TEXT REFERENCES agents(agent_id) ON DELETE SET NULL,
+  created_by       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_goal_deliverables_goal
+  ON goal_deliverables(goal_id);
+CREATE INDEX IF NOT EXISTS idx_goal_deliverables_task
+  ON goal_deliverables(task_id);
+
+-- Acceptance records: one row per review decision on a board task. ``review``
+-- used to be a bare status with no reviewer, opinion or evidence, so nobody
+-- could tell what "approved" meant (team-l3-roadmap A2).
+CREATE TABLE IF NOT EXISTS team_task_reviews (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  review_id  TEXT NOT NULL UNIQUE,
+  task_id    TEXT NOT NULL REFERENCES team_tasks(task_id) ON DELETE CASCADE,
+  decision   TEXT NOT NULL,
+  comment    TEXT NOT NULL DEFAULT '',
+  reviewer   TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_task_reviews_task
+  ON team_task_reviews(task_id, created_at);
+
+UPDATE _schema_version SET version = 23;

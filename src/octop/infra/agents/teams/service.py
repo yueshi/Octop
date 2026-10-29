@@ -53,6 +53,24 @@ def is_team_agent(row: AgentRow | None) -> bool:
     return agent_kind(row) == TEAM_KIND
 
 
+def usage_owner_id(row: Any | None) -> str | None:
+    """The ``team_runtime`` row an agent's token usage is metered against.
+
+    A team host and a digital employee both run unattended against a budget
+    stored on their own runtime row, so both are metered under their own
+    agent id. Everything else (ordinary chat, cron, peer calls) stays
+    unattributed — the same ``None`` every path used before budgets existed.
+
+    INV-4: every usage path must call this, or a digital employee's spend
+    never reaches the counter the gate reads.
+    """
+    if row is None:
+        return None
+    if is_team_agent(row) or bool(getattr(row, "autonomy_enabled", 0)):
+        return str(row.agent_id)
+    return None
+
+
 _LEGACY_TEAM_AVATARS = frozenset(
     {
         "/experts/avatars/multi-agent-orchestrator.svg",

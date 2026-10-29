@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { Popconfirm, Switch, Tag, Tooltip } from "antd";
 import { message } from "@/utils/antdMessage";
+import { autonomyApi } from "../../../api/modules/autonomy";
+import { apiErrorMessage } from "../../../utils/apiError";
 import { copyText } from "@/utils/copyText";
 
 import {
@@ -17,6 +19,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 import WorkspaceDrawer from "../../Agent/Workspace/components/WorkspaceDrawer";
+import GoalDrawer from "../../../components/GoalDrawer";
 import SubagentCatalogDrawer from "./SubagentCatalogDrawer";
 import SkillCatalogDrawer from "./SkillCatalogDrawer";
 import ChannelCatalogDrawer from "./ChannelCatalogDrawer";
@@ -95,6 +98,7 @@ export const AgentCard = memo(function AgentCard({
   const [localError, setLocalError] = useState(agent.last_error);
   const [actionLoading, setActionLoading] = useState(false);
   const [workspaceDrawerOpen, setWorkspaceDrawerOpen] = useState(false);
+  const [goalDrawerOpen, setGoalDrawerOpen] = useState(false);
   const [subagentCatalogOpen, setSubagentCatalogOpen] = useState(false);
   const [skillCatalogOpen, setSkillCatalogOpen] = useState(false);
   const [toolSettingsOpen, setToolSettingsOpen] = useState(false);
@@ -248,6 +252,19 @@ export const AgentCard = memo(function AgentCard({
       setActionLoading(false);
     }
   }, [agent.agent_id, agent.name, t]);
+
+  const toggleAutonomy = useCallback(async () => {
+    const next = !agent.autonomy_enabled;
+    try {
+      await autonomyApi.set(agent.agent_id, next);
+      message.success(
+        t(next ? "agents.autonomy.hireDone" : "agents.autonomy.dismissDone"),
+      );
+      refreshAgents();
+    } catch (err) {
+      message.error(apiErrorMessage(err, t("agents.autonomy.toggleFailed"), t));
+    }
+  }, [agent.agent_id, agent.autonomy_enabled, refreshAgents, t]);
 
   const handleOpenChat = useCallback(() => {
     setActiveAgent(agent.agent_id);
@@ -491,6 +508,12 @@ export const AgentCard = memo(function AgentCard({
                 onMbti={() => setMbtiCatalogOpen(true)}
                 onMemory={() => setMemoryCatalogOpen(true)}
                 onChannels={() => setChannelCatalogOpen(true)}
+                onGoals={() => setGoalDrawerOpen(true)}
+                onBoard={() => navigate(`/agents/${agent.agent_id}/board`)}
+                autonomyEnabled={agent.autonomy_enabled}
+                onToggleAutonomy={
+                  agent.kind === "team" ? undefined : toggleAutonomy
+                }
               />
             </>
           )}
@@ -527,6 +550,12 @@ export const AgentCard = memo(function AgentCard({
         agentId={agent.agent_id}
         open={workspaceDrawerOpen}
         onClose={() => setWorkspaceDrawerOpen(false)}
+      />
+      <GoalDrawer
+        open={goalDrawerOpen}
+        agentId={agent.agent_id}
+        agentKind="expert"
+        onClose={() => setGoalDrawerOpen(false)}
       />
       <SubagentCatalogDrawer
         agentId={agent.agent_id}

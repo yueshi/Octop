@@ -261,6 +261,22 @@ def test_apply_team_host_config_forces_async_ask_agent(manager: AgentManager) ->
     assert "Host dispatch" in (out.system_prompt or "") or "主持人调度" in (out.system_prompt or "")
 
 
+def test_apply_team_host_config_registers_ask_creator_interrupt(
+    manager: AgentManager,
+) -> None:
+    """ask_creator rides the interrupt channel respond-only, always on for hosts."""
+    from dataclasses import replace as dc_replace
+
+    from octop_harness.config import HarnessAgentConfig
+
+    manager._teams.member_ids = MagicMock(return_value=["mem-a"])  # type: ignore[method-assign]
+    cfg = HarnessAgentConfig(workspace_dir=manager.paths.ensure_agent_workspace("host"))
+    out = manager._apply_team_host_config(cfg, dc_replace(_row(agent_id="host"), kind="team"))
+    entry = (getattr(out, "interrupt_on", None) or {}).get("ask_creator")
+    assert entry is not None
+    assert entry["allowed_decisions"] == ["respond"]
+
+
 def test_apply_expert_config_forces_sync_ask_agent(manager: AgentManager) -> None:
     from octop_harness.config import HarnessAgentConfig
 

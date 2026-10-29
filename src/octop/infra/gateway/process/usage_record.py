@@ -256,8 +256,15 @@ def record_turn_usage(
     thread_id: str,
     usage: dict[str, Any],
     source: str = "chat",
+    team_id: str | None = None,
+    runtime_repo: Any | None = None,
 ) -> None:
-    """Append one cache-aware turn row without allowing bad data to break chat."""
+    """Append one cache-aware turn row without allowing bad data to break chat.
+
+    ``runtime_repo`` (optional) also credits the turn to the ``team_runtime``
+    budget counter that ``budget_remaining`` gates on. Without it the spend is
+    recorded but never counted against the limit.
+    """
     normalized = normalize_usage(usage)
     with contextlib.suppress(Exception):
         usage_repo.record(
@@ -273,4 +280,11 @@ def record_turn_usage(
             reasoning_tokens=normalized["reasoning_tokens"],
             model_calls=max(1, _token_int(usage.get("model_calls"))),
             source=source,
+            team_id=team_id,
         )
+        if runtime_repo is not None and team_id:
+            # Atomic increment: a read-modify-write loses turns whenever two
+            # agents report at once, and a lost turn is unaccounted spend.
+            runtime_repo.add_budget_used(
+                team_id, normalized["input_tokens"] + normalized["output_tokens"]
+            )

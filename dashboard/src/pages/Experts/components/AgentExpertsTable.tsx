@@ -25,6 +25,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 import WorkspaceDrawer from "../../Agent/Workspace/components/WorkspaceDrawer";
+import GoalDrawer from "../../../components/GoalDrawer";
 import SubagentCatalogDrawer from "./SubagentCatalogDrawer";
 import SkillCatalogDrawer from "./SkillCatalogDrawer";
 import ChannelCatalogDrawer from "./ChannelCatalogDrawer";
@@ -87,6 +88,7 @@ export default function AgentExpertsTable({
   const [localStates, setLocalStates] = useState<Record<string, string>>({});
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [workspaceAgentId, setWorkspaceAgentId] = useState<string | null>(null);
+  const [goalAgentId, setGoalAgentId] = useState<string | null>(null);
   const [skillCatalogAgentId, setSkillCatalogAgentId] = useState<string | null>(
     null,
   );
@@ -517,6 +519,7 @@ export default function AgentExpertsTable({
                   onMbti={() => openMbtiCatalog(row.agent_id)}
                   onMemory={() => setMemoryCatalogAgentId(row.agent_id)}
                   onChannels={() => setChannelCatalogAgentId(row.agent_id)}
+                  onGoals={() => setGoalAgentId(row.agent_id)}
                 />
               </>
             )}
@@ -572,6 +575,12 @@ export default function AgentExpertsTable({
         agentId={workspaceAgentId ?? ""}
         open={workspaceAgentId !== null}
         onClose={() => setWorkspaceAgentId(null)}
+      />
+      <GoalDrawer
+        open={goalAgentId !== null}
+        agentId={goalAgentId}
+        agentKind="expert"
+        onClose={() => setGoalAgentId(null)}
       />
       <SkillCatalogDrawer
         agentId={skillCatalogAgentId ?? ""}

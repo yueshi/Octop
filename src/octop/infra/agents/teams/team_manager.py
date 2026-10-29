@@ -109,8 +109,10 @@ def host_system_prompt(row: Any, user_repo: Any) -> str:
         else DEFAULT_LOCALE
     )
     briefing = tr("teams.host_briefing", locale)
+    autopilot = tr("teams.autopilot_briefing", locale)
     custom = str(getattr(row, "system_prompt", None) or "").strip()
-    return f"{custom}\n\n{briefing}".strip() if custom else briefing
+    body = f"{briefing}\n\n{autopilot}".strip()
+    return f"{custom}\n\n{body}".strip() if custom else body
 
 
 async def subscribe_with_member_catchup(
@@ -142,6 +144,9 @@ class TeamManager:
         thread_message_repo: Any | None = None,
         gateway: Any | None = None,
         hitl_coordinator: Any | None = None,
+        usage_repo: Any | None = None,
+        runtime_repo: Any | None = None,
+        event_recorder: Any | None = None,
     ) -> None:
         self._agent_manager = agent_manager
         self._thread_registry = thread_registry
@@ -149,6 +154,9 @@ class TeamManager:
         self._thread_message_repo = thread_message_repo
         self._gateway = gateway
         self._hitl = hitl_coordinator
+        self._usage_repo = usage_repo
+        self._runtime_repo = runtime_repo
+        self._event_recorder = event_recorder
         self._hitl_waiters: dict[str, asyncio.Future[list[dict[str, Any]]]] = {}
         self._peer_prompts: dict[tuple[str, str], tuple[str, str]] = {}
         self._live_host_replies: set[str] = set()
@@ -317,9 +325,17 @@ class TeamManager:
         )
 
     async def on_reply(self, event: ReplyEvent) -> None:
+        self._record_member_reply_event(event)
         self._end_job_from_reply(event)
         room = str(event.source_thread_id or "").strip()
         speaker = event.source_agent_id
+        # Autopilot replies have no host wrap-up: the member bubble already
+        # landed on the room wall (v2 §7.3). An empty done reply is the signal.
+        if event.status == "done" and not (event.reply_text or "").strip() and room:
+            host_id = self._room_agent_id(room)
+            if host_id and self._should_skip_host_followup(host_id):
+                self._thread_registry.touch_last_active(room)
+                return
         text = (
             event.error_text or "Background task did not complete."
             if event.status != "done"
@@ -360,6 +376,68 @@ class TeamManager:
             return
         logger.warning("team reply %s: no room to publish", event.inbox_id)
 
+    def _record_member_reply_event(self, event: ReplyEvent) -> str | None:
+        """Ledger one ``member.replied`` and settle its dispatch wait.
+
+        Runs before the legacy close-out below, so the ledger sees every
+        reply even when a later branch short-circuits publication.
+        """
+        recorder = self._event_recorder
+        if recorder is None:
+            return None
+        room = str(event.source_thread_id or "").strip()
+        team_id = self._room_agent_id(room) if room else None
+        if team_id:
+            # on_reply also carries non-team peer rooms (expert ask_agent);
+            # only team hosts belong on the coordination ledger.
+            row = self._agent_manager.get_row(team_id)
+            if row is None or not is_team_agent(row):
+                return None
+        event_id = recorder.record_member_reply(
+            team_id=team_id or None,
+            member_id=event.source_agent_id,
+            status=event.status,
+            inbox_id=str(event.inbox_id),
+            excerpt=event.reply_text or "",
+        )
+        settle = getattr(recorder, "handle_member_reply", None)
+        if callable(settle):
+            settle(event)
+        return str(event_id) if event_id is not None else None
+
+    def _record_team_turn_usage(
+        self,
+        *,
+        speaker_id: str,
+        payload: dict[str, Any],
+        thread_id: str,
+        team_id: str | None,
+        usage: dict[str, Any] | None,
+    ) -> None:
+        """Meter one streamed peer/host turn against the owning team (v2 §4.7)."""
+        if self._usage_repo is None or not usage or not team_id:
+            # Non-team peer rooms (expert-to-expert ask_agent) stay on their
+            # existing chat/cron metering paths.
+            return
+        from octop.infra.gateway.process.usage_record import record_turn_usage  # noqa: PLC0415
+
+        raw_user = payload.get("user")
+        if isinstance(raw_user, dict):
+            raw_user = raw_user.get("user_id")
+        uid = _octop_user_id(raw_user) if raw_user is not None else None
+        if uid is None:
+            return
+        record_turn_usage(
+            self._usage_repo,
+            agent_id=speaker_id,
+            user_id=uid,
+            thread_id=thread_id,
+            usage=usage,
+            source="team_host" if speaker_id == team_id else "team_member",
+            team_id=team_id,
+            runtime_repo=(self._runtime_repo if team_id else None),
+        )
+
     # -- live room + member page ---------------------------------------------
 
     async def stream_peer_to_room(
@@ -385,6 +463,9 @@ class TeamManager:
         """
         payload = _chat_request_payload(request, speaker_id)
         member_tid = str(payload.get("thread_id") or "").strip()
+        from octop.infra.gateway.process.usage_record import UsageTracker  # noqa: PLC0415
+
+        usage = UsageTracker()
         text_parts: list[str] = []
         reasoning_parts: list[str] = []
         relayed_visible = False
@@ -456,6 +537,7 @@ class TeamManager:
                 async for chunk in agen:
                     if not isinstance(chunk, dict):
                         continue
+                    usage.observe(chunk)
                     kind = str(chunk.get("type") or "")
                     if kind == "tool_call_chunk":
                         saw_tool_call = True
@@ -549,6 +631,13 @@ class TeamManager:
             finally:
                 await self._clear_live_member(room_thread_id, speaker_id)
         stream_text = "".join(text_parts).strip()
+        self._record_team_turn_usage(
+            speaker_id=speaker_id,
+            payload=payload,
+            thread_id=member_tid or room_thread_id,
+            team_id=self._room_agent_id(room_thread_id) or None,
+            usage=usage.usage,
+        )
         return {
             "messages": await self._peer_result_messages(
                 speaker_id,
@@ -747,7 +836,18 @@ class TeamManager:
             stream_peer=self.stream_peer_to_room,
             stream_host=self.stream_host_followup_to_room,
             take_prompt=self.take_peer_prompt,
+            skip_followup=self._should_skip_host_followup,
         )
+
+    def _should_skip_host_followup(self, team_id: str) -> bool:
+        """Autopilot rooms get no host close-out turn (v2 §7.3, cost §1.1)."""
+        checker = getattr(self._event_recorder, "is_autopilot", None)
+        if not callable(checker):
+            return False
+        try:
+            return bool(checker(team_id))
+        except Exception:
+            return False
 
     # -- jobs / runtime -------------------------------------------------------
 
@@ -799,6 +899,9 @@ class TeamManager:
                 for member_id in self._agent_manager.teams.member_ids(call.from_agent_id)
                 if member_id != call.to_agent_id
             ]
+            if call.job_id:
+                # Lets a member HITL pause link back to the dispatched board task.
+                extra["team_job_id"] = call.job_id
         return extra
 
     def _ensure_projection(self, thread_id: str) -> None:
@@ -1227,6 +1330,18 @@ class TeamManager:
             raise RuntimeError("team member paused without an approval request")
         record.resume_agent_id = speaker_id
         record.resume_thread_id = member_thread_id
+        if not record.task_id:
+            configurable = payload.get("configurable") if isinstance(payload, dict) else None
+            job_id = configurable.get("team_job_id") if isinstance(configurable, dict) else None
+            finder = getattr(self._event_recorder, "task_for_inbox", None)
+            task_id = finder(str(job_id)) if job_id and callable(finder) else None
+            store = getattr(self._hitl, "store", None)
+            attach = getattr(store, "attach_task", None)
+            if task_id and callable(attach):
+                attach(record.pending_id, str(task_id))
+        note_pending = getattr(self._event_recorder, "record_approval_pending", None)
+        if callable(note_pending):
+            note_pending(record)
         loop = asyncio.get_running_loop()
         self._hitl_waiters[record.pending_id] = loop.create_future()
         request = dict(request)
@@ -1981,6 +2096,7 @@ def _patch_inbox_wrapup(
     *,
     stream_followup: Callable[..., Any] | None,
     is_team: Callable[[str], bool] | None = None,
+    skip_followup: Callable[[str], bool] | None = None,
 ) -> None:
     """Run async host wrap-up through the room stream, not a blocking ``call()``."""
     if inbox is None or stream_followup is None:
@@ -2009,6 +2125,10 @@ def _patch_inbox_wrapup(
             return await _fallback(msg, result_text, error_text)
         if callable(is_team) and not is_team(host_id):
             return await _fallback(msg, result_text, error_text)
+        if callable(skip_followup) and skip_followup(host_id):
+            # Autopilot coordinator owns the follow-up (wait settlement and
+            # dispatch); an empty reply keeps the inbox contract intact.
+            return ""
         processor = getattr(inbox, "_processor", None)
         compose = getattr(processor, "compose_followup", None)
         if compose is None:
@@ -2220,6 +2340,7 @@ def wire_host_dispatch(
     stream_peer: Callable[..., Any] | None = None,
     stream_host: Callable[..., Any] | None = None,
     take_prompt: Callable[[str, str | None], tuple[str, str] | None] | None = None,
+    skip_followup: Callable[[str], bool] | None = None,
 ) -> None:
     """Patch harness TeamManager so async ``ask_agent`` uses inbox + room stream."""
     if harness_team is None:
@@ -2290,6 +2411,7 @@ def wire_host_dispatch(
         getattr(harness_team, "inbox", None),
         stream_followup=stream_followup,
         is_team=is_team,
+        skip_followup=skip_followup,
     )
 
     original_invoke = getattr(harness_team, "_invoke_peer", None)

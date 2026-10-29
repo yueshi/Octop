@@ -186,6 +186,8 @@ def _ensure_cron_jobs_schema(db: DatabasePool) -> None:
         "mcp_servers",
         "TEXT NOT NULL DEFAULT '[]'",
     )
+    # v22 (unreleased): drive-loop marker dict on every cron row.
+    _ensure_column(db, "cron_jobs", "meta", "TEXT NOT NULL DEFAULT '{}'")
 
 
 def _collapse_legacy_agent_welcome_columns(db: DatabasePool) -> None:
@@ -1772,6 +1774,318 @@ def _ensure_light_apps_schema(db: DatabasePool) -> None:
         )
 
 
+def _ensure_team_board_schema(db: DatabasePool) -> None:
+    """Create the v22 team board tables when a DB recorded the version without them."""
+    pk = _integer_pk_sql(db)
+    with db.connect() as conn:
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS team_goals (
+              id               {pk},
+              goal_id          TEXT NOT NULL UNIQUE,
+              team_id          TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+              title            TEXT NOT NULL,
+              description      TEXT NOT NULL DEFAULT '',
+              status           TEXT NOT NULL DEFAULT 'active',
+              success_criteria TEXT NOT NULL DEFAULT '',
+              created_by       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at       INTEGER NOT NULL,
+              updated_at       INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_team_goals_team ON team_goals(team_id)")
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS team_tasks (
+              id             {pk},
+              task_id        TEXT NOT NULL UNIQUE,
+              team_id        TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+              goal_id        TEXT REFERENCES team_goals(goal_id) ON DELETE SET NULL,
+              title          TEXT NOT NULL,
+              spec           TEXT NOT NULL DEFAULT '',
+              assignee       TEXT REFERENCES agents(agent_id) ON DELETE SET NULL,
+              status         TEXT NOT NULL DEFAULT 'proposed',
+              priority       INTEGER NOT NULL DEFAULT 0,
+              result_summary TEXT NOT NULL DEFAULT '',
+              blocked_reason TEXT NOT NULL DEFAULT '',
+              version        INTEGER NOT NULL DEFAULT 1,
+              created_at     INTEGER NOT NULL,
+              updated_at     INTEGER NOT NULL,
+              due_at         INTEGER,
+              window_start           INTEGER,
+              window_end             INTEGER,
+              budget_tokens          INTEGER,
+              concurrency_key        TEXT,
+              escalation_policy_json TEXT NOT NULL DEFAULT '{{}}',
+              idempotency_key        TEXT,
+              active_wait_id         TEXT
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_team_tasks_team ON team_tasks(team_id)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_team_tasks_team_status ON team_tasks(team_id, status)"
+        )
+        # Databases that recorded v22 with the pre-coordination team_tasks shape
+        # need the new columns before the partial unique index can be created.
+        for column, definition in (
+            ("window_start", "INTEGER"),
+            ("window_end", "INTEGER"),
+            ("budget_tokens", "INTEGER"),
+            ("concurrency_key", "TEXT"),
+            ("escalation_policy_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("idempotency_key", "TEXT"),
+            ("active_wait_id", "TEXT"),
+        ):
+            _ensure_column(db, "team_tasks", column, definition)
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_team_tasks_idem "
+            "ON team_tasks(idempotency_key) WHERE idempotency_key IS NOT NULL"
+        )
+        # Durable HITL approvals/questions (P3 drive-loop prerequisite).
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS hitl_pending (
+              id               {pk},
+              session_key      TEXT NOT NULL,
+              thread_id        TEXT,
+              kind             TEXT NOT NULL,
+              payload_json     TEXT NOT NULL DEFAULT '{{}}',
+              created_by_agent TEXT,
+              task_id          TEXT,
+              status           TEXT NOT NULL DEFAULT 'pending',
+              expires_at       INTEGER,
+              resolved_by      TEXT,
+              resolved_at      INTEGER,
+              resume_token     TEXT,
+              created_at       INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_hitl_pending_session "
+            "ON hitl_pending(session_key, status)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_hitl_pending_task ON hitl_pending(task_id)")
+    _ensure_team_coordination_schema(db)
+    _ensure_usage_team_scope(db)
+
+
+def _ensure_team_coordination_schema(db: DatabasePool) -> None:
+    """Create the team coordinator tables (docs/team-drive-v2.md §4).
+
+    Mirrors the v22 SQL pair additions; safe to run against databases that
+    recorded version 22 before these tables were folded in.
+    """
+    pk = _integer_pk_sql(db)
+    with db.connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS team_runtime (
+              team_id                TEXT NOT NULL PRIMARY KEY REFERENCES agents(agent_id) ON DELETE CASCADE,
+              status                 TEXT NOT NULL DEFAULT 'idle',
+              mode                   TEXT NOT NULL DEFAULT 'manual',
+              goal_id                TEXT,
+              active_decision_id     TEXT,
+              last_event_seq         INTEGER NOT NULL DEFAULT 0,
+              last_decision_at       INTEGER,
+              next_heartbeat_at      INTEGER,
+              heartbeat_interval_sec INTEGER NOT NULL DEFAULT 1800,
+              budget_day             TEXT NOT NULL DEFAULT '',
+              budget_used            INTEGER NOT NULL DEFAULT 0,
+              budget_reserved        INTEGER NOT NULL DEFAULT 0,
+              paused_reason          TEXT,
+              version                INTEGER NOT NULL DEFAULT 1,
+              created_at             INTEGER NOT NULL,
+              updated_at             INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS team_events (
+              id           {pk},
+              event_id     TEXT NOT NULL UNIQUE,
+              team_id      TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+              seq          INTEGER NOT NULL,
+              type         TEXT NOT NULL,
+              actor        TEXT NOT NULL DEFAULT '',
+              payload_json TEXT NOT NULL DEFAULT '{{}}',
+              dedupe_key   TEXT NOT NULL UNIQUE,
+              decision_id  TEXT,
+              created_at   INTEGER NOT NULL,
+              consumed_at  INTEGER,
+              UNIQUE(team_id, seq)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_team_events_team_seq ON team_events(team_id, seq)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_team_events_type "
+            "ON team_events(team_id, type, created_at)"
+        )
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS team_decisions (
+              id                     {pk},
+              decision_id            TEXT NOT NULL UNIQUE,
+              team_id                TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+              trigger_event_ids_json TEXT NOT NULL DEFAULT '[]',
+              mode                   TEXT NOT NULL DEFAULT 'autonomous',
+              status                 TEXT NOT NULL DEFAULT 'pending',
+              reason                 TEXT NOT NULL DEFAULT '',
+              snapshot_hash          TEXT NOT NULL DEFAULT '',
+              plan_json              TEXT,
+              budget_reserved        INTEGER NOT NULL DEFAULT 0,
+              cost_tokens            INTEGER NOT NULL DEFAULT 0,
+              thread_id              TEXT,
+              error                  TEXT,
+              started_at             INTEGER,
+              finished_at            INTEGER,
+              created_at             INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_team_decisions_team ON team_decisions(team_id, status)"
+        )
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS team_waits (
+              id                     {pk},
+              wait_id                TEXT NOT NULL UNIQUE,
+              team_id                TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+              task_id                TEXT,
+              kind                   TEXT NOT NULL,
+              status                 TEXT NOT NULL DEFAULT 'waiting',
+              due_at                 INTEGER,
+              timeout_at             INTEGER,
+              deadline_at            INTEGER,
+              escalation_policy_json TEXT NOT NULL DEFAULT '{{}}',
+              idempotency_key        TEXT NOT NULL UNIQUE,
+              external_ref           TEXT,
+              payload_json           TEXT NOT NULL DEFAULT '{{}}',
+              attempts               INTEGER NOT NULL DEFAULT 0,
+              last_attempt_at        INTEGER,
+              created_at             INTEGER NOT NULL,
+              settled_at             INTEGER
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_team_waits_due ON team_waits(status, due_at)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_team_waits_timeout ON team_waits(status, timeout_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_team_waits_task ON team_waits(task_id, status)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS team_task_deps (
+              task_id            TEXT NOT NULL REFERENCES team_tasks(task_id) ON DELETE CASCADE,
+              depends_on_task_id TEXT NOT NULL REFERENCES team_tasks(task_id) ON DELETE CASCADE,
+              created_at         INTEGER NOT NULL,
+              PRIMARY KEY (task_id, depends_on_task_id)
+            )
+            """
+        )
+
+
+def _ensure_usage_team_scope(db: DatabasePool) -> None:
+    """Add ``usage_log.team_id`` and backfill team host rows (v2 §4.7)."""
+    if not _table_exists(db, "usage_log"):
+        return
+    _ensure_column(db, "usage_log", "team_id", "TEXT")
+    with db.connect() as conn:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_log_team ON usage_log(team_id, ts)")
+        if _table_exists(db, "agents"):
+            conn.execute(
+                "UPDATE usage_log SET team_id = agent_id "
+                "WHERE team_id IS NULL AND agent_id IN "
+                "(SELECT agent_id FROM agents WHERE kind = 'team')"
+            )
+
+
+def _ensure_goal_deliverables_schema(db: DatabasePool) -> None:
+    """Create the v23 tables when a DB recorded the version without them."""
+    pk = _integer_pk_sql(db)
+    if not _table_exists(db, "team_goals") or not _table_exists(db, "team_tasks"):
+        return
+    with db.connect() as conn:
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS goal_deliverables (
+              id                {pk},
+              deliverable_id    TEXT NOT NULL UNIQUE,
+              goal_id           TEXT NOT NULL REFERENCES team_goals(goal_id) ON DELETE CASCADE,
+              title             TEXT NOT NULL,
+              description       TEXT NOT NULL DEFAULT '',
+              format            TEXT NOT NULL DEFAULT '',
+              required          INTEGER NOT NULL DEFAULT 1,
+              status            TEXT NOT NULL DEFAULT 'pending',
+              task_id           TEXT REFERENCES team_tasks(task_id) ON DELETE SET NULL,
+              artifact_type     TEXT NOT NULL DEFAULT 'none',
+              artifact_ref      TEXT NOT NULL DEFAULT '',
+              artifact_name     TEXT NOT NULL DEFAULT '',
+              artifact_agent_id TEXT REFERENCES agents(agent_id) ON DELETE SET NULL,
+              created_by        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at        INTEGER NOT NULL,
+              updated_at        INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_goal_deliverables_goal ON goal_deliverables(goal_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_goal_deliverables_task ON goal_deliverables(task_id)"
+        )
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS team_task_reviews (
+              id         {pk},
+              review_id  TEXT NOT NULL UNIQUE,
+              task_id    TEXT NOT NULL REFERENCES team_tasks(task_id) ON DELETE CASCADE,
+              decision   TEXT NOT NULL,
+              comment    TEXT NOT NULL DEFAULT '',
+              reviewer   TEXT NOT NULL DEFAULT '',
+              created_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_team_task_reviews_task "
+            "ON team_task_reviews(task_id, created_at)"
+        )
+
+
+def _ensure_autonomy_schema(db: DatabasePool) -> None:
+    """Add the digital-employee autonomy columns (idempotent, both dialects).
+
+    SQLite has no ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS``, so the v22
+    file's bare ALTERs are applied here instead (see the ``version == 22``
+    branch in ``_apply_sqlite_migration``). PostgreSQL runs the ``.pg.sql``
+    file directly; this helper is the no-op safety net there and the real
+    repair for databases that already recorded v22 (docs/digital-employee-plan.md S1.1).
+    """
+    if _table_exists(db, "agents"):
+        _ensure_column(db, "agents", "autonomy_enabled", "INTEGER NOT NULL DEFAULT 0")
+    if _table_exists(db, "proactive_care_config"):
+        for column, definition in (
+            ("budget_limit_tokens", "INTEGER NOT NULL DEFAULT 0"),
+            ("budget_window", "TEXT NOT NULL DEFAULT 'day'"),
+            ("sla_tasks_per_day", "INTEGER NOT NULL DEFAULT 0"),
+            ("escalate_to", "TEXT NOT NULL DEFAULT ''"),
+            ("responsible_scope", "TEXT NOT NULL DEFAULT ''"),
+            ("tool_scope_allow", "TEXT NOT NULL DEFAULT ''"),
+            ("tool_scope_deny", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            _ensure_column(db, "proactive_care_config", column, definition)
+
+
 def _repair_legacy_schema(db: DatabasePool) -> None:
     """Idempotent compatibility repairs for local databases from old builds."""
     if _table_exists(db, "users"):
@@ -1945,6 +2259,8 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
     Version 16 adds ``agents.kind`` so team hosts can be listed.
     Version 17 adds sticky ``conversation_mode`` and ``pending_plan_path`` on threads.
     Version 18 adds ``user_role`` templates and non-FK role id/name snapshots.
+    Version 22 adds light apps, team boards, and the cron ``meta`` column via
+    idempotent helpers (v22 is unreleased; its pieces fold into it).
     """
     if version == 2:
         if _table_exists(db, "cron_jobs"):
@@ -2067,6 +2383,19 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
         return
     if version == 21:
         _ensure_skill_package_download_schema(db)
+        with db.connect() as conn:
+            conn.execute("UPDATE _schema_version SET version = ?", (version,))
+        return
+    if version == 22:
+        # v22 is still unreleased and light apps / team boards keep folding
+        # into it. SQLite cannot re-run the file's plain
+        # ``ALTER TABLE cron_jobs ADD COLUMN meta`` on databases that already
+        # recorded the version (e.g. after a version rewind), so the loop
+        # applies the idempotent helpers instead of the raw file.
+        _ensure_light_apps_schema(db)
+        _ensure_team_board_schema(db)
+        _ensure_cron_jobs_schema(db)
+        _ensure_autonomy_schema(db)
         with db.connect() as conn:
             conn.execute("UPDATE _schema_version SET version = ?", (version,))
         return
@@ -2237,5 +2566,8 @@ def run_migrations(db: DatabasePool) -> None:
     _ensure_user_role_schema(db)
     _ensure_bridge_connections_schema(db)
     _ensure_light_apps_schema(db)
+    _ensure_team_board_schema(db)
+    _ensure_goal_deliverables_schema(db)
+    _ensure_autonomy_schema(db)
     _grant_default_nav_permissions(db)
     _grant_personalization_tab_permissions(db)

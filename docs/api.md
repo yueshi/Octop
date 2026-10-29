@@ -348,6 +348,147 @@ Bundled experts live in `src/octop/infra/agents/experts/library/`
 (en/zh divisions); the catalog is locale-aware via
 `Accept-Language` / user preference.
 
+## Goals & deliverables (experts and teams)
+
+Both expert and team hosts use the same goal ledger (the owning agent id is the
+goal's `team_id`) plus optional deliverables. Deliverables are preset by the
+creator and later carry the actual workspace file, link, or text artifact.
+
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| `GET` | `/agents/{agent_id}/goals` | owner | goals + deliverables; `?status=` |
+| `POST` | `/agents/{agent_id}/goals` | owner | body `{title, description?, success_criteria?, deliverables?}`; archives the previous active goal |
+| `PATCH` | `/agents/{agent_id}/goals/{goal_id}` | owner | update title / description / success_criteria |
+| `POST` | `/agents/{agent_id}/goals/{goal_id}/deliverables` | owner | add an expected deliverable |
+| `PATCH` | `/agents/{agent_id}/goals/{goal_id}/deliverables/{deliverable_id}` | owner | status (`pending/produced`) + artifact (`file/link/text`) |
+| `DELETE` | `/agents/{agent_id}/goals/{goal_id}/deliverables/{deliverable_id}` | owner | remove a deliverable |
+
+Team hosts can also update deliverables from the conversation with the
+`deliverable_update` tool. Expert goals are user-facing tracking; team goals
+also update `team_runtime`/`team_events` and are visible to the decision unit.
+
+## Expert teams — board & drive
+
+Team hosts keep a goal/task board (design:
+`docs/team-autopilot-design.html`, runtime v2: `docs/team-drive-v2.md`).
+All routes below are team-owner only. The autopilot loop is authoritative in
+`team_runtime`; legacy `cron_jobs.meta.kind = "team_drive"` rows are migrated
+into it at boot and then removed.
+
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| `GET`    | `/teams/{team_id}/goals` | owner | goals, newest first; `?status=` filter |
+| `POST`   | `/teams/{team_id}/goals` | owner | body `{title, description?, success_criteria?}` → active goal; the previous active goal is archived (one north star per team) |
+| `GET`    | `/teams/{team_id}/tasks` | owner | board tasks; `?status=` / `?goal_id=` filters |
+| `PATCH`  | `/teams/{team_id}/tasks/{task_id}` | owner | CAS update: body `{status?, priority?, due_at?, expected_version}`; stale `expected_version` → `409 TEAM_TASK_CONFLICT`, illegal transition → `400 TEAM_TASK_INVALID_TRANSITION` |
+| `GET`    | `/teams/{team_id}/runtime` | owner | runtime status/mode, active goal/decision, heartbeat, budget counters, open waits |
+| `POST`   | `/teams/{team_id}/drive/start` | owner | body `{heartbeat_interval_sec?, trigger?}`; sets `mode=autopilot`, `status=running`, drops legacy drive crons, kicks the first decision when there is work |
+| `POST`   | `/teams/{team_id}/drive/pause` | owner | body `{reason?}` → `paused_user`; timers are deferred, in-flight work is kept |
+| `POST`   | `/teams/{team_id}/drive/resume` | owner | reactivates deferred waits and kicks one decision |
+| `POST`   | `/teams/{team_id}/drive/finish` | owner | marks the active goal `done`, `status=finishing`; no new decisions/dispatches |
+| `POST`   | `/teams/{team_id}/drive/stop` | owner | kill switch — removes legacy drive cron rows, drains queued dispatches, cancels open tasks and waits; idempotent |
+| `GET`    | `/teams/{team_id}/decisions` | owner | decision audit, newest first; `?limit=` |
+| `GET`    | `/teams/{team_id}/waits` | owner | wait ledger; `?status=` / `?limit=` |
+| `POST`   | `/teams/{team_id}/waits/{wait_id}/resolve` | owner | body `{status: "approved"\|"rejected", note?}`; settles a decision-level approval wait and resumes/blocks its task. Member HITL pauses (`external_ref` set) must be resolved in their conversation card → `409 TEAM_WAIT_CONFLICT` |
+
+Plan-level `wait_approval` rows are what the resolve route settles; they have
+no `external_ref`. A wait with `external_ref` is a paused member's HITL card —
+answer it in that conversation (dashboard or IM) so the member graph can
+resume. Pending plan approvals are listed by `GET /teams/{id}/runtime`
+(`open_waits[]`) and rendered in the board's approval bar.
+
+The host agent mutates the same board through built-in tools
+(`goal_set` / `task_create` / `task_update` / `task_list`,
+`drive_enable` / `drive_disable` / `drive_list`), so the server-side
+state machine guards both writers. With the phase-3 runtime attached,
+`drive_enable` starts/updates `team_runtime` instead of creating a cron job.
+
+### Board events (notifications WS)
+
+The dashboard notifications socket (`WS /notifications/ws?token=<jwt>`,
+same `ping`/`pong` protocol as chat) carries, among others:
+
+- `{"type":"team.task.updated","team_id","task_id","status","version"}` —
+  pushed to the team creator whenever a board write lands (host tool,
+  dashboard PATCH, plan application or dispatch). The payload is minimal;
+  clients refetch the board.
+- `{"type":"team.goal.updated","team_id","goal_id","status"}` — active goal
+  changed.
+- `{"type":"team.runtime.updated","team_id","status","mode","active_decision_id"}`
+  — start/pause/resume/finish/stop or a dispatch status change.
+- `{"type":"team.decision.updated","team_id","decision_id"}` — a decision was
+  committed or failed; clients refetch `/decisions`.
+- `{"type":"team.wait.updated","team_id","wait_id","kind","status","task_id"}`
+  — wait created/settled/timed out; clients refetch `/waits` and the board.
+- `{"type":"approval_required","agent_id","team_id","thread_id","pending_id","task_id","deep_link"}`
+  — a cron-driven turn hit a HITL pause (tool approval or `ask_creator`
+  question); `deep_link` opens the paused conversation.
+
+## External events (webhooks & connector polls)
+
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| `POST` | `/hooks/{source_id}` | HMAC | Public webhook ingress; no JWT; webhook sources only |
+| `POST`/`GET` | `/external/sources` | user | Create a source (`webhook` / `connector_poll`); webhook secret returned once |
+| `PATCH`/`DELETE` | `/external/sources/{source_id}` | owner | Rename / enable / replace poll config / delete (cascades) |
+| `POST` | `/external/sources/{source_id}/rotate-secret` | owner | New HMAC secret for webhook sources, returned once |
+| `POST` | `/external/sources/{source_id}/poll` | owner | Queue a connector_poll run now |
+| `GET` | `/external/connector-tools` | user | Read-only tools of a connector instance (`instance_id`) |
+| `POST`/`GET` | `/external/subscriptions` | user | Fan-out rules (`expert` / `team` / `app` targets) |
+| `PATCH`/`DELETE` | `/external/subscriptions/{id}` | owner | Enable/disable, retarget, delete |
+| `GET` | `/external/events` | user | Received events (`source_id`, `limit`, `offset`) |
+| `GET` | `/external/deliveries` | user | Delivery status (`source_id`, `status`, `limit`) |
+| `POST` | `/external/deliveries/{id}/retry` | owner | Requeue a `failed` / `dead` delivery |
+
+Webhook headers:
+
+- `X-Octop-Timestamp` — Unix seconds; must be within ±300s.
+- `X-Octop-Signature` — hex HMAC-SHA256 of `"{timestamp}.{raw_body}"`; a
+  `sha256=` prefix is accepted.
+- `X-Octop-Event-Id` / `X-Octop-Event-Type` / `X-Octop-Occurred-At` — optional;
+  event type falls back to the JSON `event_type`/`type` field or
+  `external.event`. Repeating the same event id is deduplicated.
+
+Bodies are capped at 256 KiB; the event is stored before any agent work.
+Events and their deliveries are retained for 30 days.
+
+`connector_poll` source config:
+
+```json
+{
+  "instance_id": "…",
+  "tool": "list_orders",
+  "args": {"limit": 20},
+  "interval_seconds": 300,
+  "event_type": "order.updated",
+  "cursor_arg": "since",
+  "cursor_path": "updated_at",
+  "items_path": "data.items",
+  "id_path": "id",
+  "summary_path": "title",
+  "occurred_at_path": "created_at"
+}
+```
+
+The tool must be in-process and read-only. `cursor_arg` is added to `args`
+from the stored cursor; `cursor_path` is the per-item field used to advance
+it. `items_path` locates the result list; an empty path accepts a top-level
+array or `items` / `data` / `records`.
+
+Subscription modes:
+
+- `expert.turn` — runs one expert turn in a dedicated `dashboard:external`
+  session with `usage_source=external_event`; stopped experts retry with
+  backoff. `coalesce_seconds` batches adjacent events into one turn.
+- `expert.notify` — dashboard/toast only; no model call.
+- `team.judge` — appends `team_events(external.event)` for an autopilot team;
+  the decision snapshot includes the event summary.
+- `team.notify` — dashboard toast only; no decision.
+- `app.refresh` — requires `mapping.source_id` (a light-app data source).
+- `app.import` — replaces rows from `payload.records` (or
+  `mapping.records_path`); `mapping.columns` maps source → destination. An
+  empty/missing record list is rejected so an event cannot wipe the table.
+
 ## Workspace, skills, subagents, memory, files
 
 | Method | Path | Auth | Notes |
@@ -694,4 +835,13 @@ dashboard mirrors every code under `apiErrors.*` in
 | `WORKSPACE_PATH_INVALID` | 400 | Path outside the agent's workspace |
 | `STORAGE_BACKEND_UNREACHABLE` | 502 | Remote backend connect / list failed |
 | `CONNECTOR_OAUTH_FAILED` | 400 | OAuth flow could not complete |
+| `EXTERNAL_SOURCE_NOT_FOUND` | 404 | Webhook source missing or disabled |
+| `EXTERNAL_SOURCE_INVALID` | 400 | Source name/kind invalid |
+| `EXTERNAL_SIGNATURE_INVALID` | 401 | Webhook HMAC mismatch |
+| `EXTERNAL_TIMESTAMP_INVALID` | 401 | Webhook timestamp missing or outside ±300s |
+| `EXTERNAL_PAYLOAD_TOO_LARGE` | 413 | Webhook body exceeds 256 KiB |
+| `EXTERNAL_RATE_LIMITED` | 429 | Too many webhook events for this source |
+| `EXTERNAL_SUBSCRIPTION_INVALID` | 400 | Subscription target/mode/config invalid |
+| `EXTERNAL_TARGET_INVALID` | 400 | Target missing or not writable by the source owner |
+| `EXTERNAL_EVENT_INVALID` | 400 | Event body, type or delivery retry state invalid |
 | `INTERNAL_ERROR` | 500 | Unhandled exception (logged with traceback) |

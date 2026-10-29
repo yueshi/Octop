@@ -9,12 +9,19 @@ from octop.infra.db.pool import DatabasePool
 from octop.infra.db.repos.agents import AgentRepo
 from octop.infra.db.repos.apps import LightAppRepo
 from octop.infra.db.repos.audit import AuditRepo
+from octop.infra.db.repos.autonomy_policy import AutonomyPolicyRepo
 from octop.infra.db.repos.backends import BackendRepo
 from octop.infra.db.repos.bridge_connections import BridgeConnectionRepo
 from octop.infra.db.repos.care_push import CarePushRepo
 from octop.infra.db.repos.channels import ChannelRepo
 from octop.infra.db.repos.connectors import ConnectorRepo
 from octop.infra.db.repos.cron import CronJobRepo
+from octop.infra.db.repos.external_deliveries import ExternalDeliveryRepo
+from octop.infra.db.repos.external_events import ExternalEventRepo
+from octop.infra.db.repos.external_sources import ExternalSourceRepo
+from octop.infra.db.repos.external_subscriptions import ExternalSubscriptionRepo
+from octop.infra.db.repos.goal_deliverables import GoalDeliverableRepo
+from octop.infra.db.repos.hitl import HitlPendingRepo
 from octop.infra.db.repos.invites import InviteRepo
 from octop.infra.db.repos.knowledge import KnowledgeRepo
 from octop.infra.db.repos.proactive_care_config import ProactiveCareConfigRepo
@@ -25,6 +32,14 @@ from octop.infra.db.repos.sessions import SessionRepo
 from octop.infra.db.repos.settings import SettingsRepo
 from octop.infra.db.repos.skill_packages import SkillPackageRepo
 from octop.infra.db.repos.sso import SsoRepo
+from octop.infra.db.repos.team_decisions import TeamDecisionRepo
+from octop.infra.db.repos.team_events import TeamEventRepo
+from octop.infra.db.repos.team_goals import TeamGoalRepo
+from octop.infra.db.repos.team_runtime import TeamRuntimeRepo
+from octop.infra.db.repos.team_task_deps import TeamTaskDepsRepo
+from octop.infra.db.repos.team_task_reviews import TeamTaskReviewRepo
+from octop.infra.db.repos.team_tasks import TeamTaskRepo
+from octop.infra.db.repos.team_waits import TeamWaitRepo
 from octop.infra.db.repos.thread_messages import ThreadMessageRepo
 from octop.infra.db.repos.threads import ThreadRepo
 from octop.infra.db.repos.trajectory_events import TrajectoryEventRepo
@@ -64,7 +79,22 @@ class RepoBundle:
     voice_provider_repo: VoiceProviderRepo
     care_push_repo: CarePushRepo
     proactive_care_config_repo: ProactiveCareConfigRepo
+    autonomy_policy_repo: AutonomyPolicyRepo
     sso_repo: SsoRepo
+    team_goal_repo: TeamGoalRepo
+    goal_deliverable_repo: GoalDeliverableRepo
+    team_task_repo: TeamTaskRepo
+    team_runtime_repo: TeamRuntimeRepo
+    team_event_repo: TeamEventRepo
+    team_decision_repo: TeamDecisionRepo
+    team_wait_repo: TeamWaitRepo
+    team_task_deps_repo: TeamTaskDepsRepo
+    team_task_review_repo: TeamTaskReviewRepo
+    hitl_repo: HitlPendingRepo
+    external_source_repo: ExternalSourceRepo
+    external_subscription_repo: ExternalSubscriptionRepo
+    external_event_repo: ExternalEventRepo
+    external_delivery_repo: ExternalDeliveryRepo
 
     @classmethod
     def from_pool(cls, db: DatabasePool) -> RepoBundle:
@@ -95,7 +125,22 @@ class RepoBundle:
             voice_provider_repo=VoiceProviderRepo(db),
             care_push_repo=CarePushRepo(db),
             proactive_care_config_repo=ProactiveCareConfigRepo(db),
+            autonomy_policy_repo=AutonomyPolicyRepo(db),
             sso_repo=SsoRepo(db),
+            team_goal_repo=TeamGoalRepo(db),
+            goal_deliverable_repo=GoalDeliverableRepo(db),
+            team_task_repo=TeamTaskRepo(db),
+            team_runtime_repo=TeamRuntimeRepo(db),
+            team_event_repo=TeamEventRepo(db),
+            team_decision_repo=TeamDecisionRepo(db),
+            team_wait_repo=TeamWaitRepo(db),
+            team_task_deps_repo=TeamTaskDepsRepo(db),
+            team_task_review_repo=TeamTaskReviewRepo(db),
+            hitl_repo=HitlPendingRepo(db),
+            external_source_repo=ExternalSourceRepo(db),
+            external_subscription_repo=ExternalSubscriptionRepo(db),
+            external_event_repo=ExternalEventRepo(db),
+            external_delivery_repo=ExternalDeliveryRepo(db),
         )
 
 
@@ -210,8 +255,68 @@ class SharedServices:
         return self.repos.proactive_care_config_repo
 
     @property
+    def autonomy_policy_repo(self) -> AutonomyPolicyRepo:
+        return self.repos.autonomy_policy_repo
+
+    @property
     def sso_repo(self) -> SsoRepo:
         return self.repos.sso_repo
+
+    @property
+    def team_goal_repo(self) -> TeamGoalRepo:
+        return self.repos.team_goal_repo
+
+    @property
+    def goal_deliverable_repo(self) -> GoalDeliverableRepo:
+        return self.repos.goal_deliverable_repo
+
+    @property
+    def team_task_repo(self) -> TeamTaskRepo:
+        return self.repos.team_task_repo
+
+    @property
+    def team_runtime_repo(self) -> TeamRuntimeRepo:
+        return self.repos.team_runtime_repo
+
+    @property
+    def team_event_repo(self) -> TeamEventRepo:
+        return self.repos.team_event_repo
+
+    @property
+    def team_decision_repo(self) -> TeamDecisionRepo:
+        return self.repos.team_decision_repo
+
+    @property
+    def team_wait_repo(self) -> TeamWaitRepo:
+        return self.repos.team_wait_repo
+
+    @property
+    def team_task_deps_repo(self) -> TeamTaskDepsRepo:
+        return self.repos.team_task_deps_repo
+
+    @property
+    def team_task_review_repo(self) -> TeamTaskReviewRepo:
+        return self.repos.team_task_review_repo
+
+    @property
+    def hitl_repo(self) -> HitlPendingRepo:
+        return self.repos.hitl_repo
+
+    @property
+    def external_source_repo(self) -> ExternalSourceRepo:
+        return self.repos.external_source_repo
+
+    @property
+    def external_subscription_repo(self) -> ExternalSubscriptionRepo:
+        return self.repos.external_subscription_repo
+
+    @property
+    def external_event_repo(self) -> ExternalEventRepo:
+        return self.repos.external_event_repo
+
+    @property
+    def external_delivery_repo(self) -> ExternalDeliveryRepo:
+        return self.repos.external_delivery_repo
 
 
 def build_shared_services(

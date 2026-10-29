@@ -148,6 +148,7 @@ class CronManager:
                 model=(spec.model or "").strip() or None,
                 task_type=normalize_cron_task_type(spec.task_type),
                 mcp_servers=list(spec.mcp_servers or []),
+                meta=dict(spec.meta or {}),
                 enabled=spec.enabled,
             )
             row = self._repos.cron_repo.get(spec.cron_id)

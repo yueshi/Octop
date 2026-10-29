@@ -52,6 +52,20 @@ def _decode_mcp_servers(raw: Any) -> list[str]:
     return [str(n).strip() for n in parsed if str(n).strip()]
 
 
+def _encode_meta(meta: dict[str, Any] | None) -> str:
+    return json.dumps(meta or {}, ensure_ascii=False)
+
+
+def _decode_meta(raw: Any) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(str(raw))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _optional_str(r: DbRow, key: str) -> str | None:
     try:
         value = r[key]
@@ -76,6 +90,7 @@ class CronJobRow:
     enabled: int
     task_type: str
     mcp_servers: list[str]
+    meta: dict[str, Any]
     last_run_at: int | None
     last_status: str | None
     last_error: str | None
@@ -84,6 +99,8 @@ class CronJobRow:
 
     @classmethod
     def from_row(cls, r: DbRow) -> CronJobRow:
+        # sqlite3.Row's ``in`` checks values, not column names — use ``.keys()``.
+        keys = set(r.keys()) if hasattr(r, "keys") else set()
         return cls(
             id=r["id"],
             cron_id=r["cron_id"],
@@ -98,6 +115,7 @@ class CronJobRow:
             enabled=r["enabled"],
             task_type=normalize_cron_task_type(str(r["task_type"])),
             mcp_servers=_decode_mcp_servers(r["mcp_servers"]),
+            meta=_decode_meta(r["meta"]) if "meta" in keys else {},
             last_run_at=r["last_run_at"],
             last_status=r["last_status"],
             last_error=r["last_error"],
@@ -117,6 +135,7 @@ class CronJobRow:
             "enabled": bool(self.enabled),
             "task_type": self.task_type,
             "mcp_servers": list(self.mcp_servers),
+            "meta": dict(self.meta),
             "last_run_at": self.last_run_at,
             "last_status": self.last_status,
         }
@@ -143,6 +162,7 @@ class CronJobRepo:
         model: str | None = None,
         task_type: CronTaskType = DEFAULT_CRON_TASK_TYPE,
         mcp_servers: list[str] | None = None,
+        meta: dict[str, Any] | None = None,
         enabled: bool = True,
         name: str | None = None,
     ) -> str:
@@ -150,9 +170,9 @@ class CronJobRepo:
         with self._db.transaction() as conn:
             conn.execute(
                 "INSERT INTO cron_jobs(cron_id, name, agent_id, user_id, schedule_spec, prompt, "
-                "session_key, model, fresh_thread, task_type, mcp_servers, enabled, "
+                "session_key, model, fresh_thread, task_type, mcp_servers, meta, enabled, "
                 "created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     cron_id,
                     (name or "").strip() or default_cron_name(prompt, cron_id),
@@ -165,6 +185,7 @@ class CronJobRepo:
                     bool_int(fresh_thread),
                     task_type,
                     _encode_mcp_servers(mcp_servers),
+                    _encode_meta(meta),
                     bool_int(enabled),
                     ts,
                     ts,

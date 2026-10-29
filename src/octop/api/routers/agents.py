@@ -192,6 +192,7 @@ def _row_dict(
         "is_owner": row.user_id is not None and row.user_id == viewer_user_id,
         "owner_username": owner_username,
         "kind": getattr(row, "kind", None) or "expert",
+        "autonomy_enabled": bool(int(getattr(row, "autonomy_enabled", 0) or 0)),
         **agent_runtime_values(cfg),
     }
     if payload["kind"] == "team":
@@ -213,6 +214,13 @@ async def list_agents(
     scope: Literal["mine", "all"] = Query(
         "mine",
         description="mine: agents owned by the current user; all: every agent (admin only)",
+    ),
+    autonomy: bool | None = Query(
+        None,
+        description=(
+            "Filter by employment: true returns digital employees only. "
+            "This is the roster view — who is on duty right now."
+        ),
     ),
 ) -> list[dict[str, Any]]:
     """List agents for the dashboard.
@@ -247,12 +255,17 @@ async def list_agents(
                 server=server,
             )
             for r in rows
+            if autonomy is None or bool(int(getattr(r, "autonomy_enabled", 0) or 0)) is autonomy
         ]
         return _attach_unread_counts(server, user.id, payloads)
 
     owned = registry.list_agents(user.id)
     shared = server.services.agent_repo.list_shared(exclude_user_id=user.id)
     rows = list({row.agent_id: row for row in [*shared, *owned]}.values())
+    if autonomy is not None:
+        rows = [
+            row for row in rows if bool(int(getattr(row, "autonomy_enabled", 0) or 0)) is autonomy
+        ]
     shared_owner_username_by_id: dict[int, str] = {}
     for row in shared:
         if row.user_id is None or row.user_id in shared_owner_username_by_id:

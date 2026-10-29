@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Octop 主动工作专家（Proactive Expert）可行性分析</title>
+<style>
+  :root {
+    --bg: #f6f8fa;
+    --paper: #ffffff;
+    --ink: #1f2328;
+    --muted: #57606a;
+    --line: #d8dee4;
+    --accent: #0969da;
+    --accent-soft: #ddf4ff;
+    --ok: #1a7f37;
+    --ok-soft: #dafbe1;
+    --warn: #9a6700;
+    --warn-soft: #fff8c5;
+    --bad: #cf222e;
+    --bad-soft: #ffebe9;
+    --code-bg: #f6f8fa;
+    --code-ink: #cf222e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --paper: #161b22;
+      --ink: #e6edf3;
+      --muted: #8b949e;
+      --line: #30363d;
+      --accent: #58a6ff;
+      --accent-soft: #121d2f;
+      --ok: #3fb950;
+      --ok-soft: #12261e;
+      --warn: #d29922;
+      --warn-soft: #282214;
+      --bad: #f85149;
+      --bad-soft: #2d1517;
+      --code-bg: #1c2129;
+      --code-ink: #ff7b72;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.75 "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+          "Noto Sans CJK SC", -apple-system, "Segoe UI", sans-serif;
+  }
+  .paper { max-width: 1020px; margin: 0 auto; padding: 48px 40px 80px; background: var(--paper); }
+  h1 { font-size: 30px; line-height: 1.3; margin: 0 0 8px; }
+  h2 { font-size: 22px; margin: 56px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 17.5px; margin: 32px 0 10px; }
+  p { margin: 10px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ul, ol { padding-left: 1.5em; }
+  li { margin: 4px 0; }
+  code {
+    font-family: "SF Mono", ui-monospace, "Cascadia Code", Consolas, Menlo, monospace;
+    font-size: 0.86em; background: var(--code-bg); color: var(--code-ink);
+    padding: 2px 6px; border-radius: 5px; white-space: nowrap;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 14.5px; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
+  tr:nth-child(even) td { background: color-mix(in srgb, var(--code-bg) 45%, transparent); }
+  blockquote {
+    border-left: 4px solid var(--line); margin: 14px 0; padding: 6px 18px;
+    color: var(--muted); background: color-mix(in srgb, var(--code-bg) 50%, transparent);
+  }
+  .meta { color: var(--muted); font-size: 13.5px; margin-bottom: 28px; }
+  .meta .chip {
+    display: inline-block; border: 1px solid var(--line); border-radius: 999px;
+    padding: 1px 10px; margin-right: 6px; margin-bottom: 4px; font-size: 12.5px; color: var(--muted);
+  }
+  .lead {
+    border-left: 4px solid var(--accent); background: var(--accent-soft);
+    padding: 14px 18px; border-radius: 0 8px 8px 0; font-size: 15.5px;
+  }
+  .tag { display: inline-block; border-radius: 5px; padding: 1px 8px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+  .tag.ok   { color: var(--ok);   background: var(--ok-soft); }
+  .tag.bad  { color: var(--bad);  background: var(--bad-soft); }
+  .tag.warn { color: var(--warn); background: var(--warn-soft); }
+  .tag.info { color: var(--accent); background: var(--accent-soft); }
+  .toc { columns: 2; gap: 32px; font-size: 14.5px; margin-top: 12px; }
+  .toc li { margin: 3px 0; break-inside: avoid; }
+  .diagram {
+    border: 1px solid var(--line); border-radius: 10px; padding: 22px 18px; margin: 16px 0;
+    font-size: 13.5px; line-height: 1.5; overflow-x: auto;
+  }
+  .diagram .row { display: flex; align-items: stretch; gap: 14px; }
+  .dbox { border: 1.5px solid var(--accent); border-radius: 8px; padding: 10px 14px; background: var(--accent-soft); flex: 1; }
+  .dbox.neutral { border-color: var(--line); background: transparent; }
+  .dbox.dashed { border-style: dashed; border-color: var(--muted); }
+  .dbox b { display: block; margin-bottom: 4px; font-size: 13.5px; }
+  .dbox small { color: var(--muted); }
+  .arrow { display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); min-width: 26px; font-size: 18px; }
+  .arrow small { font-size: 11px; white-space: nowrap; }
+  .varrow { text-align: center; color: var(--muted); font-size: 16px; margin: 4px 0; }
+  .schema {
+    font-family: ui-monospace, Consolas, Menlo, monospace; font-size: 12.5px; line-height: 1.6;
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; white-space: pre;
+  }
+  .schema .t { color: var(--accent); font-weight: 700; }
+  .schema .c { color: var(--muted); }
+  .callout { border: 1px solid var(--line); border-left-width: 4px; border-radius: 8px; padding: 10px 16px; margin: 14px 0; font-size: 14.5px; }
+  .callout.risk { border-left-color: var(--bad); background: var(--bad-soft); }
+  .callout.note { border-left-color: var(--warn); background: var(--warn-soft); }
+  @media (max-width: 760px) {
+    .paper { padding: 28px 18px 60px; }
+    .toc { columns: 1; }
+    .diagram .row { flex-direction: column; }
+    .arrow { transform: rotate(90deg); }
+  }
+  @media print { body { background: #fff; color: #111; } .paper { max-width: none; padding: 0; } }
+</style>
+</head>
+<body>
+<div class="paper">
+
+<h1>Octop 主动工作专家（Proactive Expert）可行性分析</h1>
+<div class="meta">
+  <span class="chip">2026-10-25</span>
+  <span class="chip">状态：分析稿</span>
+  <span class="chip">基准：<code>docs/team-autopilot-design.html</code> v3（P1 已落地）</span>
+  <span class="chip">方法：两路专项代码调研 + 团队版调研结论复用 + 关键点逐行核验</span>
+</div>
+
+<h2 id="toc">目录</h2>
+<ol class="toc">
+  <li><a href="#conclusion">结论摘要（A）</a></li>
+  <li><a href="#baseline">基准设计参照</a></li>
+  <li><a href="#inventory">现状盘点（B）</a></li>
+  <li><a href="#mapping">机制映射表（C）</a></li>
+  <li><a href="#design">关键差距与设计调整（D）</a></li>
+  <li><a href="#risks">风险与人工闸门（E）</a></li>
+  <li><a href="#coexist">与团队模式的关系（F）</a></li>
+  <li><a href="#roadmap">实施路线图</a></li>
+  <li><a href="#unverified">未验证假设与推测清单</a></li>
+</ol>
+
+<h2 id="conclusion">一、结论摘要（问题 A）</h2>
+<div class="lead">
+  <b>判定：有条件可行，且实施成本低于团队版。</b><br>
+  单专家自治的无人值守链路、任务底座、HITL 机制、主动先例四项关键地基全部现成或已由团队版 P1 落地；
+  硬前置只有三个，且全部与团队版 P2/P3 <b>共享同一批改动</b>。
+</div>
+<p><b>依据（均有代码实据）：</b></p>
+<ol>
+  <li><b>无人值守执行链路对单专家是现成的。</b>普通专家默认拥有全部 6 个 <code>cronjob_*</code> 自注册工具
+      （cron 工具仅对 team host 跳过，<code>infra/agents/manager.py:3782-3786</code>）；cron
+      <code>task_type=agent</code> 的完整执行链（session 锁内 stream、usage 记账 <code>source="cron"</code>、
+      结果推送）与 kind 无关（<code>infra/cron/delivery.py:134-192</code>）。
+      团队版 P2 要「解禁」的东西，单专家现状就有。</li>
+  <li><b>任务/看板底座已落地且 repo 层零 kind 过滤。</b><code>team_goals</code>/<code>team_tasks</code> 外键是
+      <code>REFERENCES agents(agent_id)</code>，无 kind 约束（<code>infra/db/migrations/022_light_apps.sql:98-133</code>）；
+      <code>assignee</code> 同样引用 <code>agents(agent_id)</code>——专家自治任务 <code>assignee=self</code>
+      与团队派工 <code>assignee=成员</code> 在同一张表语义天然统一。repo、状态机（<code>task_state.py</code>）、
+      工具实现（<code>board_tools._tool_ctx()</code> agent 无关，<code>board_tools.py:47-60</code>）全部可直接复用。
+      kind 过滤只存在两处薄层：API 路由（<code>teams.py:70-72</code>）与工具挂载条件（<code>manager.py:3833</code>）。</li>
+  <li><b>单专家比团队少一整层分布式复杂度。</b>无派工/inbox/房间编排/回叫——「读任务→领取→执行→回写→汇报」
+      在<b>同一个 ReAct 回合</b>内闭环；<code>docs/expert-teams.md:156-162</code> 明示的「inbox 重启丢在途任务」
+      非目标对单专家自治基本不构成威胁（无跨 agent 在途状态）。</li>
+  <li><b>单 agent 主动行为已有先例。</b>主动关怀具备完整 per-agent 调度器、免打扰窗、随机频控、去重与推送链路
+      （<code>infra/proactive/scheduler.py:44-108,274</code>、<code>infra/proactive/service.py:117-263</code>），
+      其策略参数可直接泛化为自治运行策略。</li>
+</ol>
+<p><b>条件（三个硬前置，全部与团队版 P2/P3 共享）：</b></p>
+<div class="callout note">
+  <b>C1 无人值守遇审批挂起</b>——cron 运行遇 <code>hitl_required</code> 现状直接判失败
+  （<code>delivery.py:166-169</code>），必须改为挂起+通知（团队版 P3 同批改动）。<br>
+  <b>C2 预算与闸门</b>——<code>usage_log</code> 可按 agent/user 聚合但<b>无任何预算检查代码</b>
+  （<code>infra/db/repos/usage.py:250-498</code>，已验证），失控防护必须新建。<br>
+  <b>C3 底座通用化</b>——工具挂载条件放宽 + agent 通用 API 路由 + i18n 专家变体（均为小改，见 §五 E1）。
+</div>
+<p>不满足 C1/C2 就上线自治 = 团队版 v2 反思 A1–A7 风险的单专家复刻；满足后，单专家自治是团队自动驾驶的
+<b>n=1 特例</b>，应共用全部底座（详见 §七）。</p>
+<div class="callout note">
+  <b>本次补充核验（2026-10-25）</b>：U1/U2/U4 已验证（附证据），U3 已验证并修正为
+  「串行排队延迟」风险项，U5 仍未验证。详见 <a href="#unverified">§九</a>。
+</div>
+
+<h2 id="baseline">二、基准设计参照</h2>
+<p><code>docs/team-autopilot-design.html</code> v3 的核心机制与实施状态：</p>
+<table>
+  <thead><tr><th style="width:44%">机制</th><th style="width:16%">设计章节</th><th>实施状态（v3 记载）</th></tr></thead>
+  <tbody>
+    <tr><td><code>team_goals / team_tasks / hitl_pending</code> 三表</td><td>§7.1</td>
+        <td><span class="tag ok">已落地</span>（迁移折叠进 022，<code>022_light_apps.sql:98-157</code>）</td></tr>
+    <tr><td>主持人 4 工具 <code>goal_set/task_create/task_update/task_list</code></td><td>§7.2-①</td>
+        <td><span class="tag ok">已落地</span>（<code>infra/agents/teams/board_tools.py</code>，仅挂 team host）</td></tr>
+    <tr><td>REST goals/tasks（CAS + 状态机校验）</td><td>§八 P1</td>
+        <td><span class="tag ok">已落地</span>（<code>api/routers/teams.py:228-300</code>）</td></tr>
+    <tr><td>驱动循环 cron（隐形 wake + 预算闸门 + kill switch）</td><td>§7.3</td>
+        <td><span class="tag bad">P2 未实施</span></td></tr>
+    <tr><td>HITL 持久化 + 定向推送 + <code>ask_creator</code></td><td>§7.4</td>
+        <td><span class="tag bad">P3 未实施</span>（表已建）</td></tr>
+    <tr><td>原生看板 / 轻应用投影</td><td>§7.6</td>
+        <td><span class="tag bad">P4/P5 未实施</span></td></tr>
+    <tr><td>已核销结论（write_scope 作用域 / interrupt_on 静态配置）</td><td>§7.4 callout</td>
+        <td><span class="tag ok">C11/C12 已核销</span></td></tr>
+  </tbody>
+</table>
+<p>单专家自治的可行性与这些未实施项的<b>共享度</b>是本次分析的主线。</p>
+
+<h2 id="inventory">三、现状盘点（问题 B）—— 单专家机制代码索引</h2>
+
+<h3>3.1 运行/调度链路</h3>
+<table>
+  <thead><tr><th style="width:16%">能力</th><th style="width:52%">现状</th><th>引用</th></tr></thead>
+  <tbody>
+    <tr><td>cron 自注册</td>
+        <td>普通专家默认有全部 6 个 <code>cronjob_*</code> 工具（list/get/create/update/delete/run_now）；仅 team_host 不装</td>
+        <td><code>manager.py:3782-3786</code>、<code>infra/cron/tools.py:100-246</code></td></tr>
+    <tr><td>cron 默认会话</td>
+        <td><code>session_key = dashboard_key(agent_id, user_id)</code>（专家自己的 DM 线程）；<code>fresh_thread</code> 默认 False</td>
+        <td><code>infra/cron/manager.py:129-132,57</code></td></tr>
+    <tr><td>cron 执行链</td>
+        <td><code>fresh_thread=true</code> 先 reset 线程；agent 型在 session 锁内 stream；<code>write_scope(allowed=False)</code>；输出推送 session 渠道 + dashboard 通知</td>
+        <td><code>infra/cron/delivery.py:72-73,134-192,187-192,323-338</code></td></tr>
+    <tr><td>无人值守 HITL</td>
+        <td>遇 <code>hitl_required</code> 直接判失败（<b>团队版 P3 待改，同款问题</b>）</td>
+        <td><code>delivery.py:166-169</code></td></tr>
+    <tr><td>全量工具装配</td>
+        <td>knowledge/mobile/light-app/plugin/MCP/skills 均对非 team_host 装配（专家=全量）；<code>tools_disabled</code> 可按 agent 裁剪</td>
+        <td><code>manager.py:3792-3830,3856-3869,3989-4018,166-170</code></td></tr>
+    <tr><td>主动关怀先例</td>
+        <td>per-agent asyncio 调度器（默认开启可 opt-out）：<code>now+rand(min,max)h</code>、active_hours 免打扰窗、最短睡眠防自旋；生成是<b>过程式</b>（非 ReAct）：episode 拓扑→去重→LLM ≤200 字→推送</td>
+        <td><code>infra/proactive/scheduler.py:44-108,274,314-323</code>、<code>server.py:599-615</code>、<code>infra/proactive/service.py:117-263</code>、表 <code>001_initial.sql:246-265</code></td></tr>
+  </tbody>
+</table>
+
+<h3>3.2 任务与会话模型</h3>
+<table>
+  <thead><tr><th style="width:16%">能力</th><th style="width:52%">现状</th><th>引用</th></tr></thead>
+  <tbody>
+    <tr><td>harness <code>task</code> 工具</td>
+        <td>是 <b>deepagents 子代理派生</b>工具（非待办）；专家可经 SubagentCatalog 安装子代理后 spawn</td>
+        <td><code>deepagents/middleware/subagents.py:581,837</code>、<code>infra/agents/subagents/catalog.py:160</code>、<code>api/routers/subagents.py:169</code></td></tr>
+    <tr><td>待办 <code>write_todos</code></td>
+        <td>存于 langgraph state（仅随 checkpoint 持久），<b>fresh thread 即空</b>——跨会话任务状态必须落 DB（正好是 <code>team_tasks</code>）</td>
+        <td><code>langchain/agents/middleware/todo.py:25,174</code>、<code>octop_harness/middleware/decision.py:60-83</code></td></tr>
+    <tr><td>会话生命周期</td>
+        <td>checkpoint 落 <code>{workspace}/checkpoints.sqlite</code> 或复用 Memory 实例；<code>fresh_thread=false</code> 经 <code>aget_history</code> 复用历史</td>
+        <td><code>infra/gateway/threads.py:40,362</code>、<code>octop_harness/agent.py:1825,1866,581</code></td></tr>
+    <tr><td>记忆</td>
+        <td>每 agent 一个 memory.sqlite（或 Postgres）；<code>MEMORY.md/USER.md</code> 每轮全量注入——专家跨会话有稳定「工作记忆」</td>
+        <td><code>octop_harness/builtin/tools/memory_tools.py:60-100</code>、<code>agent.py:1251-1263</code></td></tr>
+    <tr><td>互调能力</td>
+        <td><code>PeerAgentMiddleware</code> 在 <code>team_enabled</code>（harness 默认 True）时挂载→单专家<b>有</b> <code>agent_list/ask_agent</code>；<code>team_peers</code> 未设=可调同 user 全部 agent；但被限 <code>peer_invoke_mode="sync"</code>（无 background/inbox）</td>
+        <td><code>octop_harness/agent.py:1546-1550</code>、<code>config/__init__.py:701</code>、<code>manager.py:4232-4234,4241-4242</code></td></tr>
+  </tbody>
+</table>
+
+<h3>3.3 权限与 HITL</h3>
+<table>
+  <thead><tr><th style="width:16%">能力</th><th style="width:52%">现状</th><th>引用</th></tr></thead>
+  <tbody>
+    <tr><td>强制 HITL 工具</td>
+        <td><code>MANDATORY_HITL_TOOLS = {"app_delete"}</code>——永不旁路（连同 <code>ask_user_question</code>）；policy 校验缺失即报错</td>
+        <td><code>infra/agents/security/hitl_session.py:22,255</code>、<code>policy_store.py:65</code></td></tr>
+    <tr><td>线程级 bypass</td>
+        <td><code>allow_all/allow_tools</code> 存在，但不含 mandatory 清单</td>
+        <td><code>hitl_session.py:49-94</code></td></tr>
+    <tr><td>agent 归属校验</td>
+        <td><code>admin || owner || shared</code>（kind 无关）；团队路由另有显式 <code>is_team_agent</code> 检查</td>
+        <td><code>api/common/agent.py:26-36</code>、<code>api/routers/teams.py:66-72</code></td></tr>
+    <tr><td>HITL 响应入口</td>
+        <td>dashboard SSE resume / IM slash 均为既有闭环</td>
+        <td><code>api/routers/chat/routes.py:105-306</code>、<code>gateway/hitl/coordinator.py:481-609</code></td></tr>
+  </tbody>
+</table>
+
+<h3>3.4 数据库与迁移</h3>
+<ul>
+  <li><code>team_goals/team_tasks/hitl_pending</code> 三表已在未发布的 022 中，FK 全部
+      <code>REFERENCES agents(agent_id)</code>，<b>无 kind 约束</b>；<code>cron_jobs.meta</code> 列已加
+      （<code>022_light_apps.sql:98-160</code>）。</li>
+  <li><code>usage_log</code>：token 明细 + cache/reasoning 列，按 agent/user/thread 聚合查询齐备；
+      <b>无预算检查</b>（<code>001_initial.sql:181-190</code>、<code>008_usage_cache_tokens.sql</code>、
+      <code>infra/db/repos/usage.py:250-498</code>）。</li>
+  <li><code>proactive_care_config/care_push_records</code>：active_hours、min/max_interval、episode 去重
+      （<code>001_initial.sql:246-265</code>）。</li>
+  <li><code>published_experts</code>：专家模板市场表；用户自建 expert = 普通 <code>kind=expert</code> agent，
+      无特殊运行时（<code>005_shared_experts_sso_knowledge.sql:5-18</code>、<code>infra/agents/experts/</code>）。</li>
+</ul>
+
+<h3>3.5 看板相关能力</h3>
+<ul>
+  <li>无任何已实施看板页（团队 P4 未做）；轻应用仍「读+追加」（团队版结论直接适用）。</li>
+  <li>看板底座（表/状态机/CAS/API）即团队 P1 产物，见 §一依据 2。</li>
+</ul>
+
+<h3>3.6 system prompt 动态注入钩子（自治指导的注入点）</h3>
+<ul>
+  <li>cron 路径已有按来源拼接 system prompt 的先例 <code>append_light_app_system_prompt</code>
+      （<code>manager.py:3994-3998</code>）——「主动工作指导」可仿此按 <code>task_type</code>/<code>source</code>
+      动态追加，<b>不依赖工作区种子</b>（团队版 v3 D15 结论直接继承）。</li>
+  <li><code>agents.system_prompt</code> 字段修改 → <code>on_bootstrap_complete</code> 重编译
+      （<code>agent.py:1642-1648</code>）。</li>
+</ul>
+
+<h2 id="mapping">四、机制映射表（问题 C）</h2>
+<table>
+  <thead><tr><th style="width:26%">团队版机制</th><th style="width:15%">单专家判定</th><th>说明 / 改造点</th></tr></thead>
+  <tbody>
+    <tr><td><code>team_goals/team_tasks</code> 表（§7.1）</td><td><span class="tag ok">直接复用</span></td>
+        <td>FK 无 kind 约束（<code>022:100,117</code>）；<code>assignee=self</code> 语义统一；表名不改，文档注明 owner 语义</td></tr>
+    <tr><td>board 4 工具（<code>board_tools.py</code>）</td><td><span class="tag warn">改造后复用</span></td>
+        <td>实现已 agent 无关（<code>_tool_ctx</code>），仅挂载条件 <code>if team_host:</code>（<code>manager.py:3833</code>）放宽 + expert 变体 prompt</td></tr>
+    <tr><td>状态机 <code>task_state.py</code></td><td><span class="tag ok">直接复用</span></td>
+        <td><code>TASK_STATUSES</code>/<code>is_valid_task_transition</code> 与 agent 无关</td></tr>
+    <tr><td>REST goals/tasks（<code>teams.py:228-300</code>）</td><td><span class="tag warn">改造后复用</span></td>
+        <td><code>_require_owned_team</code> 有 <code>is_team_agent</code> 检查（<code>teams.py:70-72</code>）→ 新增 agent 通用路由指向同一 repo（E1）</td></tr>
+    <tr><td>驱动循环 cron 解禁（§7.3）</td><td><span class="tag ok">直接复用（已解禁）</span></td>
+        <td>专家现有 6 个 cronjob 工具；补 autopilot 模板约束（<code>cron_jobs.meta</code>）+ 限频</td></tr>
+    <tr><td>隐形 wake（投影过滤）</td><td><span class="tag ok">直接复用</span></td>
+        <td>同一投影层改造；单专家是 DM 线程刷屏，问题同构</td></tr>
+    <tr><td>stale 回收 / kill switch（§7.3 v2）</td><td><span class="tag info">简化后复用</span></td>
+        <td>无 inbox 在途状态；kill switch = 停 autopilot job + open tasks 置 cancelled</td></tr>
+    <tr><td>HITL 持久化（<code>hitl_pending</code>，§7.4）</td><td><span class="tag ok">直接复用</span></td>
+        <td>表已建、session 机制与 agent 无关</td></tr>
+    <tr><td><code>ask_creator</code> 工具</td><td><span class="tag warn">改造后复用（<code>ask_owner</code>）</span></td>
+        <td>同一 interrupt 机制；必须显式注册 <code>interrupt_on</code>（v3 C12 结论）；<code>task_id</code> 去重列已有</td></tr>
+    <tr><td>cron 写限制→批准放行（§7.4-⑤）</td><td><span class="tag ok">直接复用</span></td>
+        <td>同一 <code>delivery.py</code> 改造</td></tr>
+    <tr><td>预算闸门 / usage 配额（§7.3 v3）</td><td><span class="tag ok">直接复用</span></td>
+        <td>usage 聚合现成，预算检查需新建（对两类 agent 通用）</td></tr>
+    <tr><td><code>ask_agent</code> 派工 / 负载均衡</td><td><span class="tag info">可选复用，派工调度不适用</span></td>
+        <td>专家有 sync <code>ask_agent</code>（可作执行手段）；但无 background/inbox，无调度职能</td></tr>
+    <tr><td>房间 / 上墙 / 成员 HITL 卡</td><td><span class="tag bad">不适用</span></td>
+        <td>单专家 HITL 卡本来就在自己会话（现状闭环）</td></tr>
+    <tr><td>主动关怀调度策略（care）</td><td><span class="tag warn">改造后复用（增强项）</span></td>
+        <td>active_hours/随机频控/去重泛化为自治运行策略</td></tr>
+    <tr><td>看板页 / 轻应用投影（P4/P5）</td><td><span class="tag bad">必须新建时即按 agent 通用设计</span></td>
+        <td>尚未实施——避免做出 team-only UI 后返工</td></tr>
+  </tbody>
+</table>
+
+<h2 id="design">五、关键差距与设计调整（问题 D）</h2>
+
+<h3>5.1 MVP（最小可用）</h3>
+
+<h4>E1 底座通用化（改动最小的一档）</h4>
+<ul>
+  <li><b>数据</b>：<b>零迁移</b>（三表复用；不推荐 SQL 视图别名增加维护面）。
+      <code>agents</code> 行新增开关 <code>autonomy_enabled</code>（默认关）→ 折叠进未发布的 022
+      （团队版 B9 结论：022 未进 main/develop）。</li>
+  <li><b>工具挂载</b>：<code>manager.py:3833</code> 条件 <code>if team_host:</code> →
+      <code>if team_host or autonomy_enabled</code>；挂同一 <code>build_team_board_tools()</code>。
+      <code>assignee</code> 对单专家恒为自身 agent_id（工具内校验：expert 上下文不允许 assignee 指向他人，
+      防自治专家把任务甩给别的 agent 而无派工语义）。</li>
+  <li><b>API</b>：新增 <code>api/routers/agent_work.py</code>——
+      <code>GET/POST /api/agents/{agent_id}/goals</code>、<code>GET /api/agents/{agent_id}/tasks</code>、
+      <code>PATCH /api/agents/{agent_id}/tasks/{task_id}</code>（鉴权 <code>assert_agent_owner</code> + admin bypass，
+      沿用 P1 的 CAS 409 + 状态机 400 校验）。<code>/teams/*</code> 路由保留不动。</li>
+  <li><b>i18n</b>：<code>teams.autopilot_briefing</code> 增专家变体键（en/zh 对齐，跑
+      <code>tests/unit/i18n</code>）——强调「自产自执行自回写、blocked 时 ask_owner」。</li>
+  <li><b>注入点</b>：仿 <code>append_light_app_system_prompt</code>（<code>manager.py:3994-3998</code>）
+      按 <code>source=autopilot</code> 追加自治指导，不依赖种子。</li>
+</ul>
+
+<h4>E2 驱动循环（与团队 P2 同一批改动，共享代码）</h4>
+<div class="schema"><span class="c"># wake 模板（cron_jobs.meta.autopilot=true 时锁定）</span>
+<span class="t">约束</span>  session_key=dashboard_key · fresh_thread=false · interval ≥ 30min
+<span class="t">prompt</span> 读取 open tasks → 领取一条（置 running）→ 执行（工具循环/
+        必要时 sync ask_agent）→ task_update 关单 → 汇报；
+        blocked 则 ask_owner
+<span class="t">闸门</span>  单 wake 领取 ≤2 · open tasks ≤8 · usage 周期配额超限自动暂停</div>
+<ul>
+  <li><b>触发</b>：专家自建 cron（能力已有），服务端约束见上；date 一次性触发（「明早 9 点做 X」）天然支持，无需新代码。</li>
+  <li><b>隐形 wake</b>：投影层过滤标记帧（与团队共享同一实现）。</li>
+  <li><b>kill switch</b>：停 <code>meta.autopilot</code> job + open tasks 置 <code>cancelled</code> + 关联 pending 失效。</li>
+  <li><span class="tag info">U3 核验后新增</span> <b>待定项——wake 与用户对话的串行排队</b>：wake 与用户
+      同会话入站轮次被 session 锁串行互斥（<code>delivery.py:69-88</code> 包 <code>run_in_session</code>），
+      wake 是完整 ReAct 工具循环，会给同时在线的用户带来可感知排队延迟。E2 设计须把以下列为待定项：
+      ① <b>wake 单轮时长上限</b>（超时熔断，避免长时间占锁）；
+      ② <b>抢占策略</b>（候选：唤醒时段避开用户活跃时段 / wake 轮次超时熔断 / 用户消息优先抢占——
+      <code>run_in_session</code> 现状是先到先得，需评估在锁队列中给用户入站轮次插队）；
+      ③ 保守默认：active_hours 限窗 + 用户活跃时段不排 wake。</li>
+</ul>
+
+<h4>E3 求助闭环（与团队 P3 合并交付，单专家可作试点）</h4>
+<ul>
+  <li><code>hitl_pending</code> 持久化：store 双写 + boot 恢复（表已建）。</li>
+  <li><code>delivery.py:166-169</code>：遇 HITL → 建 pending 行 + notifications WS 定向推 owner
+      （<code>chat/notify_ws.py:26</code>）+ deep_link 到专家会话/看板卡。</li>
+  <li><code>ask_owner</code> 工具：<code>ask_user_question</code> 包装 + <b>显式注册 <code>interrupt_on</code></b>
+      （团队版 §7.4 v3 callout 的实现要求）+ <code>hitl_pending.task_id</code> 去重（同任务单活跃 pending）。</li>
+</ul>
+<div class="callout note"><b>MVP 验证标准</b>：单测（状态机流转、挂载条件、meta.autopilot 约束、预算闸门）；
+集成（设目标 → wake 触发 → 产任务并执行关单 → owner 收汇报；wake 中触发工具审批 → owner 批准 → 续跑，含重启恢复）；
+<code>make all</code> 全绿；跨平台约定（OCTOP_HOME monkeypatch、Path 断言）。</div>
+
+<h3>5.2 完整形态</h3>
+<ul>
+  <li><b>E4 看板</b>：团队 P4 页面按 agent 通用渲染（kind 徽标区分 team/expert，路由统一
+      <code>/agents/{agent_id}/board</code>，团队路径做别名）；同一 CAS/PATCH 路径；服务器时区渲染（D19 继承）。</li>
+  <li><b>E5 运行策略</b>：泛化 <code>proactive_care_config</code> 为 <code>autonomy_policy</code>
+      （active_hours/min_interval/quiet/预算）——care 与 autonomy 共用策略存储与求值
+      （<code>scheduler.py:44-108</code> 触发算法直接改造复用）；事件触发器白名单 + 注入防线（D21 继承）。</li>
+  <li><b>E6 长任务与组合</b>：spawn subagent 执行长任务（<code>task</code> 工具 + SubagentCatalog 安装流）+
+      子任务 stale 回收；轻应用投影（团队 P5 共用：<code>team_tasks</code> 数据源）；
+      <code>infra/metrics.py</code> 观测（wake 执行/失败/任务流转/HITL 超时）。</li>
+</ul>
+
+<h3>5.3 单专家特有的状态机补充</h3>
+<ul>
+  <li><code>assigned</code> 语义微调：推荐保留为「计划内未开始」（少改状态机）；wake 领取直接 <code>running</code>。</li>
+  <li><code>review</code>：单专家无主持人审，默认「自审 + 可选 owner 验收开关」（团队版 A5 结论的 expert 版）；
+      <code>success_criteria</code> 写入 goal 作为 wake 自检依据。</li>
+</ul>
+
+<h2 id="risks">六、风险与人工闸门（问题 E）</h2>
+<table>
+  <thead><tr><th style="width:14%">风险</th><th style="width:40%">单专家场景的形态</th><th>缓解 / 闸门</th></tr></thead>
+  <tbody>
+    <tr><td>失控循环</td><td>目标误解析 → 无限产任务/自催</td>
+        <td>预算闸门（E2）；<b>C2 是硬前置</b></td></tr>
+    <tr><td><b>误操作面大</b></td><td><b>专家有全量工具</b>（邮件/MCP/文件写）vs 主持人仅 5 工具——自治风险高于团队版</td>
+        <td>① cron <code>write_scope</code> 禁写维持 + 批准放行（§7.4-⑤）；② <code>MANDATORY_HITL_TOOLS</code> 扩展
+            （现有 <code>{"app_delete"}</code>，<code>hitl_session.py:22</code>，自治上下文可叠加高风险写工具）；
+            ③ 线程 bypass 不覆盖 mandatory（<code>hitl_session.py:255</code> 已保证）</td></tr>
+    <tr><td>提示注入</td><td>外部内容（agently 邮件、connector 同步）流入 wake 上下文即可指挥专家</td>
+        <td>外部内容 data-not-instruction；外部触发器默认不进自治循环（D21 继承）</td></tr>
+    <tr><td>成本</td><td>wake = 完整 ReAct 工具循环，比 care push（过程式 ≤200 字）贵 1–2 个量级；但无多成员放大</td>
+        <td>active_hours 默认窗 + interval 下限 + usage 配额（E5）</td></tr>
+    <tr><td>自产自审</td><td>无独立审核环节，质量风险内化</td>
+        <td><code>review</code> 状态 + owner 验收开关（默认开）；<code>success_criteria</code> 作 wake 自检依据</td></tr>
+    <tr><td>跨 agent 干扰</td><td>sync <code>ask_agent</code> 可调同 user 全部 agent——自治 wake 里调他 agent
+            可能长阻塞对方会话</td>
+        <td>自治上下文限制 <code>ask_agent</code> 目标白名单或默认禁用；MVP 不宣传该路径</td></tr>
+    <tr><td><span class="tag info">U3 已验证</span> wake 排队延迟</td>
+        <td>cron wake 与用户同会话串行（<code>delivery.py:69-88</code> 包 <code>run_in_session</code>），
+            长 ReAct 轮次会阻塞用户消息（或被用户消息阻塞）</td>
+        <td>active_hours 限窗避开用户活跃时段；wake 单轮时长上限 + 超时熔断；
+            评估用户消息优先抢占（→ §五 E2 待定项）</td></tr>
+    <tr><td>累计账单</td><td>usage_log 有明细无检查</td><td>E2/E5 周期配额闸门</td></tr>
+  </tbody>
+</table>
+<div class="callout risk">
+  <b>应保留的人工闸门（不可 bypass）</b>：<code>ask_owner</code> 求助、工具审批（mandatory 清单）、kill switch、
+  <code>write_scope</code> 禁写默认、active hours 默认窗。
+  自治专家的「自由度」必须<b>小于</b>对话态专家——无人值守是更严的上下文，不是更松的。
+</div>
+
+<h2 id="coexist">七、与团队模式的关系（问题 F）</h2>
+<div class="lead">
+  <b>结论：必须共用同一套任务/看板底座——单专家自治 = 团队自治的 n=1 特例（「单人团队」）。</b>
+</div>
+<table>
+  <thead><tr><th style="width:14%">层</th><th>共用方式</th></tr></thead>
+  <tbody>
+    <tr><td>表</td><td><code>team_goals/team_tasks/hitl_pending</code> 零改复用（FK 无 kind 约束；表名不改，注释/文档注明 owner 语义）</td></tr>
+    <tr><td>repo / 状态机</td><td><code>TeamGoalRepo/TeamTaskRepo/task_state.py</code> 零改</td></tr>
+    <tr><td>工具</td><td><code>build_team_board_tools()</code> 同一实现，挂载条件区分；expert 变体仅 prompt</td></tr>
+    <tr><td>API</td><td>agent 通用路由（新）与 <code>/teams/*</code>（存量）指向同一 repo；CAS/校验同路径</td></tr>
+    <tr><td>P2/P3 基建</td><td>隐形 wake、delivery HITL 挂起、预算闸门、kill switch、<code>ask_owner</code>/<code>ask_creator</code>
+        同一批改造，两类 agent 同时受益</td></tr>
+    <tr><td>P4/P5</td><td>看板与轻应用投影从一开始就按 agent 通用建模，团队/专家只是 kind 渲染差异</td></tr>
+  </tbody>
+</table>
+<p><b>不共用的反面对照</b>：两套任务表 → 两套状态机 → 看板两页 → 轻应用投影两套 → 预算/HITL 闸门各一份——
+每一条都是团队版 v2/v3 反思里同类问题的加倍。</p>
+<div class="callout note">
+  <b>自然统一的加分项</b>：<code>team_tasks.assignee REFERENCES agents(agent_id)</code>——未来
+  「团队派工给一个自治专家」时，团队主持人写 <code>assignee=该专家</code>、专家在自己的 wake 里看到并执行/回写，
+  <b>同一张表天然支持跨模式协作</b>，无需桥接代码。建议团队版 P2 的 wake prompt 即纳入
+  「检查 assignee=自己的外来任务」（一行 prompt 的成本，打通两种模式）。
+</div>
+<p><b>分工定位</b>：团队 host 保留「调度/汇总」职能（goal 拆解、派工、<code>compose_followup</code>）；
+单专家自治不做调度（不引入派工队列），只做「自我管理」（目标→任务→执行→汇报）。
+两者共存于同一 user 时互不干扰：专家自治任务与团队任务共享一张看板（owner 视角全量可见，assignee 徽标区分来源）。</p>
+
+<h2 id="roadmap">八、实施路线图</h2>
+<table>
+  <thead><tr><th style="width:8%">阶段</th><th style="width:38%">内容</th><th style="width:26%">与团队版关系</th><th>验证</th></tr></thead>
+  <tbody>
+    <tr><td><b>E1 底座通用化</b></td>
+        <td><code>autonomy_enabled</code> 开关（折叠进 022）；挂载条件放宽；agent 通用 API；i18n 专家变体；prompt 注入钩子</td>
+        <td>P1 的薄扩展（同 repo）</td>
+        <td><code>make all</code>；单测：挂载条件 / assignee 自我校验</td></tr>
+    <tr><td><b>E2 驱动循环</b></td>
+        <td><code>meta.autopilot</code> 模板锁定 + 限频；隐形 wake；预算闸门；kill switch</td>
+        <td><b>= 团队 P2 主体</b>（同一批 PR，两 agent 受益）</td>
+        <td>date 单次 + interval 周期；wake 帧不上墙；重启回收</td></tr>
+    <tr><td><b>E3 求助闭环</b></td>
+        <td>HITL 持久化 + delivery 挂起 + <code>ask_owner</code> + 定向通知</td>
+        <td><b>= 团队 P3 主体</b>（单专家可作试点场景）</td>
+        <td>无人值守审批→owner 批准→续跑；重启恢复</td></tr>
+    <tr><td><b>E4 看板</b></td>
+        <td>agent 通用看板页（kind 徽标）</td>
+        <td><b>= 团队 P4</b>（建模即通用，避免返工）</td>
+        <td>拖拽 CAS/409；双 kind 同页渲染</td></tr>
+    <tr><td><b>E5 运行策略</b></td>
+        <td>care 策略泛化 <code>autonomy_policy</code>；触发器白名单</td>
+        <td>团队版未规划的增量</td>
+        <td>免打扰窗生效；配额暂停</td></tr>
+    <tr><td><b>E6 长任务/组合</b></td>
+        <td>subagent spawn + stale 回收；轻应用投影</td>
+        <td>= 团队 P5 + 增量</td>
+        <td>spawn 任务回收；投影回写</td></tr>
+  </tbody>
+</table>
+<p>顺序约束：E3 的 delivery 挂起改造<b>不晚于 E2 合入</b>（同团队版 P2/P3 前置关系）；E1 可独立先行
+（只加开关与路由，零风险）；E2/E3 建议与团队版<b>同一批实施</b>，避免分叉。</p>
+
+<h2 id="unverified">九、未验证假设与推测清单（2026-10-25 补充核验：U1/U2/U4 已验证，U3 已验证并修正，U5 仍未验证）</h2>
+<table>
+  <thead><tr><th style="width:5%">#</th><th style="width:26%">假设/推测</th><th style="width:13%">影响</th><th style="width:42%">核验结论（验证方式 / 实证证据）</th><th>状态</th></tr></thead>
+  <tbody>
+    <tr><td>U1</td><td>sync <code>ask_agent</code> 在 cron <code>write_scope(False)</code> 上下文的行为：
+        ContextVar 是否被 peer 继承</td><td>E2 若允许 wake 内调 peer 需验证</td>
+        <td><b>已验证（保守方向成立）</b>。<code>write_scope</code> 是
+            <code>octop.infra.connectors.gateway.adapters.agently_cli</code> 的 ContextVar
+            <code>_WRITES_ALLOWED</code>（默认 True，<code>agently_cli.py:107-121</code>），
+            cron 无人值守路径在 <code>delivery.py:160-162</code> 用
+            <code>with write_scope(allowed=False)</code> 包住整个 agent stream，
+            写工具经 <code>agently_cli.py:334</code> 的 <code>writes_allowed()</code> 拦截。
+            实证：scope 内 <code>writes_allowed()</code> 为 False，同一协程链内 await 的
+            peer 调用读到 False，退出 scope 恢复 True；peer 链
+            <code>ask_agent → call_peer() → _invoke_peer() → _call_agent() → entry.agent.call(req)</code>
+            （<code>octop_harness/teams/tools.py</code>）全程在 delivery 同一协程链 /
+            派生 asyncio task 中，ContextVar 随上下文复制继承。
+            <b>结论</b>：cron wake 里调 sync <code>ask_agent</code>，被调方 Agent Mail 写工具
+            同处禁写态；无需额外防线即可上线。</td>
+        <td><span class="tag ok">✅ 已验证</span></td></tr>
+    <tr><td>U2</td><td><code>assert_agent_owner</code> 对 <code>kind=expert</code> 行直接可用
+        （kind 无关）</td><td>E1 通用路由鉴权</td>
+        <td><b>已验证</b>：<code>api/common/agent.py:18-23</code> 只判 <code>user.is_admin</code> 与
+            <code>row.user_id == user.id</code>，完全不涉及 kind。专家行可直接复用做通用路由鉴权
+            （仍建议 E1 单测带一条 expert 用例作回归）。</td>
+        <td><span class="tag ok">✅ 已验证</span></td></tr>
+    <tr><td>U3</td><td>cron wake（<code>fresh_thread=false</code>）与用户同时在线聊天的并发行为</td>
+        <td>E2 体验</td>
+        <td><b>已验证，结论修正</b>：<code>delivery.py:69-88</code> 的 <code>deliver()</code> 整体包在
+            <code>run_in_session(...)</code> 内（<code>gateway.py:429-439</code> 委派 channel manager
+            session 锁，注释明写 "Serialize a proactive operation with inbound turns for its session"）——
+            wake 与用户同会话入站轮次<b>串行互斥</b>，非并行。用户消息需等 wake 跑完（或反之），
+            带来<b>可感知的排队延迟</b>（wake 是完整 ReAct 工具循环）。非安全漏洞，是
+            <b>体验/超时风险</b>；缓解见 §五 E2 待定项与 §六风险表。</td>
+        <td><span class="tag ok">✅ 已验证</span>（修正为排队延迟风险）</td></tr>
+    <tr><td>U4</td><td><code>PeerAgentMiddleware</code> 在 cron stream 上下文挂载</td><td>U1 的前提</td>
+        <td><b>已验证</b>：<code>team_enabled: bool = True</code> 为 harness 默认
+            （<code>octop_harness/config/__init__.py:701</code>）；<code>manager.py:3989</code> 注释确认
+            <code>agent_list</code>/<code>ask_agent</code> 由 PeerAgentMiddleware 挂载且不依赖
+            <code>config.tools</code>；cron agent 型运行走同一装配路径
+            （<code>delivery.py:135-168</code> → <code>agent_manager.stream</code>），
+            wake 上下文同样具备 peer 工具。与 U1 合并生效。</td>
+        <td><span class="tag ok">✅ 已验证</span></td></tr>
+    <tr><td>U5</td><td>langgraph checkpoint resume 在专家自治长任务上的重启恢复</td><td>E3</td>
+        <td>恢复用例未跑；远程后端场景同团队版 C14。</td>
+        <td><span class="tag warn">⬜ 未验证</span>（待集成用例）</td></tr>
+  </tbody>
+</table>
+
+<p class="meta" style="margin-top:48px; border-top:1px solid var(--line); padding-top:16px;">
+  本文档的团队版机制描述全部引自 <code>docs/team-autopilot-design.html</code> v3（章节号通用）；
+  单专家侧新事实来自两路专项调研（专家装配+主动关怀 / harness 状态+usage），
+  关键共用性论据（DDL 无 kind 约束、repo 零过滤、挂载条件、路由 kind 检查）为本会话逐行核验。
+  Markdown 版：<code>docs/proactive-expert-design.md</code>。可直接在浏览器打开阅读，亦支持打印（Ctrl/Cmd + P）。
+</p>
+
+</div>
+</body>
+</html>

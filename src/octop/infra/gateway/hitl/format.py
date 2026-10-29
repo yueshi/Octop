@@ -10,8 +10,11 @@ from typing import Any
 from octop.i18n import tool_display_name, tr
 from octop.infra.utils.locale import Locale, normalize_locale
 
-# Tool whose HITL interrupt is a question for the user rather than an approval.
+# Tools whose HITL interrupt is a question for the user rather than an
+# approval. ``ask_creator`` is the team-host wrapper over the same channel.
 ASK_USER_TOOL_NAME = "ask_user_question"
+ASK_CREATOR_TOOL_NAME = "ask_creator"
+ASK_TOOL_NAMES = frozenset({ASK_USER_TOOL_NAME, ASK_CREATOR_TOOL_NAME})
 
 # Option keys shown in IM cards: a) b) c) d)
 _OPTION_KEYS = string.ascii_lowercase
@@ -81,13 +84,13 @@ def parse_review_configs(raw: dict[str, Any]) -> list[dict[str, Any]] | None:
 
 def is_ask_action_requests(action_requests: list[dict[str, Any]]) -> bool:
     """True when this HITL pause is an ``ask_user_question`` interrupt."""
-    return any(isinstance(a, dict) and a.get("name") == ASK_USER_TOOL_NAME for a in action_requests)
+    return any(isinstance(a, dict) and a.get("name") in ASK_TOOL_NAMES for a in action_requests)
 
 
 def extract_questions(action_requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Pull the normalized ``questions`` list out of an ask action request."""
     for action in action_requests:
-        if not isinstance(action, dict) or action.get("name") != ASK_USER_TOOL_NAME:
+        if not isinstance(action, dict) or action.get("name") not in ASK_TOOL_NAMES:
             continue
         args = action.get("args")
         if not isinstance(args, dict):
@@ -303,6 +306,7 @@ def parse_ask_reply(
 
 
 __all__ = [
+    "ASK_CREATOR_TOOL_NAME",
     "ASK_USER_TOOL_NAME",
     "extract_questions",
     "format_ask_card",

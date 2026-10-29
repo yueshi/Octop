@@ -750,3 +750,249 @@ async def test_slash_outcome_completed_turn() -> None:
     ):
         pass
     assert outcome.completed_turn is True
+
+
+# ---------------------------------------------------------------------------
+# Durable hitl_pending mirror (dual-write + boot recovery)
+# ---------------------------------------------------------------------------
+
+
+def _hitl_repo(tmp_path):
+    from octop.infra.db.migrate import run_migrations
+    from octop.infra.db.pool import SqlitePool
+    from octop.infra.db.repos.hitl import HitlPendingRepo
+
+    pool = SqlitePool(tmp_path / "hitl.db")
+    run_migrations(pool)
+    return HitlPendingRepo(pool)
+
+
+def _ask_actions(task_id: str = "t1") -> list[dict]:
+    return [
+        {
+            "name": "ask_creator",
+            "args": {"questions": [{"question": "A or B?"}], "task_id": task_id},
+        }
+    ]
+
+
+def test_store_dual_writes_and_resolves(tmp_path) -> None:
+    from types import SimpleNamespace
+
+    repo = _hitl_repo(tmp_path)
+    store = HitlPendingStore(repo=repo)
+    ctx = SimpleNamespace(
+        thread_id="thr-1",
+        agent_id="team-01",
+        user_id=1,
+        session_key="team-01:dashboard:1:dm",
+        channel_type="dashboard",
+    )
+    record = HitlChannelCoordinator(store).register_from_request(
+        {"action_requests": _ask_actions("t1")}, ctx=ctx
+    )
+    assert record.row_pk is not None
+    rows = repo.list_pending()
+    assert len(rows) == 1
+    assert rows[0].task_id == "t1"
+    assert rows[0].kind == "ask"
+    assert rows[0].payload["agent_id"] == "team-01"
+    assert rows[0].payload["pending_id"] == record.pending_id
+
+    store.mark_resolved(record.pending_id, "approved")
+    assert repo.list_pending() == []
+    row = repo.get(record.row_pk)
+    assert row is not None and row.status == "approved"
+
+
+def test_store_register_dedup_creates_one_row(tmp_path) -> None:
+    store = HitlPendingStore(repo=_hitl_repo(tmp_path))
+    kwargs = {
+        "thread_id": "thr-1",
+        "agent_id": "team-01",
+        "user_id": 1,
+        "session_key": "team-01:dashboard:1:dm",
+        "channel_type": "dashboard",
+        "action_requests": _ask_actions("t1"),
+        "review_configs": None,
+    }
+    first = store.register(**kwargs)
+    again = store.register(**kwargs)
+    assert again.pending_id == first.pending_id
+    assert len(store.repo.list_pending()) == 1  # type: ignore[union-attr]
+
+
+def test_store_boot_recovery_rehydrates_pending(tmp_path) -> None:
+    repo = _hitl_repo(tmp_path)
+    row = repo.create(
+        session_key="team-01:dashboard:1:dm",
+        thread_id="thr-9",
+        kind="ask",
+        payload={
+            "agent_id": "team-01",
+            "user_id": 1,
+            "channel_type": "dashboard",
+            "action_requests": _ask_actions("t1"),
+        },
+        created_by_agent="team-01",
+        task_id="t1",
+    )
+
+    store = HitlPendingStore(repo=repo)
+    store.load_persisted()
+    record = store.resolve_pending_for_thread("thr-9", agent_id="team-01", user_id=1)
+    assert record is not None
+    assert record.task_id == "t1"
+    assert record.row_pk == row.pk
+    assert record.pending_id != row.payload.get("pending_id")  # fresh nonce
+    # No duplicate rows were created by the recovery pass.
+    assert [r.pk for r in repo.list_pending()] == [row.pk]
+
+
+def test_store_boot_recovery_keeps_pending_id_answerable(tmp_path) -> None:
+    """A recovered approval must stay answerable with the id on its card.
+
+    The card projected into the thread history carries the original
+    ``pending_id``; a recovery pass that mints a fresh nonce leaves the card
+    permanently unanswerable (the resume route reports ``hitl.expired``).
+    """
+    repo = _hitl_repo(tmp_path)
+    row = repo.create(
+        session_key="k",
+        thread_id="thr-keep",
+        kind="approval",
+        payload={
+            "pending_id": "orig-1",
+            "agent_id": "a1",
+            "user_id": 1,
+            "action_requests": _ask_actions("t1"),
+        },
+        created_by_agent="a1",
+        task_id="t1",
+    )
+
+    store = HitlPendingStore(repo=repo)
+    store.load_persisted()
+
+    # The id the card carries must still resolve to a live record.
+    record = store.resolve_pending_for_thread(
+        "thr-keep", agent_id="a1", user_id=1, pending_id="orig-1"
+    )
+    assert record is not None
+    assert record.pending_id == "orig-1"
+    assert record.row_pk == row.pk
+
+
+def test_store_boot_recovery_expires_stale_rows(tmp_path) -> None:
+    repo = _hitl_repo(tmp_path)
+    row = repo.create(
+        session_key="k",
+        thread_id="thr-old",
+        kind="approval",
+        payload={"agent_id": "a1", "user_id": 1, "action_requests": []},
+    )
+    with repo._db.connect() as conn:  # noqa: SLF001
+        conn.execute(
+            "UPDATE hitl_pending SET created_at = ? WHERE id = ?",
+            (1, row.pk),
+        )
+
+    store = HitlPendingStore(repo=repo, ttl_seconds=30 * 60)
+    store.load_persisted()
+    assert store.resolve_pending_for_thread("thr-old", agent_id="a1", user_id=1) is None
+    assert repo.list_pending() == []
+    stale = repo.get(row.pk)
+    assert stale is not None and stale.status == "expired"
+
+
+def test_store_load_persisted_noop_without_repo(tmp_path) -> None:
+    store = HitlPendingStore()
+    store.load_persisted()  # must not raise
+    assert store._records == {}
+
+
+def test_hitl_store_expire_for_task_only_matching_pauses() -> None:
+    store = HitlPendingStore()
+    first = store.register(
+        thread_id="thr1",
+        agent_id="agent1",
+        user_id=7,
+        session_key="sk1",
+        channel_type="dashboard",
+        action_requests=[{"name": "ask_creator", "args": {"task_id": "t1"}}],
+        review_configs=None,
+    )
+    second = store.register(
+        thread_id="thr2",
+        agent_id="agent1",
+        user_id=7,
+        session_key="sk2",
+        channel_type="dashboard",
+        action_requests=[{"name": "ask_creator", "args": {"task_id": "t2"}}],
+        review_configs=None,
+    )
+
+    assert store.expire_for_task("t1") == 1
+    assert first.status == "expired"
+    assert second.status == "pending"
+    assert store.resolve_pending_for_thread("thr2", agent_id="agent1") is not None
+
+
+def test_hitl_store_attach_task_links_pause() -> None:
+    store = HitlPendingStore()
+    record = store.register(
+        thread_id="thr1",
+        agent_id="agent1",
+        user_id=7,
+        session_key="sk1",
+        channel_type="dashboard",
+        action_requests=[{"name": "execute", "args": {}}],
+        review_configs=None,
+    )
+    assert record.task_id is None
+    store.attach_task(record.pending_id, "t1")
+    assert record.task_id == "t1"
+    assert store.expire_for_task("t1") == 1
+
+
+def test_concurrent_creates_bind_their_own_row(tmp_path) -> None:
+    """Each inserted pause must own its primary key.
+
+    The old code read ``SELECT MAX(id)`` *after* the insert, outside its
+    transaction, so a concurrent register could bind this record to another
+    row's pk: resolving one pause resolved the other and the loser stayed
+    pending forever.
+
+    Caveat: SQLite's ``BEGIN IMMEDIATE`` serialises the write transactions,
+    so this test cannot reliably interleave two ``create`` calls and does not
+    by itself prove the fix — the race is real under PostgreSQL with a
+    connection pool, where the post-insert SELECT is not ordered against the
+    other connection's INSERT. ``RETURNING id`` removes the window entirely;
+    that is the actual guarantee.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from octop.infra.db.migrate import run_migrations
+    from octop.infra.db.pool import SqlitePool
+    from octop.infra.db.repos.hitl import HitlPendingRepo
+
+    path = tmp_path / "hitl.db"
+    run_migrations(SqlitePool(path))
+    # One connection per writer: a shared pool would serialise them and hide
+    # the interleaving this test exists to catch.
+    repos = [HitlPendingRepo(SqlitePool(path)) for _ in range(4)]
+
+    def _create(i: int) -> tuple[int, object]:
+        return i, repos[i].create(
+            session_key=f"s{i}",
+            thread_id=f"t{i}",
+            kind="approval",
+            payload={"n": i},
+        )
+
+    for round_no in range(8):
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(_create, range(4)))
+        for i, row in results:
+            assert row.session_key == f"s{i}", f"round {round_no}: row {i} bound a foreign pk"
+            assert row.thread_id == f"t{i}", f"round {round_no}: row {i} bound a foreign pk"

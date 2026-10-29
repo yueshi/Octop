@@ -75,6 +75,7 @@ class AgentRow:
     knowledge_base_ids: str | None = None
     mcp_servers: str | None = None
     kind: str = "expert"
+    autonomy_enabled: int = 0
 
     @classmethod
     def from_row(cls, r: DbRow) -> AgentRow:
@@ -89,6 +90,11 @@ class AgentRow:
         kind = str(kind_raw).strip() if kind_raw else "expert"
         if kind not in {"expert", "team"}:
             kind = "expert"
+        try:
+            autonomy_enabled = int(r["autonomy_enabled"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            # Databases that predate the autonomy column must still load.
+            autonomy_enabled = 0
         return cls(
             id=r["id"],
             agent_id=r["agent_id"],
@@ -116,6 +122,7 @@ class AgentRow:
             knowledge_base_ids=_opt_str(r, "knowledge_base_ids"),
             mcp_servers=_opt_str(r, "mcp_servers"),
             kind=kind,
+            autonomy_enabled=autonomy_enabled,
         )
 
 
@@ -227,6 +234,14 @@ class AgentRepo:
         with self._db.transaction() as conn:
             conn.execute(
                 "UPDATE agents SET enabled = ?, updated_at = ? WHERE agent_id = ?",
+                (bool_int(enabled), now_ts(), agent_id),
+            )
+
+    def set_autonomy_enabled(self, agent_id: str, enabled: bool) -> None:
+        """Toggle the digital-employee runtime switch (docs digital-employee-plan D5)."""
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE agents SET autonomy_enabled = ?, updated_at = ? WHERE agent_id = ?",
                 (bool_int(enabled), now_ts(), agent_id),
             )
 

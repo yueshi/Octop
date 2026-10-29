@@ -3,6 +3,7 @@ import { Navigate, useLocation } from "react-router-dom";
 
 // Lazy-loaded pages — Common
 const ExpertsPage = lazy(() => import("../pages/Experts"));
+const TeamBoardPage = lazy(() => import("../pages/Teams/TeamBoardPage"));
 const AppsPage = lazy(() => import("../pages/Apps"));
 const AppDetailPage = lazy(() => import("../pages/Apps/Detail"));
 const CronJobsPage = lazy(() => import("../pages/Control/CronJobs"));
@@ -10,6 +11,9 @@ const ConnectorsPage = lazy(() => import("../pages/Agent/Connectors"));
 const SkillPackagesPage = lazy(() => import("../pages/SkillPackages"));
 const KnowledgeBasesPage = lazy(() => import("../pages/KnowledgeBases"));
 const BridgePage = lazy(() => import("../pages/Settings/Bridge"));
+const ExternalEventsPage = lazy(
+  () => import("../pages/Settings/ExternalEvents"),
+);
 const PersonalizationPage = lazy(
   () => import("../pages/Agent/Personalization"),
 );
@@ -58,6 +62,7 @@ export const pathToKey: Record<string, string> = {
   "/skill-packages": "skill-packages",
   "/knowledge-bases": "knowledge-bases",
   "/bridge": "bridge",
+  "/external-events": "external-events",
   "/personalization": "personalization",
   "/personalization/skills": "personalization",
   "/personalization/tools": "personalization",
@@ -141,6 +146,9 @@ export function resolveSelectedKey(pathname: string): string {
   if (pathToKey[pathname]) return pathToKey[pathname];
   if (pathname.startsWith("/chat/")) return "chat";
   if (pathname.startsWith("/apps/")) return "apps";
+  if (pathname.startsWith("/teams/")) return "experts";
+  if (pathname.endsWith("/board") && pathname.startsWith("/agents/"))
+    return "experts";
   if (pathname.startsWith("/workbench/")) return "workbench";
   if (pathname.startsWith("/remote-desktop/")) return "remote-desktop";
   if (pathname.startsWith("/personalization/")) return "personalization";
@@ -157,11 +165,15 @@ export const routeConfigs: RouteConfig[] = [
   { path: "/apps", element: <AppsPage /> },
   { path: "/apps/:appId", element: <AppDetailPage /> },
   { path: "/experts", element: <ExpertsPage /> },
+  { path: "/teams/:teamId/board", element: <TeamBoardPage /> },
+  // A digital employee's board is the same page; the host is just an agent.
+  { path: "/agents/:agentId/board", element: <TeamBoardPage /> },
   { path: "/tasks", element: <CronJobsPage /> },
   { path: "/connectors", element: <ConnectorsPage /> },
   { path: "/skill-packages", element: <SkillPackagesPage /> },
   { path: "/knowledge-bases", element: <KnowledgeBasesPage /> },
   { path: "/bridge", element: <BridgePage /> },
+  { path: "/external-events", element: <ExternalEventsPage /> },
   {
     path: "/personalization/acp",
     element: <RedirectPreserveSearch to="/acp" />,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -9,7 +11,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from octop.infra.cron.delivery import CronDeliveryCommand, CronDeliveryService
+from octop.infra.cron.delivery import (
+    CronDeliveryCommand,
+    CronDeliveryService,
+    command_from_row,
+)
 from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.agents import AgentRepo
@@ -421,3 +427,471 @@ async def test_agent_failure_projects_the_prompt(tmp_path: Path) -> None:
     assert titled is not None
     assert titled.title == "喝水提醒"
     db.close()
+
+
+# ---------------------------------------------------------------------------
+# Team drive wakes (meta.kind = team_drive)
+# ---------------------------------------------------------------------------
+
+
+def _wake_repos() -> MagicMock:
+    repos = MagicMock()
+    repos.team_task_repo.list_by_team = MagicMock(return_value=[])
+    repos.user_repo.get.return_value = MagicMock(locale="en", role="user")
+    return repos
+
+
+def _wake_agent_manager(stream) -> MagicMock:
+    agent_manager = MagicMock()
+    agent_manager.merge_turn_mcp_servers = MagicMock(return_value=None)
+    agent_manager.prepare_chat_mcp = AsyncMock(return_value=[])
+    agent_manager.stream = stream
+    agent_manager.get_row = MagicMock(return_value=None)
+    agent_manager.get_agent = MagicMock(return_value=MagicMock())
+    return agent_manager
+
+
+def _wake_command(prompt: str, **overrides: object) -> CronDeliveryCommand:
+    return _command(
+        task_type="agent",
+        prompt=prompt,
+        meta={"kind": "team_drive"},
+        **overrides,
+    )
+
+
+def _wire_text_of(item: Any) -> str:
+    data = json.loads(item.message_json)
+    return data.get("data", {}).get("content") or ""
+
+
+@pytest.mark.asyncio
+async def test_wake_with_tool_calls_projects_without_wake_frame() -> None:
+    session = _session(channel_type=ThreadRegistry.CHANNEL_DASHBOARD)
+    prompt = "[Drive loop wake] review tasks"
+
+    async def _stream(_aid: str, _request: dict):
+        yield {"type": "tool_call_chunk"}
+        yield {
+            "type": "state_update",
+            "data": {
+                "messages": [
+                    {"role": "user", "content": prompt},
+                    {"role": "assistant", "content": "Dispatched 2 tasks"},
+                ]
+            },
+        }
+        yield {"type": "token", "content": "Dispatched 2 tasks"}
+
+    gateway = MagicMock()
+    gateway.run_in_session = _run_locked
+    gateway.require_session = MagicMock(return_value=session)
+    gateway.push_session_text = AsyncMock()
+    gateway.notify_dashboard_push = AsyncMock()
+
+    service = CronDeliveryService(
+        gateway=gateway,
+        agent_manager=_wake_agent_manager(_stream),
+        repos=_wake_repos(),
+    )
+    await service.deliver(_wake_command(prompt))
+
+    gateway.push_session_text.assert_awaited_once()
+    assert gateway.push_session_text.call_args.args[1] == "Dispatched 2 tasks"
+    gateway.notify_dashboard_push.assert_awaited_once()
+    projected = (
+        service._repos.thread_message_repo.append_if_ready.call_args.args[1]  # noqa: SLF001
+    )
+    texts = [_wire_text_of(item) for item in projected]
+    assert prompt not in texts
+    assert "Dispatched 2 tasks" in texts
+
+
+@pytest.mark.asyncio
+async def test_wake_noop_is_invisible() -> None:
+    """A wake with no tool call leaves no projection, push, or toast."""
+    session = _session(channel_type=ThreadRegistry.CHANNEL_DASHBOARD)
+
+    async def _stream(_aid: str, _request: dict):
+        yield {"type": "token", "content": "Nothing to do this wake."}
+
+    gateway = MagicMock()
+    gateway.run_in_session = _run_locked
+    gateway.require_session = MagicMock(return_value=session)
+    gateway.push_session_text = AsyncMock()
+    gateway.notify_dashboard_push = AsyncMock()
+
+    repos = _wake_repos()
+    service = CronDeliveryService(
+        gateway=gateway,
+        agent_manager=_wake_agent_manager(_stream),
+        repos=repos,
+    )
+    await service.deliver(_wake_command("wake"))
+
+    repos.thread_message_repo.append_if_ready.assert_not_called()
+    gateway.push_session_text.assert_not_awaited()
+    gateway.notify_dashboard_push.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_wake_with_tools_but_empty_reply_still_projects() -> None:
+    session = _session(channel_type=ThreadRegistry.CHANNEL_DASHBOARD)
+
+    async def _stream(_aid: str, _request: dict):
+        yield {"type": "tool_call_chunk"}
+        yield {"type": "token", "content": "   "}
+
+    gateway = MagicMock()
+    gateway.run_in_session = _run_locked
+    gateway.require_session = MagicMock(return_value=session)
+    gateway.push_session_text = AsyncMock()
+    gateway.notify_dashboard_push = AsyncMock()
+
+    service = CronDeliveryService(
+        gateway=gateway,
+        agent_manager=_wake_agent_manager(_stream),
+        repos=_wake_repos(),
+    )
+    await service.deliver(_wake_command("wake"))
+
+    gateway.push_session_text.assert_not_awaited()
+    gateway.notify_dashboard_push.assert_not_awaited()
+    service._repos.thread_message_repo.append_if_ready.assert_called()  # noqa: SLF001
+
+
+def test_command_from_row_parses_meta() -> None:
+    from types import SimpleNamespace
+
+    row = SimpleNamespace(
+        cron_id="j9",
+        name="drive",
+        agent_id="t1",
+        user_id=1,
+        session_key="sk",
+        prompt="p",
+        fresh_thread=0,
+        task_type="agent",
+        model=None,
+        mcp_servers=[],
+        meta={"kind": "team_drive"},
+    )
+    assert command_from_row(row).meta == {"kind": "team_drive"}
+
+    bare = SimpleNamespace(
+        cron_id="j9",
+        name="drive",
+        agent_id="t1",
+        user_id=1,
+        session_key="sk",
+        prompt="p",
+        fresh_thread=0,
+        task_type="agent",
+        model=None,
+        mcp_servers=[],
+    )
+    assert command_from_row(bare).meta == {}
+
+
+# ---------------------------------------------------------------------------
+# Cron × HITL suspension (§7.3/§7.4-2)
+# ---------------------------------------------------------------------------
+
+
+def _hitl_gateway(stream, *, task_id: str | None = "t1") -> tuple[MagicMock, MagicMock]:
+    session = _session(channel_type=ThreadRegistry.CHANNEL_DASHBOARD)
+    gateway = MagicMock()
+    gateway.run_in_session = _run_locked
+    gateway.require_session = MagicMock(return_value=session)
+    gateway.push_session_text = AsyncMock()
+    gateway.notify_dashboard_push = AsyncMock()
+    gateway.notify_hitl_pending = AsyncMock()
+
+    from types import SimpleNamespace
+
+    record = SimpleNamespace(pending_id="p1", created_at=time.time(), task_id=task_id)
+    coordinator = MagicMock()
+    coordinator.register_from_request = MagicMock(return_value=record)
+    gateway.processor.hitl_coordinator = coordinator
+    return session, gateway
+
+
+@pytest.mark.asyncio
+async def test_cron_hitl_suspends_instead_of_failing() -> None:
+    """§7.3 gate: a cron turn that hits HITL registers + notifies, not raises."""
+
+    session, gateway = _hitl_gateway(None)
+
+    async def _stream(_aid: str, _request: dict):
+        yield {"type": "tool_call_chunk"}
+        yield {
+            "type": "hitl_required",
+            "request": {
+                "action_requests": [
+                    {"name": "execute", "args": {"command": "rm -rf"}, "description": "d"}
+                ]
+            },
+        }
+
+    repos = _wake_repos()
+    service = CronDeliveryService(
+        gateway=gateway,
+        agent_manager=_wake_agent_manager(_stream),
+        repos=repos,
+    )
+    command = _command(task_type="agent", prompt="run it", session_key=session.session_key)
+    await service.deliver(command)  # must not raise
+
+    gateway.processor.hitl_coordinator.register_from_request.assert_called_once()
+    raw, kwargs = gateway.processor.hitl_coordinator.register_from_request.call_args
+    assert raw[0]["action_requests"][0]["name"] == "execute"
+    ctx = kwargs["ctx"]
+    assert ctx.thread_id == session.thread_id
+    assert ctx.session_key == command.session_key
+    frame = gateway.notify_hitl_pending.call_args.args[1]
+    assert frame["type"] == "approval_required"
+    assert frame["pending_id"] == "p1"
+    assert frame["thread_id"] == session.thread_id
+    assert frame["deep_link"] == f"/chat/{command.agent_id}/{session.thread_id}"
+    # Non-team cron: team_id absent.
+    assert frame["team_id"] is None
+    # The turn still projects (nothing was suppressed for a paused run).
+    service._repos.thread_message_repo.append_if_ready.assert_called()  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_wake_hitl_notifies_team_creator() -> None:
+    from types import SimpleNamespace
+
+    session, gateway = _hitl_gateway(None, task_id="t9")
+
+    async def _stream(_aid: str, _request: dict):
+        yield {"type": "tool_call_chunk"}
+        yield {
+            "type": "hitl_required",
+            "request": {
+                "action_requests": [
+                    {
+                        "name": "ask_creator",
+                        "args": {"questions": [{"question": "buy or build?"}], "task_id": "t9"},
+                    }
+                ]
+            },
+        }
+
+    agent_manager = _wake_agent_manager(_stream)
+    agent_manager.get_row = MagicMock(return_value=SimpleNamespace(kind="team", default_model=None))
+    service = CronDeliveryService(gateway=gateway, agent_manager=agent_manager, repos=_wake_repos())
+    await service.deliver(_wake_command("wake"))
+
+    frame = gateway.notify_hitl_pending.call_args.args[1]
+    assert frame["team_id"] == "a1"
+    assert frame["task_id"] == "t9"
+    # The paused wake is not a noop (the push below proves the code path ran
+    # past the noop gate); the only projected content was the wake frame, and
+    # the card itself hydrates via the pending payload, not projection.
+    service._repos.thread_message_repo.append_if_ready.assert_not_called()  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_hitl_duplicate_escalation_skips_push() -> None:
+    """register() returning an older pause means the creator was already pinged."""
+    from types import SimpleNamespace
+
+    session, gateway = _hitl_gateway(None)
+    old = SimpleNamespace(pending_id="p1", created_at=time.time() - 120.0, task_id="t1")
+    gateway.processor.hitl_coordinator.register_from_request = MagicMock(return_value=old)
+
+    async def _stream(_aid: str, _request: dict):
+        yield {"type": "tool_call_chunk"}
+        yield {"type": "hitl_required", "request": {"action_requests": []}}
+
+    service = CronDeliveryService(
+        gateway=gateway,
+        agent_manager=_wake_agent_manager(_stream),
+        repos=_wake_repos(),
+    )
+    await service.deliver(_wake_command("wake"))
+    gateway.processor.hitl_coordinator.register_from_request.assert_called_once()
+    gateway.notify_hitl_pending.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_session_write_approved_unlocks_write_scope() -> None:
+    """§7.4-5: an approved mail-write releases a cron job that opted in."""
+    from types import SimpleNamespace
+
+    from octop.infra.connectors.gateway.adapters.agently_cli import writes_allowed
+
+    seen: dict[str, bool] = {}
+
+    async def _stream(_aid: str, _request: dict):
+        seen["writes"] = writes_allowed()
+        yield {"type": "token", "content": "sent"}
+
+    repos = _wake_repos()
+    repos.hitl_repo.list_by_session = MagicMock(
+        return_value=[
+            SimpleNamespace(
+                payload={"action_requests": [{"name": "mail_agently_send"}]},
+                status="approved",
+            )
+        ]
+    )
+    session = _session(channel_type=ThreadRegistry.CHANNEL_DASHBOARD)
+    gateway = MagicMock()
+    gateway.run_in_session = _run_locked
+    gateway.require_session = MagicMock(return_value=session)
+    gateway.push_session_text = AsyncMock()
+    gateway.notify_dashboard_push = AsyncMock()
+    service = CronDeliveryService(
+        gateway=gateway,
+        agent_manager=_wake_agent_manager(_stream),
+        repos=repos,
+    )
+    await service.deliver(
+        _command(
+            task_type="agent",
+            prompt="send mail",
+            session_key=session.session_key,
+            meta={"allow_writes": True},
+        )
+    )
+    assert seen["writes"] is True
+
+    # Without any approved row the run stays write-blocked.
+    async def _stream_blocked(_aid: str, _request: dict):
+        seen["writes"] = writes_allowed()
+        yield {"type": "token", "content": "sent"}
+
+    service._agent_manager.stream = _stream_blocked  # noqa: SLF001
+    repos.hitl_repo.list_by_session = MagicMock(return_value=[])
+    await service.deliver(
+        _command(
+            task_type="agent",
+            prompt="send mail",
+            session_key=session.session_key,
+            meta={"allow_writes": True},
+        )
+    )
+    assert seen["writes"] is False
+
+
+@pytest.mark.asyncio
+async def test_agent_usage_source_can_be_overridden() -> None:
+    session = _session(channel_type="weixin")
+
+    async def _stream(_aid: str, _request: dict):
+        yield {
+            "type": "usage",
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 2,
+                "total_tokens": 12,
+            },
+        }
+        yield {"type": "token", "content": "done"}
+
+    agent_manager = MagicMock()
+    agent_manager.merge_turn_mcp_servers = MagicMock(return_value=None)
+    agent_manager.prepare_chat_mcp = AsyncMock(return_value=[])
+    agent_manager.stream = _stream
+    agent_manager.get_row = MagicMock(return_value=None)
+
+    gateway = MagicMock()
+    gateway.run_in_session = _run_locked
+    gateway.require_session = MagicMock(return_value=session)
+    gateway.push_session_text = AsyncMock()
+
+    repos = MagicMock()
+    service = CronDeliveryService(
+        gateway=gateway,
+        agent_manager=agent_manager,
+        repos=repos,
+    )
+    await service.deliver(_command(task_type="agent", prompt="run", usage_source="external_event"))
+    assert repos.usage_repo.record.call_args.kwargs["source"] == "external_event"
+
+
+def test_write_approval_requires_an_explicit_job_opt_in() -> None:
+    """A mail-write approval must not unlock every cron of that session.
+
+    The approval lives in the session, and a cron session is also the agent's
+    own DM thread — so an unscoped unlock turned one approval granted in a
+    chat into permanent unattended mail rights for every later run of that
+    agent. The opt-in is per job.
+    """
+    service = CronDeliveryService(
+        gateway=MagicMock(),
+        agent_manager=MagicMock(),
+        repos=MagicMock(),
+    )
+    service._session_write_approved = lambda _session_key: True  # type: ignore[method-assign]
+
+    opted_in = _command(meta={"allow_writes": True})
+    plain = _command()
+    other = _command(meta={"allow_writes": False})
+
+    assert service._job_write_approved(opted_in) is True
+    assert service._job_write_approved(plain) is False
+    assert service._job_write_approved(other) is False
+
+
+def test_write_approval_requires_an_approved_session() -> None:
+    """No approval in the session means no write, even for an opted-in job."""
+    service = CronDeliveryService(
+        gateway=MagicMock(),
+        agent_manager=MagicMock(),
+        repos=MagicMock(),
+    )
+    service._session_write_approved = lambda _session_key: False  # type: ignore[method-assign]
+
+    assert service._job_write_approved(_command(meta={"allow_writes": True})) is False
+
+
+@pytest.mark.asyncio
+async def test_plain_cron_stays_write_blocked_after_a_chat_approval() -> None:
+    """A chat approval must not hand an unattended cron the right to mail.
+
+    The approval lives in the session, and a cron session is also the agent's
+    own DM thread — so without an explicit per-job opt-in, approving one
+    message in chat silently unlocked mail writes for every later cron run
+    of that agent. This is the end-to-end shape of that defect.
+    """
+    from types import SimpleNamespace
+
+    from octop.infra.connectors.gateway.adapters.agently_cli import writes_allowed
+
+    seen: dict[str, bool] = {}
+
+    async def _stream(_aid: str, _request: dict):
+        seen["writes"] = writes_allowed()
+        yield {"type": "token", "content": "sent"}
+
+    repos = _wake_repos()
+    repos.hitl_repo.list_by_session = MagicMock(
+        return_value=[
+            SimpleNamespace(
+                payload={"action_requests": [{"name": "mail_agently_send"}]},
+                status="approved",
+            )
+        ]
+    )
+    session = _session(channel_type=ThreadRegistry.CHANNEL_DASHBOARD)
+    gateway = MagicMock()
+    gateway.run_in_session = _run_locked
+    gateway.require_session = MagicMock(return_value=session)
+    gateway.push_session_text = AsyncMock()
+    gateway.notify_dashboard_push = AsyncMock()
+    service = CronDeliveryService(
+        gateway=gateway,
+        agent_manager=_wake_agent_manager(_stream),
+        repos=repos,
+    )
+
+    # A plain cron job — no explicit opt-in.
+    await service.deliver(
+        _command(task_type="agent", prompt="send mail", session_key=session.session_key)
+    )
+
+    assert seen["writes"] is False
