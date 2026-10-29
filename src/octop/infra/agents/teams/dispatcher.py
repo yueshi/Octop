@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from octop.infra.agents.teams.service import is_team_agent
 from octop.infra.agents.teams.task_state import OPEN_TASK_STATUSES, is_valid_task_transition
 from octop.infra.db.repos.team_waits import (
     WAIT_KIND_MEMBER_REPLY,
@@ -205,7 +206,12 @@ def plan_dispatches(
                 )
             )
             continue
-        if budget_remaining is not None and (task.budget_tokens or 0) > budget_remaining:
+        # An exhausted budget blocks every new dispatch, including tasks that
+        # never declared a cost — otherwise "0 tokens needed" slips past a
+        # zero balance and the gate only bites tasks that opted in to a price.
+        if budget_remaining is not None and (
+            budget_remaining <= 0 or (task.budget_tokens or 0) > budget_remaining
+        ):
             steps.append(
                 DispatchStep(
                     task.task_id,
@@ -344,6 +350,26 @@ class TeamDispatcher:
         if task.status not in _DISPATCHABLE_STATUSES:
             return DispatchOutcome(step.task_id, step.action, "skipped", f"status {task.status}")
         if not task.assignee:
+            # A digital employee is its own executor, so an unassigned row is
+            # implicitly assigned to it. Only a multi-agent team needs a
+            # decision to pick a member.
+            owner = getattr(repos, "agent_repo", None)
+            owner_row = owner.get(team_id) if owner is not None else None
+            if owner_row is not None and not is_team_agent(owner_row):
+                adopted = repos.team_task_repo.update(
+                    task.task_id,
+                    expected_version=task.version,
+                    fields={"assignee": team_id},
+                )
+                if adopted is not None:
+                    if self._recorder is not None:
+                        self._recorder.record_task_change(adopted, actor="coordinator")
+                    return await self._execute_step(
+                        team_id,
+                        DispatchStep(step.task_id, step.title, team_id, step.action, step.reason),
+                        target=target,
+                        now=now,
+                    )
             escalated = repos.team_task_repo.update(
                 task.task_id,
                 expected_version=task.version,

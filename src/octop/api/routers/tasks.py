@@ -152,8 +152,8 @@ async def create_agent_task(
         problem = _assignee_error(server, row, assignee)
         if problem is not None:
             raise OctopError(ErrorCode.TEAM_TASK_ASSIGNEE_INVALID, problem)
-        if repos.agent_repo.get(body.assignee) is None:
-            raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"assignee {body.assignee!r} not found")
+        if repos.agent_repo.get(assignee) is None:
+            raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"assignee {assignee!r} not found")
     created = create_task(
         repos.team_task_repo,
         agent_id=agent_id,

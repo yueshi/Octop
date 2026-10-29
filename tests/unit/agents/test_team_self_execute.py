@@ -113,3 +113,45 @@ async def test_hitl_pause_leaves_the_task_to_the_approval() -> None:
 
     assert recorder.replies == []
     assert recorder.handled == []
+
+
+@pytest.mark.asyncio
+async def test_self_executed_turn_is_metered(tmp_path) -> None:
+    """A self-executed turn must reach usage_log and the budget counter.
+
+    It never passes through ``GlobalProcessor``, so without explicit metering
+    the spend is invisible and ``budget_remaining`` reads zero forever.
+    """
+    from octop.infra.db.migrate import run_migrations
+    from octop.infra.db.pool import SqlitePool
+    from octop.infra.db.repos.agents import AgentRepo
+    from octop.infra.db.repos.team_runtime import TeamRuntimeRepo
+    from octop.infra.db.repos.usage import UsageRepo
+    from octop.infra.db.repos.users import UserRepo
+
+    db = SqlitePool(tmp_path / "self.db")
+    run_migrations(db)
+    uid = UserRepo(db).create(username="u", password_hash="h", role="user")
+    AgentRepo(db).create(agent_id="solo", user_id=uid, name="solo")
+    runtime_repo = TeamRuntimeRepo(db)
+    runtime_repo.ensure("solo")
+
+    manager = _AgentManager(
+        [
+            {"type": "token", "content": "ok"},
+            {"type": "usage", "usage": {"input_tokens": 30, "output_tokens": 12}},
+        ]
+    )
+    recorder = _Recorder()
+    autopilot = TeamAutopilot(
+        repos=SimpleNamespace(usage_repo=UsageRepo(db), team_runtime_repo=runtime_repo),
+        agent_manager=manager,
+        thread_registry=SimpleNamespace(),
+    )
+    autopilot.bind_coordinator(recorder)
+
+    await autopilot.submit_peer("solo", "solo", "go", TARGET)
+    await asyncio.sleep(0.1)
+
+    runtime = runtime_repo.get("solo")
+    assert runtime is not None and runtime.budget_used == 42

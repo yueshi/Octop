@@ -62,6 +62,23 @@ async def test_create_list_and_patch_a_task(
     assert r.json()["version"] == task["version"] + 1
 
 
+async def test_unassigned_task_defaults_to_the_agent_itself(
+    solo: tuple[Any, str, str],
+) -> None:
+    """The API defaults an unassigned row to the employee, like the tool does.
+
+    Without this the row would be escalated as "no assignee" and never run —
+    and the validation must check the *resolved* assignee, not the request
+    field, or the default path 404s on itself.
+    """
+    client, alice_auth, agent_id = solo
+
+    r = await client.post(f"/api/agents/{agent_id}/tasks", headers=alice_auth, json={"title": "T"})
+
+    assert r.status_code == 201, r.text
+    assert r.json()["assignee"] == agent_id
+
+
 async def test_autonomous_agent_cannot_assign_a_stranger(
     solo: tuple[Any, str, str],
     env_alice_bob_agent: Env,

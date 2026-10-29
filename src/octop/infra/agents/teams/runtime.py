@@ -455,7 +455,11 @@ class TeamAutopilot:
         status = "done"
         error_text = ""
         paused = False
+        usage_tracker: Any | None = None
         try:
+            from octop.infra.gateway.process.usage_record import UsageTracker  # noqa: PLC0415
+
+            usage_tracker = UsageTracker()
             request = build_harness_request(
                 thread_id=target.thread_id,
                 user_id=target.user_id,
@@ -466,6 +470,8 @@ class TeamAutopilot:
             )
             async for chunk in self._agent_manager.stream(team_id, request):
                 kind = chunk.get("type")
+                if usage_tracker is not None:
+                    usage_tracker.observe(chunk)
                 if kind in ("token", "delta"):
                     parts.append(str(chunk.get("content") or chunk.get("text") or ""))
                 elif kind == "hitl_required":
@@ -474,6 +480,11 @@ class TeamAutopilot:
             logger.warning("team %s self-execute failed", team_id, exc_info=True)
             status = "failed"
             error_text = f"{type(exc).__name__}: {exc}"
+
+        # Meter the turn. A self-executed turn never passes through
+        # ``GlobalProcessor``, so without this the spend is invisible and the
+        # budget gate reads zero forever (S2.6).
+        self._record_self_usage(team_id, target, usage_tracker)
 
         coordinator = self._coordinator
         if coordinator is None:
@@ -501,6 +512,29 @@ class TeamAutopilot:
         )
         if reply:
             await self.notify(team_id, reply)
+
+    def _record_self_usage(self, team_id: str, target: DispatchTarget, tracker: Any | None) -> None:
+        usage_repo = getattr(self._repos, "usage_repo", None)
+        runtime_repo = getattr(self._repos, "team_runtime_repo", None)
+        if tracker is None or usage_repo is None:
+            return
+        usage = getattr(tracker, "usage", None)
+        if not usage:
+            return
+        from octop.infra.gateway.process.usage_record import record_turn_usage  # noqa: PLC0415
+
+        # ``team_id`` is the budget owner: a digital employee is metered under
+        # its own runtime row, so ``budget_remaining`` sees the spend.
+        record_turn_usage(
+            usage_repo,
+            agent_id=team_id,
+            user_id=int(target.user_id),
+            thread_id=target.thread_id,
+            usage=usage,
+            source="self_execute",
+            team_id=team_id,
+            runtime_repo=runtime_repo,
+        )
 
     async def notify(self, team_id: str, text: str) -> None:
         if self._notify is not None and text.strip():

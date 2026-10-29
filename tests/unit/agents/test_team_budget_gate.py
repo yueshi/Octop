@@ -126,3 +126,16 @@ def test_daily_window_still_rolls_every_day(repos: SimpleNamespace) -> None:
 
     runtime = repos.team_runtime_repo.get(TEAM)
     assert runtime is not None and runtime.budget_used == 0
+
+
+def test_exhausted_budget_defers_an_unpriced_task(repos: SimpleNamespace) -> None:
+    """A task that never declared a cost must still be blocked at zero."""
+    repos.team_runtime_repo.ensure(TEAM)
+    repos.autonomy_policy_repo.upsert(AutonomyPolicy(agent_id=TEAM, budget_limit_tokens=100))
+    repos.team_runtime_repo.add_budget_used(TEAM, 100)
+    task = repos.team_task_repo.create(team_id=TEAM, title="T", assignee="member-a")
+
+    steps = plan_dispatches(repos, TEAM, now=1000, budget_remaining=budget_remaining(repos, TEAM))
+
+    actions = {s.task_id: s.action for s in steps}
+    assert actions[task.task_id] == "defer_budget"

@@ -262,3 +262,29 @@ async def test_concurrency_key_serializes_member(repos: SimpleNamespace, team_id
     assert [call[1] for call in adapter.calls] == ["member-b"]
     assert repos.team_task_repo.get(waiting.task_id).status == "proposed"  # type: ignore[union-attr]
     assert repos.team_task_repo.get(other.task_id).status == "running"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_solo_agent_adopts_an_unassigned_task(repos: SimpleNamespace, team_id: str) -> None:
+    """A digital employee is its own executor: no decision is needed to pick one.
+
+    Without this, a task created before the agent was hired stays blocked as
+    "no assignee" forever.
+    """
+    # A digital employee: kind="expert" with a runtime, not a multi-agent team.
+    solo = "solo-01"
+    owner = repos.agent_repo.get(team_id)
+    assert owner is not None and owner.user_id is not None
+    repos.agent_repo.create(agent_id=solo, user_id=owner.user_id, name="solo", kind="expert")
+    _autopilot(repos, solo)
+    task = repos.team_task_repo.create(team_id=solo, title="T")
+    dispatcher, adapter, _recorder = _dispatcher(repos, Adapter())
+
+    outcomes = await dispatcher.dispatch_ready(solo, now=NOW)
+
+    updated = repos.team_task_repo.get(task.task_id)
+    assert updated is not None
+    assert updated.assignee == solo
+    assert updated.status == "running"
+    assert [o.status for o in outcomes] == ["dispatched"]
+    assert adapter.calls and adapter.calls[0][1] == solo
