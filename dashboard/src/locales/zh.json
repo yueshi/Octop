@@ -251,7 +251,7 @@
   },
   "nav": {
     "chat": "对话",
-    "apps": "轻应用",
+    "apps": "工作台",
     "common": "常用",
     "control": "控制",
     "experts": "专家",
@@ -267,7 +267,7 @@
     "cronJobs": "定时任务",
     "terminal": "终端 AI+",
     "remoteBrowser": "浏览器 AI+",
-    "workbench": "工作台",
+    "workbench": "控制台",
     "remoteDesktop": "远程桌面",
     "agent": "智能体",
     "skills": "技能",
@@ -1824,7 +1824,7 @@
     "unreadMessages": "未读消息"
   },
   "apps": {
-    "title": "轻应用",
+    "title": "工作台",
     "subtitle": "由专家在对话中搭建的小工具：清单、追踪表和轻量看板，数据保存在专家工作区",
     "empty": "还没有轻应用。在对话里让专家帮你做一个吧。",
     "emptyHint": "例如：“做一个读书清单，包含书名、作者和状态”",
@@ -5040,7 +5040,7 @@
     "fileCount": "{{count}} 个文件"
   },
   "workbench": {
-    "title": "工作台",
+    "title": "控制台",
     "description": "查看并接管专家的终端与浏览器，实时跟进执行过程",
     "tabs": {
       "terminal": "终端",

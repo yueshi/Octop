@@ -251,7 +251,7 @@
   },
   "nav": {
     "chat": "Conversation",
-    "apps": "Light apps",
+    "apps": "Workbench",
     "common": "Common",
     "control": "Control",
     "experts": "Experts",
@@ -267,7 +267,7 @@
     "cronJobs": "Cron Jobs",
     "terminal": "Terminal AI+",
     "remoteBrowser": "Browser AI+",
-    "workbench": "Workbench",
+    "workbench": "Console",
     "remoteDesktop": "Remote Desktop",
     "agent": "Agent",
     "skills": "Skills",
@@ -1824,7 +1824,7 @@
     "unreadMessages": "Unread messages"
   },
   "apps": {
-    "title": "Light apps",
+    "title": "Workbench",
     "subtitle": "Small tools your experts build from chat — lists, trackers and dashboards backed by their own data",
     "empty": "No light apps yet. Ask an expert in chat to build one.",
     "emptyHint": "Try: \"Create a reading tracker with title, author and status\"",
@@ -5040,7 +5040,7 @@
     "fileCount": "{{count}} files"
   },
   "workbench": {
-    "title": "Workbench",
+    "title": "Console",
     "description": "View and take over the expert's terminal and browser, and follow execution in real time",
     "tabs": {
       "terminal": "Terminal",
