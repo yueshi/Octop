@@ -39,12 +39,14 @@ class GatewayToolRunner:
             )
         _require_read_only(inst.kind, tool)
         creds = self._service.decrypt(instance_id)
-        if not creds:
+        if not creds and entry.auth_kind != "none":
             raise OctopError(
                 ErrorCode.APP_SOURCE_INVALID,
                 f"connector instance {instance_id!r} has no usable credentials",
             )
-        return call_gateway_tool(inst.kind, creds, tool, args)
+        # A connector with no credential fields is a public read-only source
+        # (e.g. an open metadata API); its adapter decides whether it needs a key.
+        return call_gateway_tool(inst.kind, creds or {}, tool, args)
 
     def list_tools(self, instance_id: str) -> list[dict[str, Any]]:
         """Tool metadata for the binding dialog (read-only flag included)."""

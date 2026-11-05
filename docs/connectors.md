@@ -63,6 +63,7 @@ are updating `catalog.json` in the same change.
 | `yuque-mcp` | Yuque (official MCP) | 语雀（官方 MCP） | knowledge | personal_token | stdio |
 | `weknora` | WeKnora | WeKnora | knowledge | custom_fields | gateway |
 | `dify` | Dify | Dify | self_hosted | custom_fields | remote |
+| `http-extract` | HTTP JSON | HTTP 取数 | knowledge | none | gateway |
 
 ## MCP modes / MCP 模式
 

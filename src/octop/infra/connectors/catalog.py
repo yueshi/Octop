@@ -18,6 +18,7 @@ AuthKind = Literal[
     "session_cookie",
     "api_credentials",
     "custom_fields",
+    "none",
 ]
 CredentialFieldType = Literal["text", "password", "url", "tags"]
 RemoteTransport = Literal["raw_http", "streamable_http", "sse"]

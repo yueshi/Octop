@@ -760,6 +760,25 @@
         }
       ],
       "remote_transport": "streamable_http"
+    },
+    {
+      "kind": "http-extract",
+      "name": { "en": "HTTP JSON", "zh": "HTTP 取数" },
+      "description": {
+        "en": "Fetch a public JSON or text endpoint as a read-only data source",
+        "zh": "把公开 JSON/文本接口作为只读数据源"
+      },
+      "auth_kind": "none",
+      "doc_url": "https://developer.mozilla.org/en-US/docs/Web/HTTP",
+      "icon": "globe",
+      "color": "#0ea5e9",
+      "phase": "available",
+      "mcp_mode": "gateway",
+      "category": "knowledge",
+      "auth_hint": {
+        "en": "No credentials: only public endpoints are allowed.",
+        "zh": "无需凭证：仅允许公开接口。"
+      }
     }
   ]
 }
