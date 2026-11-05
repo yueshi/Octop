@@ -8,6 +8,7 @@ export interface AppColumn {
   type: string;
   required: boolean;
   values: string[];
+  pii?: string | null;
 }
 
 export interface AppSummary {
@@ -40,19 +41,46 @@ export interface AppDetail extends AppSummary {
   tables: AppTable[];
 }
 
+export interface AppPublication {
+  active: boolean;
+  url?: string | null;
+  token?: string | null;
+  expires_at?: number | null;
+}
+
+export interface AppTemplate {
+  template: string;
+  label: string;
+  has_html: boolean;
+}
+
 export interface AppFile {
   name: string;
   path: string;
   size: number | null;
 }
 
+export interface AppRowMeta {
+  row_id: string;
+  version: number;
+  source?: string;
+}
+
 export interface AppRowsResponse {
   columns: AppColumn[];
   rows: Record<string, string>[];
+  row_meta: AppRowMeta[];
   total: number;
   limit: number;
   offset: number;
   table: string;
+  pii_columns: string[];
+}
+
+export interface AppRowUpdate {
+  row_id: string;
+  row: Record<string, string>;
+  version: number;
 }
 
 export interface AppShare {
@@ -67,10 +95,16 @@ export interface AppShareInput {
   permission: "view" | "edit_data";
 }
 
+export interface AppAssistantCitation {
+  table: string;
+  row_id: string;
+}
+
 export interface AppAssistantMessage {
   role: "user" | "assistant";
   content: string;
   created_at: number;
+  citations?: AppAssistantCitation[];
 }
 
 export type AppAssistantEvent =
@@ -81,6 +115,7 @@ export type AppAssistantEvent =
       rounds: number;
       input_tokens: number;
       output_tokens: number;
+      citations?: AppAssistantCitation[];
     }
   | { type: "error"; message: string };
 
@@ -128,8 +163,15 @@ export type AppImportMode = "append" | "replace";
 export interface AppImportResult {
   table: string;
   imported: number;
+  updated: number;
   skipped: number;
   errors: string[];
+  warnings: string[];
+  would_import: number;
+  dry_run: boolean;
+  pii_columns: string[];
+  blocked_pii: string[];
+  failed_rows: { row: number; values: Record<string, string>; error: string }[];
 }
 
 export type AppSourceKind = "workspace_file" | "external";
@@ -176,10 +218,48 @@ export const appsApi = {
 
   get: (appId: string) => request<AppDetail>(`/apps/${encodeId(appId)}`),
 
+  publication: (appId: string) =>
+    request<AppPublication>(`/apps/${encodeId(appId)}/publication`),
+
+  createPublication: (appId: string, ttlDays = 0) =>
+    request<AppPublication>(`/apps/${encodeId(appId)}/publication`, {
+      method: "POST",
+      body: JSON.stringify({ ttl_days: ttlDays }),
+    }),
+
+  revokePublication: (appId: string) =>
+    request<AppPublication>(`/apps/${encodeId(appId)}/publication`, {
+      method: "DELETE",
+    }),
+
+  listTemplates: (agentId: string) =>
+    request<{ templates: AppTemplate[] }>(
+      `/apps/templates?agent_id=${encodeURIComponent(agentId)}`,
+    ),
+
+  createFromTemplate: (body: {
+    agent_id: string;
+    template: string;
+    name?: string;
+    description?: string;
+  }) =>
+    request<AppDetail>("/apps/from-template", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   getHtml: async (appId: string): Promise<string> => {
     const blob = await requestBlob(`/apps/${encodeId(appId)}/html`);
     return blob.text();
   },
+
+  asset: (appId: string, name: string) =>
+    requestBlob(`/apps/${encodeId(appId)}/assets/${encodeURIComponent(name)}`),
+
+  assets: (appId: string) =>
+    request<{ assets: { name: string; size: number }[] }>(
+      `/apps/${encodeId(appId)}/assets`,
+    ),
 
   files: (appId: string) =>
     request<{ files: AppFile[] }>(`/apps/${encodeId(appId)}/files`),
@@ -196,11 +276,65 @@ export const appsApi = {
       )}`,
     ),
 
-  appendRow: (appId: string, row: Record<string, unknown>, table = "main") =>
-    request<{ row_index: number; row: Record<string, string>; table: string }>(
-      `/apps/${encodeId(appId)}/rows`,
-      { method: "POST", body: JSON.stringify({ row, table }) },
+  appendRow: (
+    appId: string,
+    row: Record<string, unknown>,
+    table = "main",
+    clientRequestId?: string,
+  ) =>
+    request<{
+      row_index: number;
+      row: Record<string, string>;
+      table: string;
+      row_id: string;
+      version: number;
+    }>(`/apps/${encodeId(appId)}/rows`, {
+      method: "POST",
+      body: JSON.stringify({
+        row,
+        table,
+        client_request_id: clientRequestId,
+      }),
+    }),
+
+  updateRow: (
+    appId: string,
+    rowId: string,
+    row: Record<string, unknown>,
+    expectedVersion?: number,
+  ) =>
+    request<AppRowUpdate>(
+      `/apps/${encodeId(appId)}/rows/${encodeURIComponent(rowId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ row, expected_version: expectedVersion }),
+      },
     ),
+
+  deleteRow: (appId: string, rowId: string, expectedVersion?: number) =>
+    request<{ deleted: string }>(
+      `/apps/${encodeId(appId)}/rows/${encodeURIComponent(rowId)}` +
+        (expectedVersion === undefined
+          ? ""
+          : `?expected_version=${expectedVersion}`),
+      { method: "DELETE" },
+    ),
+
+  exportTable: (appId: string, table = "main") =>
+    requestBlob(
+      `/apps/${encodeId(appId)}/export?table=${encodeURIComponent(table)}`,
+    ),
+
+  backup: (appId: string) => requestBlob(`/apps/${encodeId(appId)}/backup`),
+
+  restore: (agentId: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return requestUpload<AppDetail>(
+      `/apps/restore?agent_id=${encodeURIComponent(agentId)}`,
+      form,
+    );
+  },
 
   update: (appId: string, body: { name?: string; description?: string }) =>
     request<AppDetail>(`/apps/${encodeId(appId)}`, {
@@ -235,9 +369,15 @@ export const appsApi = {
     tableKey: string,
     body: {
       kind: "upload" | "workspace_file";
-      path: string;
+      path?: string;
+      paths?: string[];
       mode: AppImportMode;
       mapping?: Record<string, string> | null;
+      sheet?: string | null;
+      header_row?: number | null;
+      dry_run?: boolean;
+      upsert_key?: string[] | null;
+      include_pii?: boolean;
     },
   ) =>
     request<AppImportResult>(

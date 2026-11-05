@@ -554,3 +554,37 @@ async def test_publish_agent_expert_maps_sqlite_integrity_error(
             task_examples={},
         )
     assert exc.value.code is ErrorCode.PUBLISHED_EXPERT_SLUG_TAKEN
+
+
+@pytest.mark.asyncio
+async def test_export_snapshot_includes_app_shells_but_not_data(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    source = _workspace(source_dir)
+    await source.aupload_many(
+        [
+            (
+                WORKSPACE_MANIFEST_PATH,
+                json.dumps(
+                    {
+                        "id": "reading",
+                        "label": {"zh": "读书", "en": "Reading"},
+                    },
+                    ensure_ascii=False,
+                ).encode(),
+            ),
+            ("SOUL.md", b"# Soul"),
+            ("app_templates/reading/schema.json", b'{"columns":[{"name":"title"}]}'),
+            ("app_templates/reading/app.html", b"<h1>Books</h1>"),
+            ("app_templates/reading/data.csv", b"title\nsecret\n"),
+            ("app_templates/reading/assets/cover.png", b"\x89PNG\r\n\x1a\n"),
+        ]
+    )
+
+    destination = tmp_path / "published"
+    exported = await export_agent_workspace_to_dir(workspace=source, dest=destination)
+
+    assert "app_templates/reading/schema.json" in exported
+    assert "app_templates/reading/app.html" in exported
+    assert not (destination / "app_templates" / "reading" / "data.csv").exists()
+    assert not (destination / "app_templates" / "reading" / "assets").exists()

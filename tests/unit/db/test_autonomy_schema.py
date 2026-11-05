@@ -1,8 +1,8 @@
 """Digital-employee autonomy columns (docs/digital-employee-plan.md S1.1).
 
-The columns ship inside the unreleased v22 pair: SQLite has no
+The columns ship inside the unreleased v25 pair: SQLite has no
 ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS``, so the bare ALTERs in
-``022_light_apps.sql`` are applied by ``migrate._ensure_autonomy_schema``
+``025_light_apps.sql`` are applied by ``migrate._ensure_autonomy_schema``
 instead. These tests pin the three cases that helper exists for.
 """
 
@@ -93,7 +93,7 @@ def test_ensure_autonomy_schema_is_idempotent(db: SqlitePool) -> None:
 
 
 def test_columns_repaired_when_version_already_recorded(tmp_path: Path) -> None:
-    """A database that already recorded v22 must still gain the columns.
+    """A database that already recorded v25 must still gain the columns.
 
     ``run_migrations`` skips files whose version is already recorded, so the
     repair has to come from the unconditional helper block.
@@ -113,7 +113,7 @@ def test_columns_repaired_when_version_already_recorded(tmp_path: Path) -> None:
 
 
 def test_columns_survive_version_rewind(tmp_path: Path) -> None:
-    """Re-running v22 must not fail on the bare ALTERs (SQLite has no IF NOT EXISTS)."""
+    """Re-running v25 must not fail on the bare ALTERs (SQLite has no IF NOT EXISTS)."""
     pool = SqlitePool(tmp_path / "octop.db")
     run_migrations(pool)
     with pool.connect() as conn:
@@ -125,7 +125,7 @@ def test_columns_survive_version_rewind(tmp_path: Path) -> None:
     assert POLICY_COLUMNS.issubset(_columns(pool, "proactive_care_config"))
     with pool.connect() as conn:
         version = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
-    assert version == 24
+    assert version == 29
 
 
 def test_agent_repo_reads_autonomy_enabled(db: SqlitePool) -> None:

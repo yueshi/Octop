@@ -25,6 +25,11 @@ class Metrics:
     external_delivery_failed_total: int = 0
     external_poll_total: int = 0
     external_poll_error_total: int = 0
+    light_app_open_total: int = 0
+    light_app_row_write_total: int = 0
+    light_app_export_total: int = 0
+    light_app_assistant_total: int = 0
+    light_app_public_view_total: int = 0
     agent_active: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -56,6 +61,11 @@ class Metrics:
                 "external_delivery_failed_total": self.external_delivery_failed_total,
                 "external_poll_total": self.external_poll_total,
                 "external_poll_error_total": self.external_poll_error_total,
+                "light_app_open_total": self.light_app_open_total,
+                "light_app_row_write_total": self.light_app_row_write_total,
+                "light_app_export_total": self.light_app_export_total,
+                "light_app_assistant_total": self.light_app_assistant_total,
+                "light_app_public_view_total": self.light_app_public_view_total,
                 "agent_active": self.agent_active,
             }
 

@@ -18,6 +18,7 @@ from octop.infra.agents.tool_scope import tool_scope
 from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.agents import AgentRepo
+from octop.infra.db.repos.apps import LightAppRepo
 from octop.infra.db.repos.goal_deliverables import GoalDeliverableRepo
 from octop.infra.db.repos.team_goals import TeamGoalRepo
 from octop.infra.db.repos.team_runtime import TeamRuntimeRepo
@@ -61,6 +62,7 @@ def env(db: SqlitePool) -> dict[str, Any]:
         "wait_repo": TeamWaitRepo(db),
         "runtime_repo": TeamRuntimeRepo(db),
         "agent_repo": agent_repo,
+        "light_app_repo": LightAppRepo(db),
     }
 
 
@@ -69,6 +71,7 @@ def _tools(env: dict[str, Any]) -> dict[str, Any]:
         goal_repo=env["goal_repo"],
         task_repo=env["task_repo"],
         deliverable_repo=env["deliverable_repo"],
+        light_app_repo=env["light_app_repo"],
         agent_repo=env["agent_repo"],
         wait_repo=env["wait_repo"],
         runtime_repo=env["runtime_repo"],
@@ -82,6 +85,7 @@ def _tools_with_roster(env: dict[str, Any], roster) -> dict[str, Any]:
         goal_repo=env["goal_repo"],
         task_repo=env["task_repo"],
         deliverable_repo=env["deliverable_repo"],
+        light_app_repo=env["light_app_repo"],
         agent_repo=env["agent_repo"],
         wait_repo=env["wait_repo"],
         runtime_repo=env["runtime_repo"],
@@ -177,6 +181,7 @@ async def test_task_writes_emit_board_events(env: dict[str, Any]) -> None:
         goal_repo=env["goal_repo"],
         task_repo=env["task_repo"],
         deliverable_repo=env["deliverable_repo"],
+        light_app_repo=env["light_app_repo"],
         agent_repo=env["agent_repo"],
         task_notify=_notify,
     )
@@ -224,6 +229,7 @@ async def test_board_writes_append_shadow_events(db: SqlitePool, env: dict[str, 
         goal_repo=env["goal_repo"],
         task_repo=env["task_repo"],
         deliverable_repo=env["deliverable_repo"],
+        light_app_repo=env["light_app_repo"],
         agent_repo=env["agent_repo"],
         event_recorder=recorder,
     )
@@ -391,6 +397,7 @@ async def test_autonomous_task_defaults_to_self_when_unassigned(
         goal_repo=env["goal_repo"],
         task_repo=env["task_repo"],
         deliverable_repo=env["deliverable_repo"],
+        light_app_repo=env["light_app_repo"],
         agent_repo=env["agent_repo"],
         wait_repo=env["wait_repo"],
         runtime_repo=env["runtime_repo"],
@@ -402,3 +409,57 @@ async def test_autonomous_task_defaults_to_self_when_unassigned(
 
     assert "error" not in out
     assert out["task"]["assignee"] == env["team_id"]
+
+
+async def test_deliverable_update_attaches_a_team_member_app(env: dict[str, Any]) -> None:
+    tools = _tools_with_roster(env, lambda team_id: {env["member_id"]})
+    goal = await _call(env, env["alice"], tools["goal_set"], title="G")
+    deliverable = env["deliverable_repo"].create(
+        goal_id=goal["goal"]["goal_id"],
+        title="Dashboard",
+        created_by=env["alice"],
+    )
+    app = env["light_app_repo"].create(
+        agent_id=env["member_id"],
+        owner_user_id=env["alice"],
+        name="Ops dashboard",
+    )
+
+    result = await _call(
+        env,
+        env["alice"],
+        tools["deliverable_update"],
+        deliverable_id=deliverable.deliverable_id,
+        status="produced",
+        artifact_type="app",
+        artifact_ref=app.app_id,
+    )
+    assert result["artifact_type"] == "app"
+    assert result["artifact_ref"] == app.app_id
+
+
+async def test_deliverable_update_rejects_an_outside_app(env: dict[str, Any]) -> None:
+    tools = _tools_with_roster(env, lambda team_id: {env["member_id"]})
+    goal = await _call(env, env["alice"], tools["goal_set"], title="G")
+    deliverable = env["deliverable_repo"].create(
+        goal_id=goal["goal"]["goal_id"],
+        title="Dashboard",
+        created_by=env["alice"],
+    )
+    env["agent_repo"].create(agent_id="stranger", user_id=env["alice"], name="stranger")
+    app = env["light_app_repo"].create(
+        agent_id="stranger",
+        owner_user_id=env["alice"],
+        name="Someone else's",
+    )
+
+    result = await _call(
+        env,
+        env["alice"],
+        tools["deliverable_update"],
+        deliverable_id=deliverable.deliverable_id,
+        status="produced",
+        artifact_type="app",
+        artifact_ref=app.app_id,
+    )
+    assert "not hosted by this team" in result["error"]

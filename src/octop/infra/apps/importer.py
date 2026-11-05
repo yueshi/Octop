@@ -3,15 +3,14 @@
 CSV / TSV / JSON are stdlib; Excel needs openpyxl / xlrd, which are already
 required by the knowledge parser. Text files decode UTF-8 first with GB18030
 as fallback — the same policy as ``infra/knowledge/parse.py``.
+
+The file parsing itself lives in :mod:`octop.infra.apps.inspect`, so a report
+and an import always agree on what a sheet contains.
 """
 
 from __future__ import annotations
 
-import csv
-import io
-import json
-from pathlib import PurePosixPath
-
+from octop.infra.apps.inspect import RawSheet, read_sheets
 from octop.infra.errors import ErrorCode, OctopError
 
 TEXT_ENCODINGS = ("utf-8-sig", "gb18030")
@@ -31,96 +30,57 @@ def decode_text(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def _clean_header(name: object) -> str:
-    return str(name or "").strip()
+def _select_sheet(sheets: list[RawSheet], sheet: str | None) -> RawSheet:
+    """Pick a worksheet by name or 0-based index; the first one by default."""
+    if not sheets:
+        raise _invalid("file has no sheets")
+    if sheet is None or not sheet.strip():
+        return sheets[0]
+    wanted = sheet.strip()
+    if wanted.lstrip("-").isdigit():
+        index = int(wanted)
+        if 0 <= index < len(sheets):
+            return sheets[index]
+        raise _invalid(f"sheet index out of range: {wanted}")
+    for candidate in sheets:
+        if candidate.name.strip().lower() == wanted.lower():
+            return candidate
+    raise _invalid(f"sheet not found: {wanted}")
 
 
-def _parse_delimited(text: str, delimiter: str) -> list[dict[str, str]]:
-    reader = csv.DictReader(io.StringIO(text, newline=""), delimiter=delimiter)
-    if not reader.fieldnames:
+def _header_pairs(row: list[str]) -> list[tuple[int, str]]:
+    """Column positions and names of a header row (blank names are skipped)."""
+    pairs: list[tuple[int, str]] = []
+    for index, cell in enumerate(row):
+        name = str(cell).strip()
+        if name:
+            pairs.append((index, name))
+    return pairs
+
+
+def parse_import_file(
+    filename: str,
+    data: bytes,
+    *,
+    sheet: str | None = None,
+    header_row: int | None = None,
+) -> list[dict[str, str]]:
+    """Parse an upload or workspace file into rows keyed by source column.
+
+    ``sheet`` selects a worksheet by name or 0-based index in Excel files.
+    ``header_row`` is the 0-based index of the header line, so a ledger that
+    starts with a title can be imported from its real header.
+    """
+    sheets = read_sheets(filename, data, detailed=False)
+    raw = _select_sheet(sheets, sheet)
+    rows = raw.rows
+    head = 0 if header_row is None else max(0, header_row)
+    if head >= len(rows):
         return []
-    names = [_clean_header(name) for name in reader.fieldnames]
-    rows: list[dict[str, str]] = []
-    for raw in reader:
-        row = {
-            name: str(raw.get(field) or "")
-            for name, field in zip(names, reader.fieldnames, strict=False)
-            if name
-        }
-        if any(value != "" for value in row.values()):
-            rows.append(row)
-    return rows
-
-
-def _parse_json(text: str) -> list[dict[str, str]]:
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise _invalid(f"invalid JSON: {exc.msg}") from None
-    if not isinstance(payload, list) or any(not isinstance(item, dict) for item in payload):
-        raise _invalid("JSON import must be an array of objects")
-    return [
-        {_clean_header(key): str(value if value is not None else "") for key, value in item.items()}
-        for item in payload
-    ]
-
-
-def _parse_xlsx(data: bytes) -> list[dict[str, str]]:
-    from openpyxl import load_workbook
-
-    workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-    try:
-        sheet = workbook.worksheets[0]
-        rows_iter = sheet.iter_rows(values_only=True)
-        header = next(rows_iter, None)
-        if header is None:
-            return []
-        names = [_clean_header(cell) for cell in header]
-        rows: list[dict[str, str]] = []
-        for values in rows_iter:
-            row = {
-                name: "" if value is None else str(value)
-                for name, value in zip(names, values, strict=False)
-                if name
-            }
-            if any(value != "" for value in row.values()):
-                rows.append(row)
-        return rows
-    finally:
-        workbook.close()
-
-
-def _parse_xls(data: bytes) -> list[dict[str, str]]:
-    import xlrd
-
-    book = xlrd.open_workbook(file_contents=data)
-    sheet = book.sheet_by_index(0)
-    if sheet.nrows == 0:
-        return []
-    names = [_clean_header(sheet.cell_value(0, col)) for col in range(sheet.ncols)]
-    rows: list[dict[str, str]] = []
-    for r in range(1, sheet.nrows):
-        row = {
-            name: "" if sheet.cell_value(r, col) is None else str(sheet.cell_value(r, col))
-            for col, name in enumerate(names)
-            if name
-        }
-        if any(value != "" for value in row.values()):
-            rows.append(row)
-    return rows
-
-
-def parse_import_file(filename: str, data: bytes) -> list[dict[str, str]]:
-    """Parse an upload or workspace file into rows keyed by source column."""
-    suffix = PurePosixPath(filename.replace("\\", "/")).suffix.lower()
-    if suffix in (".csv", ".txt"):
-        return _parse_delimited(decode_text(data), ",")
-    if suffix == ".tsv":
-        return _parse_delimited(decode_text(data), "\t")
-    if suffix == ".json":
-        return _parse_json(decode_text(data))
-    if suffix in (".xlsx", ".xlsm"):
-        return _parse_xlsx(data)
-    if suffix == ".xls":
-        return _parse_xls(data)
-    raise _invalid(f"unsupported import file type: {suffix or '(none)'}")
+    pairs = _header_pairs(rows[head])
+    records: list[dict[str, str]] = []
+    for values in rows[head + 1 :]:
+        record = {name: (values[index] if index < len(values) else "") for index, name in pairs}
+        if any(value != "" for value in record.values()):
+            records.append(record)
+    return records

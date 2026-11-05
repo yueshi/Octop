@@ -1,4 +1,4 @@
--- Schema v23: goal deliverables for expert/team goals.
+-- Schema v26: goal deliverables for expert/team goals.
 -- A deliverable is the user-defined expected output plus the actual artifact
 -- (workspace file / link / text) attached after execution.
 
@@ -41,4 +41,4 @@ CREATE TABLE IF NOT EXISTS team_task_reviews (
 CREATE INDEX IF NOT EXISTS idx_team_task_reviews_task
   ON team_task_reviews(task_id, created_at);
 
-UPDATE _schema_version SET version = 23;
+UPDATE _schema_version SET version = 26;

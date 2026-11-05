@@ -1,0 +1,40 @@
+-- Schema v28: light-app rows move from the workspace CSV into the control plane.
+--
+-- The app's HTML and a schema snapshot still live in the agent workspace, but
+-- rows are now inserted/updated one at a time. A legacy app (storage_version=1)
+-- is migrated lazily on first read; new apps start at storage_version=2.
+
+ALTER TABLE light_apps ADD COLUMN storage_version INTEGER NOT NULL DEFAULT 1;
+
+ALTER TABLE light_app_tables ADD COLUMN schema_json TEXT NOT NULL DEFAULT '';
+ALTER TABLE light_app_tables ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE light_app_tables ADD COLUMN data_version INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS light_app_rows (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  row_id            TEXT NOT NULL UNIQUE,
+  app_id            TEXT NOT NULL REFERENCES light_apps(app_id) ON DELETE CASCADE,
+  table_key         TEXT NOT NULL,
+  values_json       TEXT NOT NULL,
+  version           INTEGER NOT NULL DEFAULT 1,
+  source            TEXT NOT NULL DEFAULT 'manual',
+  source_id         TEXT,
+  source_key        TEXT,
+  client_request_id TEXT,
+  created_by        INTEGER,
+  created_at        INTEGER NOT NULL,
+  updated_at        INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_light_app_rows_page
+  ON light_app_rows(app_id, table_key, id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_light_app_rows_idem
+  ON light_app_rows(app_id, client_request_id)
+  WHERE client_request_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_light_app_rows_source
+  ON light_app_rows(app_id, table_key, source_id, source_key)
+  WHERE source_id IS NOT NULL AND source_key IS NOT NULL;
+
+UPDATE _schema_version SET version = 28;

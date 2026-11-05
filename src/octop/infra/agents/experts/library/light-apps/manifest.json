@@ -21,6 +21,22 @@
   "quick_prompts": [
     {
       "title": {
+        "zh": "台账导入",
+        "en": "From a spreadsheet"
+      },
+      "description": {
+        "zh": "上传 Excel/CSV，先分析再生成应用",
+        "en": "Upload a sheet, analyze it, then build the app"
+      },
+      "prompt": {
+        "zh": "我会上传一个表格文件。先用 app_inspect_file 看清楚有几个 sheet、表头在哪一行、每列是什么类型、有没有身份证或银行卡这类敏感列，然后给我一份字段方案（拆几张表、每列叫什么、什么类型），我确认之后再建应用并导入数据。\n\n",
+        "en": "I will upload a spreadsheet. First use app_inspect_file to see how many sheets there are, which row holds the header, what type each column is, and whether there are sensitive columns such as ID numbers or bank cards. Then give me a schema proposal (how many tables, column names and types) and build the app only after I confirm it.\n\n"
+      },
+      "color": "#fef3c7",
+      "icon_name": "file-text"
+    },
+    {
+      "title": {
         "zh": "待办清单",
         "en": "Todo list"
       },

@@ -37,6 +37,8 @@ _JWT_EXEMPT_PREFIXES = (
     "/api/internal/mcp/",
     # Short-lived download links: the unguessable token is the credential.
     "/api/downloads/link/",
+    # Public read-only light-app links: the unguessable token is the credential.
+    "/api/public/apps/",
     # Public webhook ingress: HMAC signature and source id are the credentials.
     "/api/hooks/",
 )

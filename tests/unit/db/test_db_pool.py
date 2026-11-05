@@ -110,7 +110,7 @@ def test_run_migrations_idempotent(db: SqlitePool):
         delivery_cols = {
             r["name"] for r in conn.execute("PRAGMA table_info(external_deliveries)").fetchall()
         }
-    assert v == 24
+    assert v == 29
     assert {
         "external_sources",
         "external_subscriptions",
@@ -244,7 +244,7 @@ def test_migration_002_idempotent_when_column_already_present(tmp_path: Path) ->
     with pool.connect() as conn:
         v = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
         cron_cols = {r["name"] for r in conn.execute("PRAGMA table_info(cron_jobs)").fetchall()}
-    assert v == 24
+    assert v == 29
     assert "mcp_servers" in cron_cols
     assert "skill_packages" in {
         r["name"]
@@ -383,7 +383,7 @@ def test_stuck_version_6_without_permissions_column_is_repaired(tmp_path: Path) 
     with pool.connect() as conn:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
         version = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
-    assert version == 24
+    assert version == 29
     assert "permissions" in cols
 
 
@@ -408,7 +408,7 @@ def test_schema_v10_without_projection_tables_is_repaired(tmp_path: Path) -> Non
         }
         kb_cols = {r["name"] for r in conn.execute("PRAGMA table_info(knowledge_bases)").fetchall()}
         cron_cols = {r["name"] for r in conn.execute("PRAGMA table_info(cron_jobs)").fetchall()}
-    assert version == 24
+    assert version == 29
     assert {"thread_messages", "thread_history_projection", "trajectory_events"}.issubset(
         table_names
     )
@@ -443,7 +443,7 @@ def test_ahead_of_max_schema_version_clamps_to_max(tmp_path: Path) -> None:
             r["name"]
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
-    assert version == 24
+    assert version == 29
     assert "skill_package_id" in pkg_cols
     assert "published_expert_id" in pub_cols
     assert "user_invites" in invite_tables
@@ -526,7 +526,7 @@ def test_pre_squash_schema_version_clamped_and_knowledge_tables_filled(
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         user_cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
-    assert version == 24
+    assert version == 29
     assert "permissions" in user_cols
     assert {
         "published_experts",
@@ -732,7 +732,7 @@ def test_v14_to_v15_adds_sso_provider_kind_without_rebuilding(tmp_path: Path) ->
         bound = conn.execute(
             "SELECT sso_provider_id FROM users WHERE username = 'sso-admin'"
         ).fetchone()[0]
-    assert version == 24
+    assert version == 29
     assert int(row["id"]) == int(provider_id)
     assert row["kind"] == "oidc"
     assert row["extra"] == "{}"
@@ -799,3 +799,64 @@ def test_transaction_completes_while_a_competing_writer_waits(
         keys = {row["k"] for row in conn.execute("SELECT k FROM scratch").fetchall()}
     assert keys == {"competitor", "ours"}
     competitor.close()
+
+
+def test_renumbered_migrations_upgrade_a_feature_branch_db(tmp_path: Path) -> None:
+    """A DB from the old 022–026 numbering upgrades without losing app tables.
+
+    Its watermark (26) is above the renumbered light-app migrations, so the
+    loop skips 025–026 and must not re-run their bare ALTERs. The unconditional
+    bridge also restores upstream v23 user-group tables, which such a DB never
+    applied.
+    """
+    pool = SqlitePool(tmp_path / "octop.db")
+    run_migrations(pool)
+    with pool.connect() as conn:
+        conn.execute("DROP TABLE resource_group_grant")
+        conn.execute("DROP TABLE user_group_member")
+        conn.execute("DROP TABLE user_group")
+        conn.execute("ALTER TABLE skill_packages DROP COLUMN shared")
+        conn.execute("ALTER TABLE knowledge_bases DROP COLUMN icon_url")
+        conn.execute("ALTER TABLE bridge_connections DROP COLUMN icon_url")
+        conn.execute("ALTER TABLE bridge_connections DROP COLUMN shared")
+        conn.execute("UPDATE _schema_version SET version = 26")
+
+    run_migrations(pool)
+
+    with pool.connect() as conn:
+        version = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
+        names = {
+            str(row["name"])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        group_cols = {str(row["name"]) for row in conn.execute("PRAGMA table_info(user_group)")}
+        skill_cols = {str(row["name"]) for row in conn.execute("PRAGMA table_info(skill_packages)")}
+        kb_cols = {str(row["name"]) for row in conn.execute("PRAGMA table_info(knowledge_bases)")}
+        bridge_cols = {
+            str(row["name"]) for row in conn.execute("PRAGMA table_info(bridge_connections)")
+        }
+    assert version == 29
+    assert {"user_group", "user_group_member", "resource_group_grant"} <= names
+    assert {"enabled", "avatar_icon"} <= group_cols
+    assert "shared" in skill_cols
+    assert "icon_url" in kb_cols
+    assert {"icon_url", "shared"} <= bridge_cols
+    assert {"light_app_rows", "light_app_publications"} <= names
+
+
+def test_bridge_adds_user_group_columns_to_an_upstream_v23_table(tmp_path: Path) -> None:
+    """A user_group table created by upstream 023 predates 024's columns."""
+    pool = SqlitePool(tmp_path / "octop.db")
+    run_migrations(pool)
+    with pool.connect() as conn:
+        conn.execute("ALTER TABLE user_group DROP COLUMN enabled")
+        conn.execute("ALTER TABLE user_group DROP COLUMN avatar_icon")
+        conn.execute("UPDATE _schema_version SET version = 24")
+
+    run_migrations(pool)
+
+    with pool.connect() as conn:
+        version = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
+        cols = {str(row["name"]) for row in conn.execute("PRAGMA table_info(user_group)")}
+    assert version == 29
+    assert {"enabled", "avatar_icon"} <= cols

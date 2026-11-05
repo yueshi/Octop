@@ -163,7 +163,7 @@ def use_agent(agent_id: str) -> None:
     click.echo(f"default agent set to {agent_id}")
 
 
-def _act(action: str, agent_id: str, as_user: str | None) -> None:
+def _act(action: str, agent_id: str, as_user: str | None, *, force: bool = False) -> None:
     from octop.cli.support.acting import resolve_cli_acting_user_id
     from octop.cli.support.embedded_ops import agent_action
 
@@ -175,7 +175,7 @@ def _act(action: str, agent_id: str, as_user: str | None) -> None:
         from octop.cli.support.offline_ops import delete_agent_offline
 
         try:
-            delete_agent_offline(agent_id)
+            delete_agent_offline(agent_id, force=force)
         except OctopError as exc:
             fail_octop(exc)
         click.echo("deleted")
@@ -213,14 +213,20 @@ def reload(agent_id: str, as_user: str | None) -> None:
 @click.argument("agent_id")
 @click.option("--user", "as_user", default=None)
 @click.option("--yes", is_flag=True, default=False)
-def delete(agent_id: str, as_user: str | None, yes: bool) -> None:
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Delete even when the agent still owns light apps (their data is lost).",
+)
+def delete(agent_id: str, as_user: str | None, yes: bool, force: bool) -> None:
     if not yes:
         click.confirm(
             f"Really delete agent {agent_id}? "
             "Its workspace directory will also be permanently removed and cannot be recovered.",
             abort=True,
         )
-    _act("delete", agent_id, as_user)
+    _act("delete", agent_id, as_user, force=force)
 
 
 @agent.command("experts")

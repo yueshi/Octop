@@ -107,9 +107,9 @@ DB 索引让列表保持零 I/O。
 **repo 归属**：沿用 `LightAppRepo`（同一文件已承载 `light_app_collaborators` 这个子表），
 不新增 RepoBundle 成员 → `services.py` / `manager.py` / 路由的 DI 不动。
 
-**迁移编号**：v22 未随版本发布，按 `AGENTS.md` §7 的规则把新表**折进 `022_light_apps.sql`
-与 `.pg.sql`**，`_schema_version` 仍为 22；在 `migrate.py` 的 `_ensure_light_apps_schema`
-里补幂等 `CREATE TABLE IF NOT EXISTS`，覆盖已记录 v22 的本地库。
+**迁移编号**：v25 未随版本发布，按 `AGENTS.md` §7 的规则把新表**折进 `025_light_apps.sql`
+与 `.pg.sql`**，`_schema_version` 为 29；在 `migrate.py` 的 `_ensure_light_apps_schema`
+里补幂等 `CREATE TABLE IF NOT EXISTS`，覆盖已记录旧编号（v22 或 v25）的本地库。
 
 ---
 
@@ -185,7 +185,7 @@ octopApp.tables()                          // 表清单，供页面渲染切换�
 
 1. **模型与存储**
    - `infra/apps/models.py`：`MAIN_TABLE_KEY`、`TABLE_KEY_RE`、`RESERVED_TABLE_KEYS`、`MAX_TABLES_PER_APP`、`validate_table_key`；
-   - `infra/db/migrations/022_light_apps.sql` + `.pg.sql`：新表；`migrate.py` 幂等补齐；
+   - `infra/db/migrations/025_light_apps.sql` + `.pg.sql`：新表；`migrate.py` 幂等补齐；
    - `infra/db/repos/apps.py`：`LightAppRepo` 增加表清单方法。
 2. **服务层**
    - `infra/apps/service.py`：按表读写、建表、删表目录、计数与体积统计。
@@ -228,7 +228,7 @@ P0 落地时不需要再改调用方。
 | 应用生命周期（读写、建表、计数） | `src/octop/infra/apps/service.py` |
 | Agent 工具 | `src/octop/infra/apps/tools.py` |
 | 元数据 / 表清单 repo | `src/octop/infra/db/repos/apps.py` |
-| 迁移 | `src/octop/infra/db/migrations/022_light_apps*.sql`、`src/octop/infra/db/migrate.py` |
+| 迁移 | `src/octop/infra/db/migrations/025_light_apps*.sql`、`src/octop/infra/db/migrate.py` |
 | HTTP 路由 | `src/octop/api/routers/apps.py` |
 | 工具登记 | `src/octop/infra/agents/settings/tool_catalog.py` |
 | Dashboard 详情页与 SDK | `dashboard/src/pages/Apps/Detail.tsx` |

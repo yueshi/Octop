@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,6 +35,20 @@ COLUMNS: list[dict[str, object]] = [
 ]
 
 
+def _xlsx_bytes(sheets: dict[str, list[list[object]]]) -> bytes:
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    for name, rows in sheets.items():
+        sheet = workbook.create_sheet(title=name)
+        for row in rows:
+            sheet.append(row)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
 @dataclass
 class World:
     service: AppService
@@ -41,18 +57,19 @@ class World:
     agent_repo: AgentRepo
     user_repo: UserRepo
     workspace: BackendWorkspace
+    other_workspace: BackendWorkspace
     agent_id: str
+    other_agent_id: str
     alice_id: int
     bob_id: int
 
 
 class _Workspaces:
-    def __init__(self, agent_id: str, workspace: BackendWorkspace) -> None:
-        self._agent_id = agent_id
-        self._workspace = workspace
+    def __init__(self, workspaces: dict[str, BackendWorkspace]) -> None:
+        self._workspaces = workspaces
 
     def workspace_for_agent(self, agent_id: str) -> BackendWorkspace | None:
-        return self._workspace if agent_id == self._agent_id else None
+        return self._workspaces.get(agent_id)
 
 
 @pytest.fixture
@@ -65,23 +82,32 @@ def world(tmp_path: Path) -> World:
     agent_repo = AgentRepo(db)
     agent_id = new_ulid()
     agent_repo.create(agent_id=agent_id, user_id=alice_id, name="bot")
+    other_agent_id = new_ulid()
+    agent_repo.create(agent_id=other_agent_id, user_id=alice_id, name="other")
     root = tmp_path / "ws"
     root.mkdir()
     workspace = BackendWorkspace(FilesystemBackend(root_dir=str(root), virtual_mode=True), root)
+    other_root = tmp_path / "ws-other"
+    other_root.mkdir()
+    other_workspace = BackendWorkspace(
+        FilesystemBackend(root_dir=str(other_root), virtual_mode=True), other_root
+    )
     repo = LightAppRepo(db)
     return World(
         service=AppService(
             app_repo=repo,
             agent_repo=agent_repo,
             user_repo=user_repo,
-            workspaces=_Workspaces(agent_id, workspace),
+            workspaces=_Workspaces({agent_id: workspace, other_agent_id: other_workspace}),
         ),
         repo=repo,
         db=db,
         agent_repo=agent_repo,
         user_repo=user_repo,
         workspace=workspace,
+        other_workspace=other_workspace,
         agent_id=agent_id,
+        other_agent_id=other_agent_id,
         alice_id=alice_id,
         bob_id=bob_id,
     )
@@ -100,6 +126,18 @@ async def _create(world: World, *, name: str = "Tracker") -> str:
         columns=COLUMNS,
     )
     return row.app_id
+
+
+def _make_legacy(world: World, app_id: str) -> None:
+    """Put an app back on CSV storage to exercise the migration-era path."""
+    world.repo.set_storage_version(app_id, 1)
+
+
+def _block_migration(monkeypatch: pytest.MonkeyPatch, world: World) -> None:
+    async def _no_migrate(row: object) -> bool:
+        return False
+
+    monkeypatch.setattr(world.service, "_ensure_db_rows", _no_migrate)
 
 
 async def test_create_writes_schema_csv_and_manifest(world: World) -> None:
@@ -254,6 +292,7 @@ async def test_list_files_reports_the_app_workspace_files(world: World) -> None:
 async def test_list_views_backfills_the_cached_interface_size(world: World) -> None:
     """Apps written before the size columns existed still report their UI."""
     app_id = await _create(world)
+    _make_legacy(world, app_id)
     row = world.service.get(app_id)
     await world.service.write_html(row, "<h1>Hello</h1>")
     # Simulate an app created before the file-size columns existed.
@@ -366,8 +405,12 @@ async def test_manifest_refreshes_after_mutations(world: World) -> None:
     assert manifest["schema_version"] == 2
 
 
-async def test_row_count_reconciles_with_data_csv(world: World) -> None:
+async def test_row_count_reconciles_with_data_csv(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
     app_id = await _create(world)
+    _make_legacy(world, app_id)
+    _block_migration(monkeypatch, world)
     await world.service.append_row(world.service.get(app_id), {"title": "A", "status": "new"})
     await world.workspace.awrite_text(
         app_path(app_id, "data.csv"),
@@ -403,8 +446,12 @@ async def test_delete_releases_lock_and_rejects_stale_writes(world: World) -> No
     assert await world.workspace.aexists(app_dir(app_id)) is False
 
 
-async def test_append_aborts_when_data_csv_is_unreadable(world: World) -> None:
+async def test_append_aborts_when_data_csv_is_unreadable(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
     app_id = await _create(world)
+    _make_legacy(world, app_id)
+    _block_migration(monkeypatch, world)
     row = world.service.get(app_id)
     await world.service.append_row(row, {"title": "A", "status": "new"})
     await world.workspace.adelete(app_path(app_id, "data.csv"))
@@ -443,6 +490,8 @@ async def test_append_staging_failure_preserves_existing_rows(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app_id = await _create(world)
+    _make_legacy(world, app_id)
+    _block_migration(monkeypatch, world)
     row = world.service.get(app_id)
     await world.service.append_row(row, {"title": "A", "status": "new"})
 
@@ -468,6 +517,8 @@ async def test_add_columns_recovers_interrupted_promotion(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app_id = await _create(world)
+    _make_legacy(world, app_id)
+    _block_migration(monkeypatch, world)
     row = world.service.get(app_id)
     await world.service.append_row(row, {"title": "A", "status": "new"})
 
@@ -496,6 +547,7 @@ async def test_add_columns_recovers_interrupted_promotion(
 
 async def test_pending_journal_rejects_paths_outside_the_app(world: World) -> None:
     app_id = await _create(world)
+    _make_legacy(world, app_id)
     await world.workspace.awrite_text("SOUL.md", "secret")
     await world.workspace.awrite_text(
         app_path(app_id, FILE_PENDING),
@@ -852,6 +904,40 @@ async def test_run_source_workspace_file_records_state(world: World) -> None:
     _assert_code(exc, ErrorCode.APP_NOT_FOUND)
 
 
+async def test_source_upsert_key_keeps_scheduled_runs_idempotent(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.workspace.awrite_text(
+        "inbound/imports/month.csv",
+        "title,qty,status\n2026-11,1,new\n",
+    )
+    world.service.save_source(
+        row,
+        source_id="src_month",
+        table_key="main",
+        kind="workspace_file",
+        mode="append",
+        schedule_seconds=86400,
+        params={"path": "inbound/imports/month.csv", "upsert_key": ["title"]},
+        created_by=world.alice_id,
+    )
+    assert world.service.get_source(row, "src_month").params["upsert_key"] == ["title"]
+
+    first = await world.service.run_source(row, "src_month")
+    assert (first.imported, first.updated) == (1, 0)
+
+    await world.workspace.awrite_text(
+        "inbound/imports/month.csv",
+        "title,qty,status\n2026-11,2,done\n",
+    )
+    second = await world.service.run_source(row, "src_month")
+    assert (second.imported, second.updated) == (0, 1)
+
+    _schema, rows, total = await world.service.read_rows(world.service.get(app_id))
+    assert total == 1
+    assert rows == [{"title": "2026-11", "qty": "2", "status": "done"}]
+
+
 async def test_run_source_external_uses_runner(world: World) -> None:
     app_id = await _create(world)
     row = world.service.get(app_id)
@@ -899,6 +985,13 @@ async def test_run_source_external_uses_runner(world: World) -> None:
     result = await runner_service.run_source(row, "src_1")
     # The invalid qty row is skipped, the valid one imported.
     assert (result.imported, result.skipped) == (1, 1)
+    assert result.failed_rows == [
+        {
+            "row": 2,
+            "values": {"title": "mug", "qty": "not-a-number"},
+            "error": result.failed_rows[0]["error"],
+        }
+    ]
     assert calls == [{"instance_id": "conn1", "tool": "search", "args": {"q": "cup"}}]
     _, rows, total = await world.service.read_rows(world.service.get(app_id))
     assert total == 1 and rows[0]["title"] == "cup" and rows[0]["qty"] == "3"
@@ -922,6 +1015,60 @@ async def test_run_source_external_uses_runner(world: World) -> None:
     _assert_code(exc, ErrorCode.APP_SOURCE_INVALID)
     view = runner_service.get_source(row, "src_1")
     assert view.last_status == "error" and "network down" in (view.last_error or "")
+
+
+async def test_external_source_cursor_advances_between_runs(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    calls: list[dict[str, object]] = []
+
+    class _Runner:
+        def run(self, *, instance_id: str, tool: str, args: dict[str, object]) -> str:
+            del instance_id, tool
+            calls.append(dict(args))
+            return json.dumps(
+                {
+                    "data": {
+                        "items": [{"name": "cup", "count": 3}],
+                        "next": "2026-11-02",
+                    }
+                }
+            )
+
+    from octop.infra.apps.service import AppService as _Svc
+
+    service = _Svc(
+        app_repo=world.repo,
+        agent_repo=world.agent_repo,
+        user_repo=world.user_repo,
+        workspaces=world.service._workspaces,  # type: ignore[attr-defined]
+        external_tool_runner=_Runner(),  # type: ignore[arg-type]
+    )
+    service.save_source(
+        row,
+        source_id="src_cursor",
+        table_key="main",
+        kind="external",
+        mode="append",
+        mapping={"name": "title", "count": "qty"},
+        params={
+            "instance_id": "conn1",
+            "tool": "search",
+            "args": {"q": "cup"},
+            "result_path": "data.items",
+            "cursor_arg": "since",
+            "cursor_path": "data.next",
+        },
+        created_by=world.alice_id,
+    )
+
+    first = await service.run_source(row, "src_cursor")
+    assert first.imported == 1
+    assert calls[0] == {"q": "cup"}
+    assert service.get_source(row, "src_cursor").params["cursor"] == "2026-11-02"
+
+    await service.run_source(row, "src_cursor")
+    assert calls[1] == {"q": "cup", "since": "2026-11-02"}
 
 
 def test_extract_records_shapes() -> None:
@@ -1028,3 +1175,659 @@ async def test_import_rows_replace_all_invalid_keeps_the_table(world: World) -> 
     _, rows, total = await world.service.read_rows(world.service.get(app_id))
     assert total == 1
     assert rows[0]["title"] == "keep-me"
+
+
+async def test_import_dry_run_writes_nothing(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.service.append_row(row, {"title": "A", "qty": 1, "status": "new"})
+
+    result = await world.service.import_rows(
+        row,
+        [
+            {"title": "B", "qty": "2", "status": "done"},
+            {"title": "", "qty": "3", "status": "new"},  # invalid: missing title
+        ],
+        dry_run=True,
+    )
+    assert result.dry_run is True
+    assert (result.imported, result.would_import, result.skipped) == (0, 1, 1)
+    assert len(result.errors) == 1
+
+    # Nothing was written: the table still holds only the original row.
+    _, rows, total = await world.service.read_rows(world.service.get(app_id))
+    assert total == 1
+    assert rows[0]["title"] == "A"
+
+
+async def test_import_dry_run_replace_leaves_the_table(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.service.append_row(row, {"title": "A", "status": "new"})
+
+    result = await world.service.import_rows(
+        row,
+        [{"title": "X", "status": "done"}],
+        mode="replace",
+        dry_run=True,
+    )
+    assert result.dry_run is True
+    assert result.would_import == 1
+
+    _, rows, total = await world.service.read_rows(world.service.get(app_id))
+    assert total == 1
+    assert rows[0]["title"] == "A"
+
+
+async def test_import_dry_run_reports_a_refused_replace(world: World) -> None:
+    """A replace that would wipe the table is refused in a dry run too."""
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    with pytest.raises(OctopError) as exc:
+        await world.service.import_rows(
+            row,
+            [{"title": "", "status": "new"}],
+            mode="replace",
+            dry_run=True,
+        )
+    _assert_code(exc, ErrorCode.APP_ROW_INVALID)
+    _, _rows, total = await world.service.read_rows(world.service.get(app_id))
+    assert total == 0
+
+
+async def test_import_from_workspace_file_with_header_row(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.workspace.awrite_text(
+        "inbound/exports/ledger.csv",
+        "2026 年 9 月工资表\ntitle,qty,status\ncup,3,new\n",
+    )
+
+    # Without the header hint the title line is taken as the header, so the
+    # data rows no longer match the schema and every row is rejected.
+    naive = await world.service.import_from_file(row, path="inbound/exports/ledger.csv")
+    assert (naive.imported, naive.skipped) == (0, 2)
+
+    result = await world.service.import_from_file(
+        row,
+        path="inbound/exports/ledger.csv",
+        header_row=1,
+    )
+    assert result.imported == 1
+    _, rows, _total = await world.service.read_rows(world.service.get(app_id))
+    assert rows[-1]["title"] == "cup"
+
+
+async def test_import_from_workspace_file_with_sheet(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.workspace.aupload_bytes(
+        "inbound/exports/q3.xlsx",
+        _xlsx_bytes(
+            {"9月": [["title", "qty"], ["sep", "1"]], "10月": [["title", "qty"], ["oct", "2"]]}
+        ),
+    )
+
+    result = await world.service.import_from_file(
+        row,
+        path="inbound/exports/q3.xlsx",
+        sheet="10月",
+    )
+    assert result.imported == 1
+    _, rows, _total = await world.service.read_rows(world.service.get(app_id))
+    assert rows[0]["title"] == "oct"
+
+    with pytest.raises(OctopError) as exc:
+        await world.service.import_from_file(
+            row,
+            path="inbound/exports/q3.xlsx",
+            sheet="nope",
+        )
+    _assert_code(exc, ErrorCode.APP_ROW_INVALID)
+
+
+async def test_transfer_moves_the_app_to_another_agent(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.service.write_html(row, "<h1>Hello</h1>")
+    await world.service.append_row(row, {"title": "A", "status": "new"})
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 16
+    await world.service.save_asset(row, "cover.png", png)
+
+    moved = await world.service.transfer(
+        row,
+        target_agent_id=world.other_agent_id,
+        actor_user_id=world.alice_id,
+    )
+    assert moved.agent_id == world.other_agent_id
+    assert world.repo.get(app_id).agent_id == world.other_agent_id
+
+    # The files, assets and rows moved with the app.
+    assert await world.other_workspace.aread_text(f"apps/{app_id}/app.html") == "<h1>Hello</h1>"
+    assert (await world.service.read_asset(world.service.get(app_id), "cover.png"))[1] == png
+    _, rows, total = await world.service.read_rows(world.service.get(app_id))
+    assert total == 1
+    assert rows[0]["title"] == "A"
+
+    # The source copy stays until the source agent is deleted.
+    assert await world.workspace.aread_text(f"apps/{app_id}/app.html") == "<h1>Hello</h1>"
+
+
+async def test_transfer_rejects_an_unreachable_target(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+
+    with pytest.raises(OctopError) as exc:
+        await world.service.transfer(
+            row,
+            target_agent_id=world.agent_id,
+            actor_user_id=world.alice_id,
+        )
+    _assert_code(exc, ErrorCode.APP_SOURCE_INVALID)
+
+    with pytest.raises(OctopError) as exc:
+        await world.service.transfer(
+            row,
+            target_agent_id="missing_agent",
+            actor_user_id=world.alice_id,
+        )
+    _assert_code(exc, ErrorCode.APP_SOURCE_INVALID)
+
+
+async def test_asset_round_trip(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+
+    assert await world.service.save_asset(row, "cover.png", png) == "cover.png"
+    mime, data = await world.service.read_asset(row, "cover.png")
+    assert (mime, data) == ("image/png", png)
+    assert await world.service.list_assets(row) == ["cover.png"]
+
+
+@pytest.mark.parametrize(
+    ("name", "data"),
+    [
+        ("../escape.png", b"\x89PNG\r\n\x1a\n"),
+        (".hidden.png", b"\x89PNG\r\n\x1a\n"),
+        ("cover.svg", b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"),
+        ("cover.png", b"<html>not an image</html>"),
+        ("cover.png", b""),
+    ],
+)
+async def test_asset_rejects_bad_input(world: World, name: str, data: bytes) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    with pytest.raises(OctopError) as exc:
+        await world.service.save_asset(row, name, data)
+    _assert_code(exc, ErrorCode.APP_SOURCE_INVALID)
+
+
+async def test_asset_rejects_oversized_files(world: World) -> None:
+    from octop.infra.apps.service import MAX_ASSET_BYTES
+
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    too_big = b"\x89PNG\r\n\x1a\n" + b"0" * MAX_ASSET_BYTES
+    with pytest.raises(OctopError) as exc:
+        await world.service.save_asset(row, "big.png", too_big)
+    _assert_code(exc, ErrorCode.APP_SOURCE_INVALID)
+
+
+async def test_asset_accepts_webp_and_gif(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    webp = b"RIFF\x00\x00\x00\x00WEBP" + b"0" * 16
+    gif = b"GIF89a" + b"0" * 16
+
+    await world.service.save_asset(row, "a.webp", webp)
+    await world.service.save_asset(row, "b.gif", gif)
+    assert (await world.service.read_asset(row, "a.webp"))[0] == "image/webp"
+    assert (await world.service.read_asset(row, "b.gif"))[0] == "image/gif"
+
+
+async def test_append_is_idempotent_with_client_request_id(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+
+    first_index, first = await world.service.append_row_record(
+        row,
+        {"title": "A", "status": "new"},
+        client_request_id="req-1",
+    )
+    second_index, second = await world.service.append_row_record(
+        row,
+        {"title": "A", "status": "new"},
+        client_request_id="req-1",
+    )
+    assert second.row_id == first.row_id
+    assert second_index == first_index
+    assert world.repo.count_data_rows(app_id, "main") == 1
+
+
+async def test_source_key_upserts_instead_of_duplicating(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+
+    _, first = await world.service.append_row_record(
+        row,
+        {"title": "A", "status": "new"},
+        source="connector",
+        source_id="src_1",
+        source_key="remote-1",
+    )
+    _, second = await world.service.append_row_record(
+        row,
+        {"title": "A updated", "status": "done"},
+        source="connector",
+        source_id="src_1",
+        source_key="remote-1",
+    )
+    assert second.row_id == first.row_id
+    assert second.version == 2
+    assert world.repo.count_data_rows(app_id, "main") == 1
+    _, rows, _total = await world.service.read_rows(row)
+    assert rows[0]["title"] == "A updated"
+
+
+async def test_update_and_delete_row_with_cas(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    _, stored = await world.service.append_row_record(row, {"title": "A", "status": "new"})
+
+    updated = await world.service.update_row(
+        row,
+        stored.row_id,
+        {"title": "B", "status": "done"},
+        expected_version=1,
+    )
+    assert updated["version"] == 2
+    assert updated["values"] == {"title": "B", "qty": "", "status": "done"}
+
+    with pytest.raises(OctopError) as exc:
+        await world.service.update_row(
+            row,
+            stored.row_id,
+            {"title": "C", "status": "new"},
+            expected_version=1,
+        )
+    _assert_code(exc, ErrorCode.APP_CONFLICT)
+
+    with pytest.raises(OctopError) as exc:
+        await world.service.update_row(row, "row_missing", {"title": "C"})
+    _assert_code(exc, ErrorCode.APP_ROW_NOT_FOUND)
+
+    assert await world.service.delete_row(row, stored.row_id, expected_version=2) == stored.row_id
+    _, _rows, total = await world.service.read_rows(row)
+    assert total == 0
+
+
+async def test_legacy_csv_app_migrates_on_first_read(world: World) -> None:
+    app_id = await _create(world)
+    _make_legacy(world, app_id)
+    await world.workspace.awrite_text(
+        app_path(app_id, "data.csv"),
+        "title,qty,status\nA,1,new\nB,,done\n",
+    )
+
+    schema, rows, total = await world.service.read_rows(world.service.get(app_id))
+    assert schema.names == ("title", "qty", "status")
+    assert total == 2
+    assert [row["title"] for row in rows] == ["A", "B"]
+    migrated = world.repo.get(app_id)
+    assert migrated.storage_version == 2
+    assert world.repo.count_data_rows(app_id, "main") == 2
+
+    # Running the lazy migration again must not duplicate rows.
+    _, _rows, total = await world.service.read_rows(world.service.get(app_id))
+    assert total == 2
+
+
+async def test_export_rows_renders_csv_from_db(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.service.append_row(row, {"title": "A", "qty": 2, "status": "new"})
+
+    filename, content = await world.service.export_rows(row)
+    assert filename == "main.csv"
+    assert content == "title,qty,status\nA,2,new\n"
+
+
+async def test_alter_schema_renames_and_drops_columns(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    _, stored = await world.service.append_row_record(
+        row,
+        {"title": "A", "qty": 2, "status": "new"},
+    )
+
+    schema = await world.service.alter_schema(
+        row,
+        renames={"title": "name"},
+        drops=["qty"],
+    )
+    assert schema.version == 2
+    assert schema.names == ("name", "status")
+    _, rows, _meta, total = await world.service.read_rows_detailed(world.service.get(app_id))
+    assert total == 1
+    assert rows[0] == {"name": "A", "status": "new"}
+    assert world.repo.get_data_row(app_id, stored.row_id) is not None
+
+
+async def test_alter_schema_rejects_rows_that_do_not_fit(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    # Store a title that cannot become an integer. The row is written through
+    # the repo because the service would reject it against the current schema.
+    _, stored = await world.service.append_row_record(row, {"title": "A", "status": "new"})
+    world.repo.update_data_row(
+        app_id,
+        stored.row_id,
+        {"title": "not-a-number", "qty": "", "status": "new"},
+    )
+
+    with pytest.raises(OctopError) as exc:
+        await world.service.alter_schema(row, types={"title": {"type": "integer"}})
+    _assert_code(exc, ErrorCode.APP_ROW_INVALID)
+    # The schema is unchanged after the rejected migration.
+    assert (await world.service.read_schema(row)).column("title").type == "string"
+
+
+async def test_alter_schema_retypes_and_validates(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.service.append_row(row, {"title": "42", "status": "new"})
+
+    schema = await world.service.alter_schema(row, types={"title": {"type": "integer"}})
+    assert schema.column("title").type == "integer"
+    _, rows, _meta, _total = await world.service.read_rows_detailed(row)
+    assert rows[0]["title"] == "42"
+
+
+async def test_import_upsert_key_updates_instead_of_duplicating(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+
+    first = await world.service.import_rows(
+        row,
+        [
+            {"title": "A", "qty": "1", "status": "new"},
+            {"title": "B", "qty": "2", "status": "new"},
+        ],
+        upsert_key=["title"],
+    )
+    assert (first.imported, first.updated) == (2, 0)
+
+    second = await world.service.import_rows(
+        row,
+        [
+            {"title": "A", "qty": "9", "status": "done"},
+            {"title": "C", "qty": "3", "status": "new"},
+        ],
+        upsert_key=["title"],
+    )
+    assert (second.imported, second.updated) == (1, 1)
+
+    _, rows, _meta, total = await world.service.read_rows_detailed(world.service.get(app_id))
+    assert total == 3
+    by_title = {item["title"]: item for item in rows}
+    assert by_title["A"]["qty"] == "9"
+    assert by_title["A"]["status"] == "done"
+    assert by_title["C"]["qty"] == "3"
+
+
+async def test_import_rejects_unknown_upsert_columns(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    with pytest.raises(OctopError) as exc:
+        await world.service.import_rows(
+            row,
+            [{"title": "A"}],
+            upsert_key=["nope"],
+        )
+    _assert_code(exc, ErrorCode.APP_SCHEMA_INVALID)
+
+
+async def test_import_from_several_files_merges_rows(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.workspace.awrite_text("inbound/sep.csv", "title,qty,status\nA,1,new\n")
+    await world.workspace.awrite_text("inbound/oct.csv", "title,qty,status\nB,2,done\n")
+
+    result = await world.service.import_from_files(
+        row,
+        paths=["inbound/sep.csv", "inbound/oct.csv"],
+    )
+    assert result.imported == 2
+    _, rows, _meta, total = await world.service.read_rows_detailed(row)
+    assert total == 2
+    assert [item["title"] for item in rows] == ["A", "B"]
+
+
+async def test_import_from_several_files_rejects_missing_file(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.workspace.awrite_text("inbound/sep.csv", "title\nA\n")
+    with pytest.raises(OctopError) as exc:
+        await world.service.import_from_files(
+            row,
+            paths=["inbound/sep.csv", "inbound/missing.csv"],
+        )
+    _assert_code(exc, ErrorCode.APP_ROW_INVALID)
+
+
+async def test_import_reports_pii_warnings(world: World) -> None:
+    row = await world.service.create(
+        agent_id=world.agent_id,
+        owner_user_id=world.alice_id,
+        name="Payroll",
+        columns=[
+            {"name": "name", "type": "text"},
+            {"name": "id_card", "type": "text"},
+        ],
+    )
+    result = await world.service.import_rows(
+        row,
+        [{"name": "张悦", "id_card": "330101199001011234"}],
+    )
+    assert result.imported == 1
+    assert any("id_card" in warning for warning in result.warnings)
+
+
+async def test_app_templates_list_and_create(world: World) -> None:
+    schema = json.dumps(
+        {
+            "version": 1,
+            "columns": [
+                {"name": "title", "label": "书名", "type": "text", "required": True},
+                {"name": "status", "label": "状态", "type": "enum", "values": ["想读", "读完"]},
+            ],
+        },
+        ensure_ascii=False,
+    )
+    html = "<!doctype html><html><body><h1>Books</h1><script>octopApp.listRows();</script></body></html>"
+    await world.workspace.awrite_text("app_templates/reading/schema.json", schema)
+    await world.workspace.awrite_text("app_templates/reading/app.html", html)
+
+    templates = await world.service.list_app_templates(world.agent_id)
+    assert templates == [{"template": "reading", "label": "reading", "has_html": True}]
+
+    row = await world.service.create_from_template(
+        agent_id=world.agent_id,
+        owner_user_id=world.alice_id,
+        template="reading",
+        name="我的读书清单",
+    )
+    assert row.row_count == 0
+    assert row.storage_version == 2
+    schema_now = await world.service.read_schema(row)
+    assert schema_now.names == ("title", "status")
+    assert await world.service.read_html(row) == html
+
+    with pytest.raises(OctopError) as exc:
+        await world.service.create_from_template(
+            agent_id=world.agent_id,
+            owner_user_id=world.alice_id,
+            template="../secret",
+        )
+    _assert_code(exc, ErrorCode.APP_NOT_FOUND)
+
+
+async def test_backup_and_restore_round_trip(world: World) -> None:
+    app_id = await _create(world, name="读书清单")
+    row = world.service.get(app_id)
+    await world.service.append_row(row, {"title": "A", "qty": "2", "status": "new"})
+    await world.service.create_table(
+        row,
+        table_key="notes",
+        label="笔记",
+        columns=[{"name": "note", "type": "string"}],
+    )
+    await world.service.append_row(row, {"note": "hello"}, table="notes")
+    html = "<!doctype html><html><body><h1>Books</h1><script>octopApp.listRows();</script></body></html>"
+    await world.service.write_html(row, html)
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+    await world.service.save_asset(row, "cover.png", png)
+
+    filename, archive = await world.service.backup_archive(world.service.get(app_id))
+    assert filename == f"light-app-{app_id}.zip"
+    assert archive.startswith(b"PK")
+
+    restored = await world.service.restore_archive(
+        agent_id=world.other_agent_id,
+        owner_user_id=world.bob_id,
+        data=archive,
+    )
+    assert restored.app_id != app_id
+    assert restored.agent_id == world.other_agent_id
+    assert restored.owner_user_id == world.bob_id
+    assert restored.name == "读书清单"
+    assert restored.description == "things"
+    assert restored.storage_version == 2
+
+    schema, rows, total = await world.service.read_rows(restored)
+    assert total == 1
+    assert schema.names == ("title", "qty", "status")
+    assert rows == [{"title": "A", "qty": "2", "status": "new"}]
+
+    notes_schema, notes_rows, notes_total = await world.service.read_rows(restored, table="notes")
+    assert notes_schema.names == ("note",)
+    assert notes_total == 1
+    assert notes_rows == [{"note": "hello"}]
+
+    assert await world.service.read_html(restored) == html
+    assert await world.service.list_assets(restored) == ["cover.png"]
+    assert (await world.service.read_asset(restored, "cover.png"))[1] == png
+
+    # The source app is untouched.
+    _schema, source_rows, source_total = await world.service.read_rows(world.service.get(app_id))
+    assert source_total == 1
+    assert source_rows == [{"title": "A", "qty": "2", "status": "new"}]
+
+
+async def test_restore_rejects_files_that_are_not_backups(world: World) -> None:
+    with pytest.raises(OctopError) as exc:
+        await world.service.restore_archive(
+            agent_id=world.agent_id,
+            owner_user_id=world.alice_id,
+            data=b"not a zip",
+        )
+    _assert_code(exc, ErrorCode.APP_SOURCE_INVALID)
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("manifest.json", json.dumps({"format": "something-else"}))
+    with pytest.raises(OctopError) as exc:
+        await world.service.restore_archive(
+            agent_id=world.agent_id,
+            owner_user_id=world.alice_id,
+            data=buffer.getvalue(),
+        )
+    _assert_code(exc, ErrorCode.APP_SOURCE_INVALID)
+    assert world.repo.list_owned(world.alice_id) == []
+
+
+async def test_import_blocks_sensitive_columns_by_default(world: World) -> None:
+    row = await world.service.create(
+        agent_id=world.agent_id,
+        owner_user_id=world.alice_id,
+        name="Contacts",
+        columns=[
+            {"name": "title", "type": "string"},
+            {"name": "phone", "type": "string"},
+        ],
+    )
+
+    result = await world.service.import_rows(
+        row,
+        [{"title": "A", "phone": "13800138000"}],
+    )
+
+    assert result.imported == 1
+    assert result.pii_columns == ["phone"]
+    assert result.blocked_pii == ["phone"]
+    assert result.failed_rows == []
+    assert any("include_pii=true" in warning for warning in result.warnings)
+
+    schema = await world.service.read_schema(row)
+    assert schema.column("phone") is not None
+    assert schema.column("phone").pii == "phone"
+    _schema, rows, _total = await world.service.read_rows(world.service.get(row.app_id))
+    assert rows == [{"title": "A", "phone": ""}]
+
+    _schema, masked, _total = await world.service.read_rows(
+        world.service.get(row.app_id), redact_pii=True
+    )
+    assert masked == [{"title": "A", "phone": "••••"}]
+
+    _filename, exported = await world.service.export_rows(
+        world.service.get(row.app_id), redact_pii=True
+    )
+    assert "••••" in exported
+    assert "13800138000" not in exported
+
+
+async def test_import_include_pii_keeps_sensitive_values(world: World) -> None:
+    row = await world.service.create(
+        agent_id=world.agent_id,
+        owner_user_id=world.alice_id,
+        name="Contacts",
+        columns=[
+            {"name": "title", "type": "string"},
+            {"name": "phone", "type": "string", "pii": "phone"},
+        ],
+    )
+
+    result = await world.service.import_rows(
+        row,
+        [{"title": "A", "phone": "13800138000"}],
+        include_pii=True,
+    )
+
+    assert result.imported == 1
+    assert result.pii_columns == ["phone"]
+    assert result.blocked_pii == []
+    _schema, rows, _total = await world.service.read_rows(world.service.get(row.app_id))
+    assert rows == [{"title": "A", "phone": "13800138000"}]
+
+
+async def test_import_rejects_a_required_sensitive_column_by_default(world: World) -> None:
+    row = await world.service.create(
+        agent_id=world.agent_id,
+        owner_user_id=world.alice_id,
+        name="Contacts",
+        columns=[
+            {"name": "title", "type": "string"},
+            {"name": "phone", "type": "string", "required": True, "pii": "phone"},
+        ],
+    )
+
+    with pytest.raises(OctopError) as exc:
+        await world.service.import_rows(
+            row,
+            [{"title": "A", "phone": "13800138000"}],
+        )
+    _assert_code(exc, ErrorCode.APP_ROW_INVALID)
+    assert "include_pii=true" in exc.value.message
+    _schema, rows, _total = await world.service.read_rows(world.service.get(row.app_id))
+    assert rows == []

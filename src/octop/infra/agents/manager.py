@@ -1089,17 +1089,28 @@ class AgentManager:
             raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
         return updated
 
-    async def delete(self, agent_id: str) -> None:
+    async def delete(self, agent_id: str, *, force: bool = False) -> None:
         """Remove agent from DB, harness runtime, workspace, memory, and checkpoints.
 
         Checkpoint rows and Postgres memory namespaces are not foreign keys
         of ``agents``. They are deleted before the agent row. If that purge
         fails, the row stays so the delete can be retried.
+
+        Light apps live in the agent's workspace, so deleting the agent would
+        destroy their data. The delete is refused unless the caller forces it.
         """
         row = self._repos.agent_repo.get(agent_id)
         if row is None:
             raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
         self._teams.assert_can_delete_agent(agent_id)
+        if not force:
+            apps = self._repos.light_app_repo.list_by_agent(agent_id)
+            if apps:
+                raise OctopError(
+                    ErrorCode.AGENT_HAS_APPS,
+                    f"agent {agent_id!r} still owns {len(apps)} light app(s)",
+                    details={"count": len(apps), "app_ids": [app.app_id for app in apps]},
+                )
         from octop.infra.agents.memory.thread_cleanup import (  # noqa: PLC0415
             agent_config_from_row,
             delete_agent_memory_and_checkpoints,
@@ -3880,6 +3891,7 @@ class AgentManager:
                 goal_repo=self._repos.team_goal_repo,
                 task_repo=self._repos.team_task_repo,
                 deliverable_repo=self._repos.goal_deliverable_repo,
+                light_app_repo=self._repos.light_app_repo,
                 agent_repo=self._repos.agent_repo,
                 task_notify=self._task_notify,
                 event_recorder=TeamCoordinator(

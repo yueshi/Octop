@@ -459,6 +459,10 @@ async def patch_agent(
 @router.delete("/{agent_id}", status_code=204, summary="Delete agent")
 async def delete_agent(
     agent_id: str,
+    force: bool = Query(
+        default=False,
+        description="Delete even when the agent still owns light apps (their data is lost).",
+    ),
     user: Any = Depends(current_user),
     server: Any = Depends(get_server),
 ) -> None:
@@ -468,7 +472,7 @@ async def delete_agent(
     if row is None:
         raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
     _assert_agent_owner(row, user)
-    await server.app_runtime.agent_registry.delete(agent_id)
+    await server.app_runtime.agent_registry.delete(agent_id, force=force)
 
 
 @router.post("/{agent_id}/avatar", status_code=201, summary="Upload expert avatar")

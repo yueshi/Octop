@@ -105,7 +105,7 @@ external_deliveries（DB outbox：lease / retry / dead-letter）
 
 ## 4. 数据模型与迁移
 
-新增 v24：`src/octop/infra/db/migrations/024_external_events.sql` + `.pg.sql`。资源表遵循 `AGENTS.md §7`：`id INTEGER` 代理 PK + 公开字符串 id；子表引用公开 id。
+新增 v27：`src/octop/infra/db/migrations/027_external_events.sql` + `.pg.sql`。资源表遵循 `AGENTS.md §7`：`id INTEGER` 代理 PK + 公开字符串 id；子表引用公开 id。
 
 ### 4.1 `external_sources`
 
@@ -184,7 +184,7 @@ UNIQUE(event_id, subscription_id)
 
 索引：`external_events(source_id, received_at)`、`external_deliveries(status, next_retry_at)`、`external_deliveries(lease_until)`、`external_sources(enabled, next_run_at)`。
 
-**迁移注意**：v24 已落地，测试断言同步为 v24；新表是纯 CREATE，不需要 `migrate.py` 的 SQLite rebuild helper。SQLite/PG 两版保持一致。
+**迁移注意**：v27 已落地，测试断言同步为 v29；新表是纯 CREATE，不需要 `migrate.py` 的 SQLite rebuild helper。SQLite/PG 两版保持一致。
 
 ---
 
@@ -339,7 +339,7 @@ POST       /api/external/deliveries/{delivery_id}/retry
 | **P1** | connector 轮询限制 | `infra/apps/sources.py` 只支持进程内 gateway、只读工具 | MVP 明确支持范围；HTTP MCP 后置；工具只读校验 |
 | **P1** | 团队手动/autopilot 语义 | `TeamCoordinator._route_after_append` 只在 autopilot 执行 | judge 订阅要求 autopilot；manual 只 notify；不要留下待消费 judgment 事件 |
 | **P1** | 团队快照看不到外部摘要 | `decision.py:186-201` 只取 excerpt/error | `recent_judgment.excerpt` 优先取 `payload.summary`；外部事件 payload 带 summary |
-| **P2** | DB 版本/迁移测试 | `tests/unit/db/test_db_pool.py` 断言 23 | 新增 024 pair，版本升 23，更新断言 |
+| **P2** | DB 版本/迁移测试 | `tests/unit/db/test_db_pool.py` 断言 29 | 新增 027 pair，版本升 27，更新断言 |
 | **P2** | 单进程重复投递 | 无 lease 的 worker 会重复 | 条件 UPDATE lease；sweeper reclaim；文档声明单进程 |
 | **P2** | 删除/归属 | source/subscription/target 多态 | 创建和投递双重校验；source 删除级联；target 删除时 disable |
 | **P2** | 观测/保留 | 没有事件日志/清理 | delivery 状态/错误/attempt 可查；30 天清理；METRICS |
@@ -355,7 +355,7 @@ POST       /api/external/deliveries/{delivery_id}/retry
 1. 修团队 decision usage `int(dict)` + 回归测试。
 2. `external.event` 进入 judgment 类型；快照 summary 字段。
 3. 新增错误码/i18n；确定 `/api/hooks/` 豁免。
-4. v24 迁移骨架。
+4. v27 迁移骨架。
 
 ### Phase 1（约 4–6 人日，MVP）
 
@@ -392,7 +392,7 @@ POST       /api/external/deliveries/{delivery_id}/retry
 - app：payload 按 mapping 导入；`replace` 重复执行结果一致；`append` 去重后不重复。
 - 100 条事件不会产生 100 次 LLM；合并/限流生效。
 - 外部文本不能诱导工具调用/越权 target；审计可追溯。
-- SQLite/PG 迁移、v24 断言、跨平台测试通过。
+- SQLite/PG 迁移、v29 断言、跨平台测试通过。
 
 ---
 

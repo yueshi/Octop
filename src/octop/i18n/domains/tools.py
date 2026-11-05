@@ -27,6 +27,7 @@ HITL_TOOL_EXCLUDE: frozenset[str] = frozenset(
         # Light apps: read-only discovery helpers
         "app_list",
         "app_read_data",
+        "app_inspect_file",
         # Cron
         "cronjob_list",
         "cronjob_get",

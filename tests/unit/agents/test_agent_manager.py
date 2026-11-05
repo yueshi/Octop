@@ -902,14 +902,20 @@ def test_build_harness_config_includes_cronjob_tools_when_cron_manager_set(
         "cronjob_delete",
         "cronjob_run_now",
         "search_knowledge",
+        "app_inspect_file",
         "app_list",
         "app_create",
+        "app_create_from_template",
         "app_add_table",
         "app_update_schema",
+        "app_alter_schema",
         "app_write_html",
         "app_read_data",
         "app_append_row",
+        "app_update_row",
+        "app_delete_row",
         "app_import_rows",
+        "app_save_asset",
         "app_delete",
     }
 
@@ -923,14 +929,20 @@ def test_build_harness_config_includes_search_knowledge_without_cron(
     assert cfg.tools is not None
     assert {t.name for t in cfg.tools} == {
         "search_knowledge",
+        "app_inspect_file",
         "app_list",
         "app_create",
+        "app_create_from_template",
         "app_add_table",
         "app_update_schema",
+        "app_alter_schema",
         "app_write_html",
         "app_read_data",
         "app_append_row",
+        "app_update_row",
+        "app_delete_row",
         "app_import_rows",
+        "app_save_asset",
         "app_delete",
     }
     assert any(isinstance(item, KnowledgeSearchHintMiddleware) for item in (cfg.middleware or []))
@@ -2961,3 +2973,30 @@ async def test_restore_respects_runtime_capability_and_expert_scope(
     finally:
         for row in rows:
             await manager.stop(row.agent_id)
+
+
+@pytest.mark.asyncio
+async def test_delete_refuses_while_the_agent_owns_light_apps(manager: AgentManager) -> None:
+    agent_id = "AGT_APPS"
+    manager._repos.agent_repo.create(agent_id=agent_id, user_id=None, name="apps")
+    owner_id = manager._repos.user_repo.create(username="app-owner", password_hash="h", role="user")
+    manager._repos.light_app_repo.create(
+        app_id="app_ABC123",
+        agent_id=agent_id,
+        owner_user_id=owner_id,
+        name="Tracker",
+        description="",
+    )
+    harness_manager = MagicMock()
+    harness_manager.aremove_agent = AsyncMock()
+    manager._harness_manager = harness_manager
+
+    with pytest.raises(OctopError) as exc:
+        await manager.delete(agent_id)
+    assert exc.value.code is ErrorCode.AGENT_HAS_APPS
+    assert exc.value.details["count"] == 1
+    assert manager.get_row(agent_id) is not None
+
+    # Forcing the delete goes through.
+    await manager.delete(agent_id, force=True)
+    assert manager.get_row(agent_id) is None

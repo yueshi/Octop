@@ -97,14 +97,20 @@ BUILTIN_TOOL_CATALOG: tuple[BuiltinToolEntry, ...] = (
     BuiltinToolEntry("agent_list", "teams"),
     BuiltinToolEntry("ask_agent", "teams"),
     # Light apps
+    BuiltinToolEntry("app_inspect_file", "apps"),
     BuiltinToolEntry("app_list", "apps"),
     BuiltinToolEntry("app_create", "apps"),
+    BuiltinToolEntry("app_create_from_template", "apps"),
     BuiltinToolEntry("app_add_table", "apps"),
     BuiltinToolEntry("app_update_schema", "apps"),
+    BuiltinToolEntry("app_alter_schema", "apps"),
     BuiltinToolEntry("app_write_html", "apps"),
     BuiltinToolEntry("app_read_data", "apps"),
     BuiltinToolEntry("app_append_row", "apps"),
+    BuiltinToolEntry("app_update_row", "apps"),
+    BuiltinToolEntry("app_delete_row", "apps"),
     BuiltinToolEntry("app_import_rows", "apps"),
+    BuiltinToolEntry("app_save_asset", "apps"),
     BuiltinToolEntry("app_delete", "apps"),
 )
 

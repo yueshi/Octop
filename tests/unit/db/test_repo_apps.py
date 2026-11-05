@@ -39,7 +39,7 @@ def test_light_app_tables_exist(db: SqlitePool) -> None:
         version = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(light_apps)")}
     assert {"light_apps", "light_app_collaborators"} <= names
-    assert version == 24
+    assert version == 29
     assert {"app_id", "agent_id", "owner_user_id", "row_count"} <= columns
 
 
@@ -55,8 +55,8 @@ def test_run_migrations_repairs_missing_light_app_tables(db: SqlitePool) -> None
     assert {"light_apps", "light_app_collaborators"} <= names
 
 
-def test_run_migrations_adds_file_size_columns_to_v22_databases(db: SqlitePool) -> None:
-    """A database that already recorded v22 predates the file-size columns."""
+def test_run_migrations_adds_file_size_columns_to_v25_databases(db: SqlitePool) -> None:
+    """A database that already recorded v25 predates the file-size columns."""
     with db.transaction() as conn:
         conn.execute("ALTER TABLE light_apps DROP COLUMN html_bytes")
         conn.execute("ALTER TABLE light_apps DROP COLUMN data_bytes")

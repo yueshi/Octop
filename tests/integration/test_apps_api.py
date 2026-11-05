@@ -101,11 +101,12 @@ async def test_owner_app_flow(
         json={"row": {"title": "A", "status": "new"}},
     )
     assert r.status_code == 200
-    assert r.json() == {
-        "row_index": 0,
-        "row": {"title": "A", "status": "new"},
-        "table": "main",
-    }
+    appended = r.json()
+    assert appended["row_index"] == 0
+    assert appended["row"] == {"title": "A", "status": "new"}
+    assert appended["table"] == "main"
+    assert appended["row_id"].startswith("row_")
+    assert appended["version"] == 1
 
     r = await client.get(f"/api/apps/{app_id}/rows?limit=10", headers=alice_auth)
     assert r.status_code == 200
@@ -672,3 +673,482 @@ async def test_sources_lifecycle_and_permissions(
     assert r.status_code == 204
     r = await client.post(f"/api/apps/{app_id}/sources/src_1/run", headers=alice_auth)
     assert r.status_code == 404
+
+
+async def test_import_dry_run_and_header_row(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+
+    path = await _upload_import_file(
+        client,
+        alice_auth,
+        app_id,
+        content="2026 年 9 月工资表\ntitle,qty,status\ncup,3,new\n".encode(),
+    )
+
+    # A dry run counts the rows without writing them. The header hint points
+    # at the real header line; without it the title line is taken as the
+    # header and every row is rejected.
+    r = await client.post(
+        f"/api/apps/{app_id}/tables/main/import",
+        headers=alice_auth,
+        json={
+            "kind": "upload",
+            "path": path,
+            "mode": "append",
+            "header_row": 1,
+            "dry_run": True,
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["dry_run"] is True
+    assert body["would_import"] == 1
+    assert body["imported"] == 0
+
+    r = await client.get(f"/api/apps/{app_id}/rows", headers=alice_auth)
+    assert r.json()["total"] == 0
+
+    r = await client.post(
+        f"/api/apps/{app_id}/tables/main/import",
+        headers=alice_auth,
+        json={
+            "kind": "upload",
+            "path": path,
+            "mode": "append",
+            "header_row": 1,
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["imported"] == 1
+
+    r = await client.get(f"/api/apps/{app_id}/rows", headers=alice_auth)
+    assert r.json()["rows"][0]["title"] == "cup"
+
+
+async def test_transfer_moves_the_app_between_agents(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+
+    r = await client.post(
+        "/api/agents",
+        headers=alice_auth,
+        json={"name": "second-bot", "config": {"providers": ["openai"]}},
+    )
+    assert r.status_code == 201, r.text
+    other_agent_id = r.json()["agent_id"]
+
+    r = await client.post(
+        f"/api/apps/{app_id}/transfer",
+        headers=alice_auth,
+        json={"agent_id": other_agent_id},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["agent_id"] == other_agent_id
+
+    r = await client.get(f"/api/apps/{app_id}", headers=alice_auth)
+    assert r.status_code == 200
+    assert r.json()["agent_id"] == other_agent_id
+
+
+async def test_agent_delete_is_refused_while_it_owns_apps(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    await _create_app(srv, agent_id, "alice")
+
+    r = await client.delete(f"/api/agents/{agent_id}", headers=alice_auth)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "AGENT_HAS_APPS"
+
+    # The agent is still there.
+    r = await client.get(f"/api/agents/{agent_id}", headers=alice_auth)
+    assert r.status_code == 200
+
+
+async def test_asset_upload_and_fetch(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 16
+
+    r = await client.post(
+        f"/api/apps/{app_id}/assets",
+        headers=alice_auth,
+        files={"file": ("cover.png", png, "image/png")},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["name"] == "cover.png"
+
+    r = await client.get(f"/api/apps/{app_id}/assets", headers=alice_auth)
+    assert [item["name"] for item in r.json()["assets"]] == ["cover.png"]
+
+    r = await client.get(f"/api/apps/{app_id}/assets/cover.png", headers=alice_auth)
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    assert r.content == png
+
+    # A non-collaborator cannot fetch the asset.
+    r = await client.get(f"/api/apps/{app_id}/assets/cover.png", headers=bob_auth)
+    assert r.status_code == 403
+
+
+async def test_asset_upload_rejects_non_images(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+
+    r = await client.post(
+        f"/api/apps/{app_id}/assets",
+        headers=alice_auth,
+        files={"file": ("cover.svg", b"<svg></svg>", "image/svg+xml")},
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "APP_SOURCE_INVALID"
+
+
+async def test_row_edit_export_and_idempotent_append(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+
+    r = await client.post(
+        f"/api/apps/{app_id}/rows",
+        headers=alice_auth,
+        json={"row": {"title": "A", "status": "new"}, "client_request_id": "req-1"},
+    )
+    assert r.status_code == 200, r.text
+    created = r.json()
+    assert created["row_id"]
+    assert created["version"] == 1
+
+    # Retrying the same id is a no-op.
+    r = await client.post(
+        f"/api/apps/{app_id}/rows",
+        headers=alice_auth,
+        json={"row": {"title": "A", "status": "new"}, "client_request_id": "req-1"},
+    )
+    assert r.json()["row_id"] == created["row_id"]
+    r = await client.get(f"/api/apps/{app_id}/rows", headers=alice_auth)
+    assert r.json()["total"] == 1
+
+    meta = r.json()["row_meta"][0]
+    assert meta["row_id"] == created["row_id"]
+    assert meta["version"] == 1
+
+    r = await client.patch(
+        f"/api/apps/{app_id}/rows/{created['row_id']}",
+        headers=alice_auth,
+        json={"row": {"title": "B", "status": "done"}, "expected_version": 1},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["version"] == 2
+    assert r.json()["row"]["title"] == "B"
+
+    # A stale version is a conflict, not a silent overwrite.
+    r = await client.patch(
+        f"/api/apps/{app_id}/rows/{created['row_id']}",
+        headers=alice_auth,
+        json={"row": {"title": "C", "status": "new"}, "expected_version": 1},
+    )
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "APP_CONFLICT"
+
+    r = await client.get(f"/api/apps/{app_id}/export", headers=alice_auth)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/csv")
+    assert r.text == "title,status\nB,done\n"
+
+    r = await client.delete(
+        f"/api/apps/{app_id}/rows/{created['row_id']}?expected_version=2",
+        headers=alice_auth,
+    )
+    assert r.status_code == 200
+    assert r.json()["deleted"] == created["row_id"]
+    r = await client.get(f"/api/apps/{app_id}/rows", headers=alice_auth)
+    assert r.json()["total"] == 0
+
+
+async def test_alter_schema_endpoint(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+    await client.post(
+        f"/api/apps/{app_id}/rows",
+        headers=alice_auth,
+        json={"row": {"title": "A", "status": "new"}},
+    )
+
+    r = await client.patch(
+        f"/api/apps/{app_id}/schema",
+        headers=alice_auth,
+        json={"renames": {"title": "name"}},
+    )
+    assert r.status_code == 200, r.text
+    assert [column["name"] for column in r.json()["columns"]] == ["name", "status"]
+
+    r = await client.get(f"/api/apps/{app_id}/rows", headers=alice_auth)
+    assert r.json()["rows"] == [{"name": "A", "status": "new"}]
+
+    # Dropping a column removes its data.
+    r = await client.patch(
+        f"/api/apps/{app_id}/schema",
+        headers=alice_auth,
+        json={"drops": ["status"]},
+    )
+    assert r.status_code == 200, r.text
+    assert [column["name"] for column in r.json()["columns"]] == ["name"]
+
+
+async def test_import_upsert_key_over_http(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+    path = await _upload_import_file(client, alice_auth, app_id)
+
+    r = await client.post(
+        f"/api/apps/{app_id}/tables/main/import",
+        headers=alice_auth,
+        json={"kind": "upload", "path": path, "upsert_key": ["title"]},
+    )
+    assert r.status_code == 200, r.text
+    assert (r.json()["imported"], r.json()["updated"]) == (2, 0)
+
+    r = await client.post(
+        f"/api/apps/{app_id}/tables/main/import",
+        headers=alice_auth,
+        json={"kind": "upload", "path": path, "upsert_key": ["title"]},
+    )
+    assert r.status_code == 200, r.text
+    assert (r.json()["imported"], r.json()["updated"]) == (0, 2)
+
+    r = await client.get(f"/api/apps/{app_id}/rows", headers=alice_auth)
+    assert r.json()["total"] == 2
+
+
+async def test_import_multiple_workspace_files(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+    first = await _upload_import_file(
+        client,
+        alice_auth,
+        app_id,
+        content=b"title,status\nA,new\n",
+        filename="sep.csv",
+    )
+    second = await _upload_import_file(
+        client,
+        alice_auth,
+        app_id,
+        content=b"title,status\nB,done\n",
+        filename="oct.csv",
+    )
+
+    r = await client.post(
+        f"/api/apps/{app_id}/tables/main/import",
+        headers=alice_auth,
+        json={"kind": "workspace_file", "paths": [first, second]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["imported"] == 2
+
+
+async def test_create_app_from_expert_template(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    assert srv.app_runtime is not None
+    workspace = srv.app_runtime.agent_registry.workspace_for_agent(agent_id)
+    assert workspace is not None
+    await workspace.awrite_text(
+        "app_templates/reading/schema.json",
+        json.dumps(
+            {
+                "version": 1,
+                "columns": [{"name": "title", "label": "书名", "type": "text", "required": True}],
+            }
+        ),
+    )
+    await workspace.awrite_text(
+        "app_templates/reading/app.html",
+        "<!doctype html><html><body><h1>Books</h1></body></html>",
+    )
+
+    r = await client.get(f"/api/apps/templates?agent_id={agent_id}", headers=alice_auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["templates"][0]["template"] == "reading"
+
+    r = await client.post(
+        "/api/apps/from-template",
+        headers=alice_auth,
+        json={"agent_id": agent_id, "template": "reading", "name": "My reading"},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["name"] == "My reading"
+    assert body["row_count"] == 0
+    assert body["has_html"] is True
+    assert [column["name"] for column in body["columns"]] == ["title"]
+
+
+async def test_public_link_is_read_only_and_revocable(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+    service = _service(srv)
+    row = service.get(app_id)
+    await service.append_row(row, {"title": "A", "status": "new"})
+    await service.write_html(row, "<!doctype html><html><body><h1>Public</h1></body></html>")
+
+    r = await client.post(
+        f"/api/apps/{app_id}/publication",
+        headers=alice_auth,
+        json={"ttl_days": 0},
+    )
+    assert r.status_code == 200, r.text
+    token = r.json()["token"]
+    assert token
+    assert r.json()["url"] == f"/p/{token}"
+
+    # No JWT on the public endpoints.
+    r = await client.get(f"/api/public/apps/{token}")
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Tracker"
+    assert "Public" in r.json()["html"]
+
+    r = await client.get(f"/api/public/apps/{token}/rows")
+    assert r.status_code == 200, r.text
+    assert r.json()["rows"] == [{"title": "A", "status": "new"}]
+
+    r = await client.get(f"/p/{token}")
+    assert r.status_code == 200
+    assert "octopApp" in r.text
+
+    # Revoking takes effect immediately.
+    r = await client.delete(f"/api/apps/{app_id}/publication", headers=alice_auth)
+    assert r.status_code == 200
+    r = await client.get(f"/api/public/apps/{token}")
+    assert r.status_code == 404
+
+
+async def test_backup_download_and_restore_api(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+    service = _service(srv)
+    row = service.get(app_id)
+    await service.append_row(row, {"title": "A", "status": "new"})
+    await service.write_html(row, "<!doctype html><html><body><h1>Backup</h1></body></html>")
+
+    r = await client.get(f"/api/apps/{app_id}/backup", headers=alice_auth)
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/zip"
+    assert r.content.startswith(b"PK")
+
+    r = await client.post(
+        "/api/apps/restore",
+        params={"agent_id": agent_id},
+        headers=alice_auth,
+        files={"file": ("backup.zip", r.content, "application/zip")},
+    )
+    assert r.status_code == 201, r.text
+    restored = r.json()
+    assert restored["app_id"] != app_id
+    assert restored["agent_id"] == agent_id
+    assert restored["name"] == "Tracker"
+    assert restored["row_count"] == 1
+    assert restored["has_html"] is True
+
+    r = await client.get(f"/api/apps/{restored['app_id']}/rows", headers=alice_auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["rows"] == [{"title": "A", "status": "new"}]
+
+    r = await client.post(
+        "/api/apps/restore",
+        params={"agent_id": agent_id},
+        headers=alice_auth,
+        files={"file": ("backup.zip", b"not a zip", "application/zip")},
+    )
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["code"] == "APP_SOURCE_INVALID"
+
+
+async def test_pii_is_masked_for_viewers_and_public_links(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, bob_auth, agent_id = env_alice_bob_agent
+    assert srv.services is not None
+    owner = srv.services.user_repo.get_by_username("alice")
+    assert owner is not None
+    service = _service(srv)
+    row = await service.create(
+        agent_id=agent_id,
+        owner_user_id=owner.id,
+        name="Contacts",
+        columns=[
+            {"name": "title", "type": "string"},
+            {"name": "phone", "type": "string", "pii": "phone"},
+        ],
+    )
+    await service.append_row(row, {"title": "A", "phone": "13800138000"})
+    app_id = row.app_id
+
+    r = await client.put(
+        f"/api/apps/{app_id}/shares",
+        headers=alice_auth,
+        json={"shares": [{"username": "bob", "permission": "view"}]},
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.get(f"/api/apps/{app_id}/rows", headers=bob_auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["rows"] == [{"title": "A", "phone": "••••"}]
+    assert r.json()["pii_columns"] == ["phone"]
+
+    r = await client.get(f"/api/apps/{app_id}/export", headers=bob_auth)
+    assert r.status_code == 200, r.text
+    assert "13800138000" not in r.text
+    assert "••••" in r.text
+
+    # Editors still see the real value.
+    r = await client.put(
+        f"/api/apps/{app_id}/shares",
+        headers=alice_auth,
+        json={"shares": [{"username": "bob", "permission": "edit_data"}]},
+    )
+    assert r.status_code == 200
+    r = await client.get(f"/api/apps/{app_id}/rows", headers=bob_auth)
+    assert r.json()["rows"] == [{"title": "A", "phone": "13800138000"}]
+    assert r.json()["pii_columns"] == []
+
+    # Only structure editors may download an unmasked backup.
+    r = await client.get(f"/api/apps/{app_id}/backup", headers=bob_auth)
+    assert r.status_code == 403
+    r = await client.get(f"/api/apps/{app_id}/backup", headers=alice_auth)
+    assert r.status_code == 200
+    assert r.content.startswith(b"PK")
+
+    # Public links are always read-only and masked.
+    r = await client.post(
+        f"/api/apps/{app_id}/publication",
+        headers=alice_auth,
+        json={"ttl_days": 0},
+    )
+    token = r.json()["token"]
+    r = await client.get(f"/api/public/apps/{token}/rows")
+    assert r.status_code == 200, r.text
+    assert r.json()["rows"] == [{"title": "A", "phone": "••••"}]
+    assert "13800138000" not in r.text

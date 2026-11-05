@@ -143,6 +143,7 @@ class AppAssistant:
 
             usage_in = usage_out = 0
             answer = ""
+            citations: list[dict[str, str]] = []
             for rounds in range(1, MAX_ASSISTANT_ROUNDS + 1):
                 # Buffer the whole model turn: tool-call rounds often carry a
                 # short preamble that must not leak into the answer or history.
@@ -161,14 +162,29 @@ class AppAssistant:
                         "rounds": rounds,
                         "input_tokens": usage_in,
                         "output_tokens": usage_out,
+                        "citations": citations,
                     }
                     break
                 if text:
                     yield {"type": "token", "text": text}
                 messages.append(result)
                 for call in tool_calls:
-                    yield {"type": "tool", "name": str(call.get("name") or "")}
+                    tool_name = str(call.get("name") or "")
+                    yield {"type": "tool", "name": tool_name}
                     tool_result = await self._run_tool(row, call)
+                    if tool_name == "app_query_rows":
+                        try:
+                            payload = json.loads(tool_result)
+                        except ValueError:
+                            payload = {}
+                        if isinstance(payload, dict):
+                            table = str(payload.get("table") or MAIN_TABLE_KEY)
+                            for meta in payload.get("row_meta") or []:
+                                if not isinstance(meta, dict):
+                                    continue
+                                row_id = str(meta.get("row_id") or "")
+                                if row_id and all(item["row_id"] != row_id for item in citations):
+                                    citations.append({"table": table, "row_id": row_id})
                     messages.append(
                         ToolMessage(content=tool_result, tool_call_id=str(call.get("id") or ""))
                     )
@@ -268,18 +284,20 @@ class AppAssistant:
             limit: Annotated[int, Field(description="Rows to return (1-200).")] = 50,
             offset: Annotated[int, Field(description="Rows to skip, for paging.")] = 0,
         ) -> str:
-            schema, rows, total = await service.query_rows(
+            schema, rows, row_meta, total = await service.query_rows_detailed(
                 row,
                 table=table,
                 filters=filters,
                 limit=limit,
                 offset=offset,
+                redact_pii=True,
             )
             return json.dumps(
                 {
                     "table": table,
                     "columns": schema.to_dict()["columns"],
                     "rows": rows,
+                    "row_meta": row_meta,
                     "total": total,
                     "limit": limit,
                     "offset": offset,

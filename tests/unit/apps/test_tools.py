@@ -92,14 +92,20 @@ def _tool_by_name(tools: list, name: str):
 def test_build_app_tools_names(world: World) -> None:
     names = {tool.name for tool in build_app_tools(world.service)}
     assert names == {
+        "app_inspect_file",
         "app_list",
         "app_create",
+        "app_create_from_template",
         "app_add_table",
         "app_update_schema",
+        "app_alter_schema",
         "app_write_html",
         "app_read_data",
         "app_append_row",
+        "app_update_row",
+        "app_delete_row",
         "app_import_rows",
+        "app_save_asset",
         APP_DELETE_TOOL_NAME,
     }
     # The manager decides whether to inject the light-app prompt from this
@@ -156,6 +162,33 @@ async def test_tool_lifecycle(world: World) -> None:
         deleted = json.loads(await delete.ainvoke({"app_id": app_id}))
         assert deleted == {"deleted": app_id}
         assert json.loads(await list_tool.ainvoke({})) == {"apps": []}
+
+
+async def test_tool_write_html_rejects_external_resources(world: World) -> None:
+    tools = build_app_tools(world.service)
+    create = _tool_by_name(tools, "app_create")
+    write_html = _tool_by_name(tools, "app_write_html")
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        app_id = json.loads(await create.ainvoke({"name": "Tracker", "columns": COLUMNS}))["app_id"]
+
+        rejected = json.loads(
+            await write_html.ainvoke(
+                {"app_id": app_id, "html": '<script src="https://cdn.example.com/x.js"></script>'}
+            )
+        )
+        assert "error" in rejected
+        # The agent has to be able to fix the page from this message alone.
+        assert "external script" in rejected["error"]
+        assert "inline all CSS and JS" in rejected["error"]
+        assert "octopApp.openExternal" in rejected["error"]
+
+        written = json.loads(
+            await write_html.ainvoke(
+                {"app_id": app_id, "html": '<h1>ok</h1><img src="data:image/png;base64,AA">'}
+            )
+        )
+        assert written["bytes"] > 0
 
 
 async def test_multi_table_tools(world: World) -> None:
@@ -228,13 +261,14 @@ async def test_tools_reject_non_owner(world: World) -> None:
 
     with _configurable(agent_id=world.agent_id, user=str(world.bob_id)):
         denied = json.loads(await create.ainvoke({"name": "Theirs", "columns": COLUMNS}))
-        assert "owner" in denied["error"]
+        assert "cannot use this agent" in denied["error"]
         assert json.loads(await list_tool.ainvoke({})) == {"apps": []}
         hidden = json.loads(await read_data.ainvoke({"app_id": app_id}))
-        assert "owner" in hidden["error"]
+        assert "not accessible" in hidden["error"]
 
 
-async def test_tools_are_scoped_to_the_running_agent(world: World) -> None:
+async def test_tools_follow_the_app_acl_not_the_owning_agent(world: World) -> None:
+    """The app ACL decides what the user may do; the agent is only the executor."""
     tools = build_app_tools(world.service)
     create = _tool_by_name(tools, "app_create")
     read_data = _tool_by_name(tools, "app_read_data")
@@ -247,7 +281,7 @@ async def test_tools_are_scoped_to_the_running_agent(world: World) -> None:
     world.agent_repo.create(agent_id=other_agent, user_id=world.alice_id, name="other")
     with _configurable(agent_id=other_agent, user=str(world.alice_id)):
         out = json.loads(await read_data.ainvoke({"app_id": app_id}))
-    assert "not found" in out["error"]
+    assert out["total"] == 0
 
 
 async def test_tools_require_agent_and_user_context(world: World) -> None:
@@ -274,3 +308,193 @@ async def test_tools_use_resume_scope_without_configurable(world: World) -> None
     with _configurable():
         out = json.loads(await create.ainvoke({"name": "Again", "columns": COLUMNS}))
     assert "configurable.agent_id" in out["error"]
+
+
+async def test_tool_inspect_file_reports_sheets(world: World) -> None:
+    tools = build_app_tools(world.service)
+    inspect = _tool_by_name(tools, "app_inspect_file")
+
+    workspace = world.service._workspaces.workspace_for_agent(world.agent_id)
+    assert workspace is not None
+    await workspace.aupload_bytes(
+        "inbound/items.csv",
+        b"name,qty\ncup,3\npen,4\n",
+    )
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        envelope = json.loads(await inspect.ainvoke({"path": "inbound/items.csv"}))
+        assert envelope["octop_ui"]["renderer"] == "app_inspect_card"
+        report = envelope["data"]
+
+    assert report["file"] == "inbound/items.csv"
+    sheet = report["sheets"][0]
+    assert sheet["header"] == ["name", "qty"]
+    assert sheet["rows"] == 2
+    assert [column["type"] for column in sheet["columns"]] == ["string", "integer"]
+
+
+async def test_tool_inspect_file_rejects_missing_and_hidden_paths(world: World) -> None:
+    tools = build_app_tools(world.service)
+    inspect = _tool_by_name(tools, "app_inspect_file")
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        missing = json.loads(await inspect.ainvoke({"path": "inbound/nope.csv"}))
+        assert "not found" in missing["error"]
+
+        hidden = json.loads(await inspect.ainvoke({"path": ".octop/secret.csv"}))
+        assert "error" in hidden
+
+
+async def test_tool_inspect_file_denies_other_users(world: World) -> None:
+    tools = build_app_tools(world.service)
+    inspect = _tool_by_name(tools, "app_inspect_file")
+
+    workspace = world.service._workspaces.workspace_for_agent(world.agent_id)
+    assert workspace is not None
+    await workspace.aupload_bytes("inbound/items.csv", b"name\ncup\n")
+
+    with _configurable(agent_id=world.agent_id, user=str(world.bob_id)):
+        denied = json.loads(await inspect.ainvoke({"path": "inbound/items.csv"}))
+    assert "error" in denied
+
+
+async def test_tool_import_rows_dry_run_writes_nothing(world: World) -> None:
+    tools = build_app_tools(world.service)
+    create = _tool_by_name(tools, "app_create")
+    import_rows = _tool_by_name(tools, "app_import_rows")
+
+    workspace = world.service._workspaces.workspace_for_agent(world.agent_id)
+    assert workspace is not None
+    await workspace.awrite_text("inbound/items.csv", "title,qty\ncup,3\npen,4\n")
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        app_id = json.loads(await create.ainvoke({"name": "Tracker", "columns": COLUMNS}))["app_id"]
+
+        preview = json.loads(
+            await import_rows.ainvoke(
+                {"app_id": app_id, "path": "inbound/items.csv", "dry_run": True}
+            )
+        )
+        assert preview["dry_run"] is True
+        assert preview["would_import"] == 2
+        assert preview["imported"] == 0
+
+        read = json.loads(await _tool_by_name(tools, "app_read_data").ainvoke({"app_id": app_id}))
+        assert read["total"] == 0
+
+        real = json.loads(
+            await import_rows.ainvoke({"app_id": app_id, "path": "inbound/items.csv"})
+        )
+        assert real["imported"] == 2
+        assert real["dry_run"] is False
+
+
+async def test_shared_agent_members_can_create_and_use_their_own_apps(world: World) -> None:
+    """A shared agent's members get the app tools; the app belongs to its creator."""
+    world.agent_repo.set_shared(world.agent_id, True)
+    tools = build_app_tools(world.service)
+    create = _tool_by_name(tools, "app_create")
+    list_tool = _tool_by_name(tools, "app_list")
+    append = _tool_by_name(tools, "app_append_row")
+    read_data = _tool_by_name(tools, "app_read_data")
+
+    with _configurable(agent_id=world.agent_id, user=str(world.bob_id)):
+        created = json.loads(await create.ainvoke({"name": "Bob's", "columns": COLUMNS}))
+        app_id = created["app_id"]
+        assert created["name"] == "Bob's"
+        # The app is listed for its creator, not for the agent owner.
+        assert [item["app_id"] for item in json.loads(await list_tool.ainvoke({}))["apps"]] == [
+            app_id
+        ]
+        appended = json.loads(
+            await append.ainvoke({"app_id": app_id, "row": {"title": "A", "status": "new"}})
+        )
+        assert appended["row"]["title"] == "A"
+
+    # The agent owner neither sees nor touches an app another member created.
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        assert json.loads(await list_tool.ainvoke({})) == {"apps": []}
+        denied = json.loads(await read_data.ainvoke({"app_id": app_id}))
+    assert "no 'view' permission" in denied["error"]
+
+
+async def test_collaborator_can_append_but_not_change_structure(world: World) -> None:
+    world.agent_repo.set_shared(world.agent_id, True)
+    tools = build_app_tools(world.service)
+    create = _tool_by_name(tools, "app_create")
+    append = _tool_by_name(tools, "app_append_row")
+    write_html = _tool_by_name(tools, "app_write_html")
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        app_id = json.loads(await create.ainvoke({"name": "Tracker", "columns": COLUMNS}))["app_id"]
+
+    world.service.set_shares(world.service.get(app_id), [("bob", "edit_data")])
+
+    with _configurable(agent_id=world.agent_id, user=str(world.bob_id)):
+        appended = json.loads(
+            await append.ainvoke({"app_id": app_id, "row": {"title": "B", "status": "new"}})
+        )
+        assert appended["row"]["title"] == "B"
+
+        denied = json.loads(await write_html.ainvoke({"app_id": app_id, "html": "<h1>x</h1>"}))
+    assert "no 'edit_structure' permission" in denied["error"]
+
+
+async def test_tool_save_asset_from_workspace_file(world: World) -> None:
+    tools = build_app_tools(world.service)
+    create = _tool_by_name(tools, "app_create")
+    save_asset = _tool_by_name(tools, "app_save_asset")
+
+    workspace = world.service._workspaces.workspace_for_agent(world.agent_id)
+    assert workspace is not None
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 16
+    await workspace.aupload_bytes("inbound/cover.png", png)
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        app_id = json.loads(await create.ainvoke({"name": "Tracker", "columns": COLUMNS}))["app_id"]
+        out = json.loads(
+            await save_asset.ainvoke(
+                {"app_id": app_id, "source": "inbound/cover.png", "name": "cover.png"}
+            )
+        )
+    assert out["name"] == "cover.png"
+    assert out["size"] == len(png)
+    assert out["usage"] == 'octopApp.asset("cover.png")'
+
+
+async def test_tool_save_asset_rejects_hidden_paths(world: World) -> None:
+    tools = build_app_tools(world.service)
+    create = _tool_by_name(tools, "app_create")
+    save_asset = _tool_by_name(tools, "app_save_asset")
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        app_id = json.loads(await create.ainvoke({"name": "Tracker", "columns": COLUMNS}))["app_id"]
+        out = json.loads(
+            await save_asset.ainvoke(
+                {"app_id": app_id, "source": ".octop/auth/x.png", "name": "x.png"}
+            )
+        )
+    assert "error" in out
+
+
+async def test_tool_create_app_from_template(world: World) -> None:
+    tools = build_app_tools(world.service)
+    create_from_template = _tool_by_name(tools, "app_create_from_template")
+
+    workspace = world.service._workspaces.workspace_for_agent(world.agent_id)
+    assert workspace is not None
+    await workspace.awrite_text(
+        "app_templates/reading/schema.json",
+        json.dumps({"columns": [{"name": "title", "type": "text"}]}),
+    )
+    await workspace.awrite_text(
+        "app_templates/reading/app.html",
+        "<!doctype html><html><body><h1>Books</h1></body></html>",
+    )
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        out = json.loads(await create_from_template.ainvoke({"template": "reading"}))
+
+    assert out["name"] == "reading"
+    assert out["row_count"] == 0
+    assert await world.service.has_html(world.service.get(out["app_id"])) is True

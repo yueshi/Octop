@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Button,
+  Checkbox,
   Descriptions,
   Drawer,
   Empty,
@@ -11,6 +13,8 @@ import {
   Select,
   Space,
   Spin,
+  Table,
+  Tabs,
   Tag,
   Tooltip,
   Typography,
@@ -22,6 +26,7 @@ import {
   ArrowLeft,
   ChevronsLeft,
   ChevronsRight,
+  Download,
   Edit3,
   FileCode,
   Info,
@@ -44,9 +49,12 @@ import {
   appsApi,
   askAppAssistant,
   type AppAssistantMessage,
+  type AppColumn,
   type AppDetail,
   type AppFile,
   type AppImportMode,
+  type AppPublication,
+  type AppRowMeta,
   type AppSource,
   type AppSourceKind,
   type AppSourceTool,
@@ -104,7 +112,9 @@ const APP_SDK = `(function () {
     listRows: function (options) { return call("rows", options || {}); },
     appendRow: function (row, options) {
       return call("append", { row: row, table: (options || {}).table || null });
-    }
+    },
+    openExternal: function (url) { return call("openExternal", { url: url || "" }); },
+    asset: function (name) { return call("asset", { name: name || "" }); }
   };
 })();`;
 
@@ -179,6 +189,9 @@ export default function AppDetailPage() {
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameForm] = Form.useForm<{ name: string; description: string }>();
   const [shareOpen, setShareOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publication, setPublication] = useState<AppPublication | null>(null);
+  const [publicationBusy, setPublicationBusy] = useState(false);
   const [shareLoading, setShareLoading] = useState(false);
   const [savingShare, setSavingShare] = useState(false);
   const [shares, setShares] = useState<ShareDraft[]>([]);
@@ -202,6 +215,24 @@ export default function AppDetailPage() {
   const [importMode, setImportMode] = useState<AppImportMode>("append");
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importBusy, setImportBusy] = useState(false);
+  const [importIncludePii, setImportIncludePii] = useState(false);
+
+  const [activeView, setActiveView] = useState<"ui" | "data">("ui");
+  const [dataTable, setDataTable] = useState("main");
+  const [dataSearch, setDataSearch] = useState("");
+  const [dataRows, setDataRows] = useState<Record<string, string>[]>([]);
+  const [dataRowMeta, setDataRowMeta] = useState<AppRowMeta[]>([]);
+  const [dataTotal, setDataTotal] = useState(0);
+  const [dataPage, setDataPage] = useState(1);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [rowModalOpen, setRowModalOpen] = useState(false);
+  const [rowEdit, setRowEdit] = useState<{
+    row_id: string;
+    version: number;
+  } | null>(null);
+  const [rowSaving, setRowSaving] = useState(false);
+  const [rowForm] = Form.useForm<Record<string, unknown>>();
+  const dataPageSize = 50;
 
   const [sources, setSources] = useState<AppSource[]>([]);
   const [sourceOpen, setSourceOpen] = useState(false);
@@ -213,6 +244,9 @@ export default function AppDetailPage() {
   const [sourceTool, setSourceTool] = useState("");
   const [sourceArgs, setSourceArgs] = useState("");
   const [sourceResultPath, setSourceResultPath] = useState("");
+  const [sourceCursorArg, setSourceCursorArg] = useState("");
+  const [sourceCursorPath, setSourceCursorPath] = useState("");
+  const [sourceIncludePii, setSourceIncludePii] = useState(false);
   const [sourceMapping, setSourceMapping] = useState("");
   const [sourceSchedule, setSourceSchedule] = useState(0);
   const [sourceTools, setSourceTools] = useState<AppSourceTool[]>([]);
@@ -282,6 +316,8 @@ export default function AppDetailPage() {
           offset?: number;
           table?: string | null;
           row?: Record<string, unknown>;
+          url?: string;
+          name?: string;
         };
       } | null;
       if (
@@ -361,6 +397,48 @@ export default function AppDetailPage() {
               };
             });
             reply({ ok: true, data: result });
+          } else if (data.method === "openExternal") {
+            const url = String(data.params?.url ?? "").trim();
+            if (!/^https?:\/\//i.test(url)) {
+              reply({
+                ok: false,
+                error: "openExternal requires an http(s) URL",
+              });
+            } else {
+              // The app page runs sandboxed without popups, so the parent has
+              // to open the link — after the user confirms the target domain.
+              Modal.confirm({
+                title: t("apps.openExternalTitle"),
+                content: url,
+                okText: t("apps.openExternalConfirm"),
+                cancelText: t("common.cancel"),
+                onOk: () => {
+                  window.open(url, "_blank", "noopener,noreferrer");
+                },
+              });
+              reply({ ok: true, data: { opened: true } });
+            }
+          } else if (data.method === "asset") {
+            const name = String(data.params?.name ?? "").trim();
+            try {
+              // The parent fetches the asset with the JWT and hands the iframe
+              // a data: URL — the sandbox has no same-origin access, so a blob
+              // URL from this document would not be readable there.
+              const blob = await appsApi.asset(appId, name);
+              const mime = blob.type || "image/png";
+              const reader = new FileReader();
+              const dataUrl = await new Promise<string>((resolve, reject) => {
+                reader.onload = () => resolve(String(reader.result));
+                reader.onerror = () => reject(reader.error);
+                reader.readAsDataURL(blob);
+              });
+              reply({ ok: true, data: { name, mime, data_url: dataUrl } });
+            } catch (err) {
+              reply({
+                ok: false,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
           } else {
             reply({ ok: false, error: "unsupported method" });
           }
@@ -374,9 +452,132 @@ export default function AppDetailPage() {
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [appId]);
+  }, [appId, t]);
 
   const srcDoc = useMemo(() => (html ? buildSrcDoc(html) : ""), [html]);
+
+  const dataColumns: AppColumn[] =
+    detail?.tables.find((item) => item.table_key === dataTable)?.columns ??
+    detail?.columns ??
+    [];
+  const canEditRows = detail?.permission !== "view";
+  const dataQuery = dataSearch.trim().toLowerCase();
+  const visibleRows = dataRows
+    .map((row, index) => ({ row, meta: dataRowMeta[index] }))
+    .filter(
+      ({ row }) =>
+        !dataQuery ||
+        Object.values(row).some((value) =>
+          value.toLowerCase().includes(dataQuery),
+        ),
+    );
+
+  const loadData = useCallback(
+    async (page: number) => {
+      if (!appId) return;
+      setDataLoading(true);
+      try {
+        const result = await appsApi.rows(
+          appId,
+          dataPageSize,
+          (page - 1) * dataPageSize,
+          dataTable,
+        );
+        setDataRows(result.rows);
+        setDataRowMeta(result.row_meta);
+        setDataTotal(result.total);
+        setDataPage(page);
+      } catch (err) {
+        message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
+      } finally {
+        setDataLoading(false);
+      }
+    },
+    [appId, dataTable, t],
+  );
+
+  useEffect(() => {
+    if (activeView === "data") void loadData(1);
+  }, [activeView, dataTable, loadData]);
+
+  const openAddRow = () => {
+    setRowEdit(null);
+    rowForm.resetFields();
+    setRowModalOpen(true);
+  };
+
+  const openEditRow = (
+    meta: AppRowMeta | undefined,
+    values: Record<string, string>,
+  ) => {
+    if (!meta?.row_id) return;
+    setRowEdit(meta);
+    rowForm.setFieldsValue(values);
+    setRowModalOpen(true);
+  };
+
+  const submitRow = async () => {
+    if (!appId) return;
+    const values = await rowForm.validateFields();
+    setRowSaving(true);
+    try {
+      if (rowEdit) {
+        await appsApi.updateRow(appId, rowEdit.row_id, values, rowEdit.version);
+      } else {
+        await appsApi.appendRow(appId, values, dataTable);
+      }
+      setRowModalOpen(false);
+      message.success(t("apps.rowSaved"));
+      await loadData(dataPage);
+    } catch (err) {
+      message.error(apiErrorMessage(err, t("apps.rowConflict"), t));
+    } finally {
+      setRowSaving(false);
+    }
+  };
+
+  const removeRow = async (meta: AppRowMeta | undefined) => {
+    if (!appId || !meta?.row_id) return;
+    try {
+      await appsApi.deleteRow(appId, meta.row_id, meta.version);
+      message.success(t("apps.rowDeleted"));
+      const nextPage =
+        dataRows.length === 1 && dataPage > 1 ? dataPage - 1 : dataPage;
+      await loadData(nextPage);
+    } catch (err) {
+      message.error(apiErrorMessage(err, t("apps.rowConflict"), t));
+    }
+  };
+
+  const exportData = async () => {
+    if (!appId) return;
+    try {
+      const blob = await appsApi.exportTable(appId, dataTable);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${dataTable}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
+    }
+  };
+
+  const backupApp = async () => {
+    if (!appId) return;
+    try {
+      const blob = await appsApi.backup(appId);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${detail?.name || appId}-backup.zip`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
+    }
+  };
 
   const openRename = () => {
     if (!detail) return;
@@ -420,6 +621,41 @@ export default function AppDetailPage() {
       setShareOpen(false);
     } finally {
       setShareLoading(false);
+    }
+  };
+
+  const openPublish = async () => {
+    setPublishOpen(true);
+    setPublicationBusy(true);
+    try {
+      setPublication(await appsApi.publication(appId));
+    } catch (err) {
+      message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
+      setPublishOpen(false);
+    } finally {
+      setPublicationBusy(false);
+    }
+  };
+
+  const createPublish = async () => {
+    setPublicationBusy(true);
+    try {
+      setPublication(await appsApi.createPublication(appId));
+    } catch (err) {
+      message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
+    } finally {
+      setPublicationBusy(false);
+    }
+  };
+
+  const revokePublish = async () => {
+    setPublicationBusy(true);
+    try {
+      setPublication(await appsApi.revokePublication(appId));
+    } catch (err) {
+      message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
+    } finally {
+      setPublicationBusy(false);
     }
   };
 
@@ -483,6 +719,16 @@ export default function AppDetailPage() {
           });
         } else if (event.type === "tool") {
           setAssistantTool(event.name);
+        } else if (event.type === "done") {
+          const citations = event.citations ?? [];
+          setAssistantMsgs((prev) => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last?.role === "assistant") {
+              next[next.length - 1] = { ...last, citations };
+            }
+            return next;
+          });
         } else if (event.type === "error") {
           setAssistantError(event.message);
         }
@@ -545,6 +791,7 @@ export default function AppDetailPage() {
         kind: "upload",
         path: stored.path,
         mode: importMode,
+        include_pii: importIncludePii,
       });
       message.success(
         t("apps.importSuccess", {
@@ -552,8 +799,35 @@ export default function AppDetailPage() {
           skipped: result.skipped,
         }),
       );
+      if (result.blocked_pii.length > 0) {
+        message.warning(
+          t("apps.piiBlocked", { columns: result.blocked_pii.join(", ") }),
+        );
+      }
+      if (result.failed_rows.length > 0) {
+        const blob = new Blob(
+          [
+            JSON.stringify(
+              result.failed_rows.map((item) => item.values),
+              null,
+              2,
+            ),
+          ],
+          { type: "application/json" },
+        );
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "failed-rows.json";
+        link.click();
+        URL.revokeObjectURL(url);
+        message.warning(
+          t("apps.importFailedRows", { count: result.failed_rows.length }),
+        );
+      }
       setImportOpen(false);
       setImportFile(null);
+      setImportIncludePii(false);
       void loadDetail();
     } catch (err) {
       message.error(apiErrorMessage(err, t("apps.importFailed"), t));
@@ -611,6 +885,17 @@ export default function AppDetailPage() {
         ? String(existing.params.result_path || "")
         : "",
     );
+    setSourceCursorArg(
+      existing?.kind === "external"
+        ? String(existing.params.cursor_arg || "")
+        : "",
+    );
+    setSourceCursorPath(
+      existing?.kind === "external"
+        ? String(existing.params.cursor_path || "")
+        : "",
+    );
+    setSourceIncludePii(existing?.params.include_pii === true);
     setSourceMapping(
       existing && Object.keys(existing.mapping).length
         ? JSON.stringify(existing.mapping, null, 2)
@@ -659,6 +944,13 @@ export default function AppDetailPage() {
             ...(sourceResultPath.trim()
               ? { result_path: sourceResultPath.trim() }
               : {}),
+            ...(sourceCursorArg.trim()
+              ? { cursor_arg: sourceCursorArg.trim() }
+              : {}),
+            ...(sourceCursorPath.trim()
+              ? { cursor_path: sourceCursorPath.trim() }
+              : {}),
+            ...(sourceIncludePii ? { include_pii: true } : {}),
           };
     const sourceId =
       sourceEditId ?? `src_${Math.random().toString(36).slice(2, 10)}`;
@@ -801,6 +1093,12 @@ export default function AppDetailPage() {
               >
                 {t("apps.share")}
               </Button>
+              <Button
+                icon={<Link2 size={16} />}
+                onClick={() => void openPublish()}
+              >
+                {t("apps.publishLink")}
+              </Button>
               <Button icon={<Edit3 size={16} />} onClick={openRename}>
                 {t("apps.rename")}
               </Button>
@@ -819,52 +1117,345 @@ export default function AppDetailPage() {
         </Space>
       }
     >
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: "flex",
-          flexDirection: "column",
-        }}
+      <Tabs
+        activeKey={activeView}
+        onChange={(key) => setActiveView(key as "ui" | "data")}
+        items={[
+          {
+            key: "ui",
+            label: t("apps.uiTab"),
+            children: (
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                {htmlLoading ? (
+                  <div style={{ padding: 48, textAlign: "center" }}>
+                    <Spin />
+                  </div>
+                ) : detail.has_html && html ? (
+                  <iframe
+                    ref={iframeRef}
+                    title={t("apps.iframeTitle")}
+                    sandbox="allow-scripts"
+                    srcDoc={srcDoc}
+                    style={{
+                      flex: 1,
+                      width: "100%",
+                      minHeight: 0,
+                      border: 0,
+                      borderRadius: 8,
+                      background: "#fff",
+                    }}
+                  />
+                ) : (
+                  <Empty
+                    image={
+                      <MessageSquareText
+                        size={48}
+                        strokeWidth={1.2}
+                        opacity={0.45}
+                      />
+                    }
+                    description={t("apps.noHtml")}
+                    style={{ padding: "64px 0" }}
+                  >
+                    <Button
+                      type="primary"
+                      onClick={() =>
+                        navigate(`/chat/${encodeURIComponent(detail.agent_id)}`)
+                      }
+                    >
+                      {t("apps.openChat")}
+                    </Button>
+                  </Empty>
+                )}
+              </div>
+            ),
+          },
+          {
+            key: "data",
+            label: t("apps.dataTab"),
+            children: (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                  minHeight: 0,
+                }}
+              >
+                <Space wrap>
+                  {detail.tables.length > 1 && (
+                    <Space size={4}>
+                      <Text type="secondary">{t("apps.tableLabel")}</Text>
+                      <Select
+                        size="small"
+                        value={dataTable}
+                        onChange={(value) => {
+                          setDataTable(value);
+                          setDataPage(1);
+                        }}
+                        options={detail.tables.map((item) => ({
+                          value: item.table_key,
+                          label: item.label || item.table_key,
+                        }))}
+                      />
+                    </Space>
+                  )}
+                  {canEditRows && (
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<Plus size={14} />}
+                      onClick={openAddRow}
+                    >
+                      {t("apps.addRow")}
+                    </Button>
+                  )}
+                  <Button
+                    size="small"
+                    icon={<UploadIcon size={14} />}
+                    onClick={() => void exportData()}
+                  >
+                    {t("apps.exportCsv")}
+                  </Button>
+                  <Button
+                    size="small"
+                    icon={<Download size={14} />}
+                    onClick={() => void backupApp()}
+                  >
+                    {t("apps.backup")}
+                  </Button>
+                  <Input.Search
+                    size="small"
+                    allowClear
+                    value={dataSearch}
+                    placeholder={t("apps.searchRows")}
+                    onChange={(event) => setDataSearch(event.target.value)}
+                    style={{ width: 200 }}
+                  />
+                </Space>
+                {dataColumns.some((column) => column.pii) && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message={t("apps.piiNotice")}
+                    style={{ marginBottom: 8 }}
+                  />
+                )}
+                <Table
+                  size="small"
+                  rowKey={(_, index) => `${dataPage}-${index ?? 0}`}
+                  loading={dataLoading}
+                  dataSource={visibleRows.map((item) => item.row)}
+                  locale={{ emptyText: t("apps.emptyRows") }}
+                  scroll={{ x: true }}
+                  pagination={{
+                    current: dataPage,
+                    pageSize: dataPageSize,
+                    total: dataTotal,
+                    showSizeChanger: false,
+                    onChange: (page) => void loadData(page),
+                  }}
+                  columns={[
+                    ...dataColumns.map((column) => ({
+                      title: (
+                        <Space size={4}>
+                          {column.label || column.name}
+                          {column.pii ? (
+                            <Tag color="red">{t("apps.piiTag")}</Tag>
+                          ) : null}
+                        </Space>
+                      ),
+                      dataIndex: column.name,
+                      key: column.name,
+                      ellipsis: true,
+                    })),
+                    {
+                      title: t("apps.source"),
+                      key: "__source",
+                      width: 90,
+                      render: (_: unknown, __: unknown, index: number) =>
+                        visibleRows[index]?.meta?.source || "manual",
+                    },
+                    ...(canEditRows
+                      ? [
+                          {
+                            title: t("apps.actions"),
+                            key: "__actions",
+                            width: 150,
+                            render: (
+                              _: unknown,
+                              __: unknown,
+                              index: number,
+                            ) => (
+                              <Space size={4}>
+                                <Button
+                                  size="small"
+                                  type="link"
+                                  disabled={!visibleRows[index]?.meta?.row_id}
+                                  onClick={() =>
+                                    openEditRow(
+                                      visibleRows[index]?.meta,
+                                      visibleRows[index]?.row ?? {},
+                                    )
+                                  }
+                                >
+                                  {t("apps.editRow")}
+                                </Button>
+                                <Popconfirm
+                                  title={t("apps.rowDeleteConfirm")}
+                                  okText={t("apps.delete")}
+                                  cancelText={t("common.cancel")}
+                                  okButtonProps={{ danger: true }}
+                                  onConfirm={() =>
+                                    void removeRow(visibleRows[index]?.meta)
+                                  }
+                                >
+                                  <Button
+                                    size="small"
+                                    type="link"
+                                    danger
+                                    disabled={!visibleRows[index]?.meta?.row_id}
+                                  >
+                                    {t("apps.deleteRow")}
+                                  </Button>
+                                </Popconfirm>
+                              </Space>
+                            ),
+                          },
+                        ]
+                      : []),
+                  ]}
+                />
+              </div>
+            ),
+          },
+        ]}
+      />
+
+      <Modal
+        title={rowEdit ? t("apps.rowEditTitle") : t("apps.rowAddTitle")}
+        open={rowModalOpen}
+        onCancel={() => setRowModalOpen(false)}
+        onOk={() => void submitRow()}
+        okText={t("apps.save")}
+        cancelText={t("common.cancel")}
+        confirmLoading={rowSaving}
+        destroyOnHidden
       >
-        {htmlLoading ? (
-          <div style={{ padding: 48, textAlign: "center" }}>
-            <Spin />
-          </div>
-        ) : detail.has_html && html ? (
-          <iframe
-            ref={iframeRef}
-            title={t("apps.iframeTitle")}
-            sandbox="allow-scripts"
-            srcDoc={srcDoc}
-            style={{
-              flex: 1,
-              width: "100%",
-              minHeight: 0,
-              border: 0,
-              borderRadius: 8,
-              background: "#fff",
-            }}
-          />
-        ) : (
-          <Empty
-            image={
-              <MessageSquareText size={48} strokeWidth={1.2} opacity={0.45} />
-            }
-            description={t("apps.noHtml")}
-            style={{ padding: "64px 0" }}
-          >
-            <Button
-              type="primary"
-              onClick={() =>
-                navigate(`/chat/${encodeURIComponent(detail.agent_id)}`)
+        <Form form={rowForm} layout="vertical">
+          {dataColumns.map((column) => (
+            <Form.Item
+              key={column.name}
+              name={column.name}
+              label={column.label || column.name}
+              rules={
+                column.required
+                  ? [{ required: true, message: t("apps.requiredField") }]
+                  : []
               }
             >
-              {t("apps.openChat")}
-            </Button>
-          </Empty>
+              {column.type === "enum" ? (
+                <Select
+                  allowClear={!column.required}
+                  options={column.values.map((value) => ({
+                    value,
+                    label: value,
+                  }))}
+                />
+              ) : (
+                <Input
+                  placeholder={
+                    column.type === "date"
+                      ? "YYYY-MM-DD"
+                      : column.type === "boolean"
+                      ? "true / false"
+                      : undefined
+                  }
+                />
+              )}
+            </Form.Item>
+          ))}
+        </Form>
+      </Modal>
+
+      <Modal
+        title={t("apps.publishTitle")}
+        open={publishOpen}
+        onCancel={() => setPublishOpen(false)}
+        footer={null}
+        destroyOnHidden
+      >
+        {publicationBusy ? (
+          <div style={{ padding: 24, textAlign: "center" }}>
+            <Spin />
+          </div>
+        ) : (
+          <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <Text type="secondary">{t("apps.publishHint")}</Text>
+            {detail.columns.some((column) => column.pii) && (
+              <Alert
+                type="warning"
+                showIcon
+                message={t("apps.piiShareWarning")}
+              />
+            )}
+            <Text>
+              {publication?.active
+                ? t("apps.publishActive")
+                : t("apps.publishInactive")}
+            </Text>
+            {publication?.token && (
+              <Input
+                readOnly
+                value={`${window.location.origin}/p/${publication.token}`}
+                addonAfter={
+                  <Button
+                    type="link"
+                    size="small"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(
+                        `${window.location.origin}/p/${publication.token}`,
+                      );
+                      message.success(t("apps.publishCopy"));
+                    }}
+                  >
+                    {t("apps.publishCopy")}
+                  </Button>
+                }
+              />
+            )}
+            <Space>
+              <Button
+                type="primary"
+                onClick={() => void createPublish()}
+                loading={publicationBusy}
+              >
+                {publication?.active
+                  ? t("apps.publishRotate")
+                  : t("apps.publishCreate")}
+              </Button>
+              {publication?.active && (
+                <Popconfirm
+                  title={t("apps.publishRevokeConfirm")}
+                  okText={t("apps.publishRevoke")}
+                  cancelText={t("common.cancel")}
+                  okButtonProps={{ danger: true }}
+                  onConfirm={() => void revokePublish()}
+                >
+                  <Button danger>{t("apps.publishRevoke")}</Button>
+                </Popconfirm>
+              )}
+            </Space>
+          </Space>
         )}
-      </div>
+      </Modal>
 
       <Modal
         title={t("apps.renameTitle")}
@@ -954,6 +1545,17 @@ export default function AppDetailPage() {
                 },
               ]}
             />
+          </Form.Item>
+          <Form.Item>
+            <Checkbox
+              checked={importIncludePii}
+              onChange={(event) => setImportIncludePii(event.target.checked)}
+            >
+              {t("apps.importIncludePii")}
+            </Checkbox>
+            <Text type="secondary" style={{ display: "block", fontSize: 12 }}>
+              {t("apps.importIncludePiiHint")}
+            </Text>
           </Form.Item>
         </Form>
       </Modal>
@@ -1065,8 +1667,38 @@ export default function AppDetailPage() {
                   maxLength={200}
                 />
               </Form.Item>
+              <Form.Item
+                label={t("apps.sourceCursorArgLabel")}
+                extra={t("apps.sourceCursorArgHint")}
+              >
+                <Input
+                  value={sourceCursorArg}
+                  onChange={(event) => setSourceCursorArg(event.target.value)}
+                  placeholder="since"
+                  maxLength={100}
+                />
+              </Form.Item>
+              <Form.Item
+                label={t("apps.sourceCursorPathLabel")}
+                extra={t("apps.sourceCursorPathHint")}
+              >
+                <Input
+                  value={sourceCursorPath}
+                  onChange={(event) => setSourceCursorPath(event.target.value)}
+                  placeholder="data.next_cursor"
+                  maxLength={100}
+                />
+              </Form.Item>
             </>
           )}
+          <Form.Item>
+            <Checkbox
+              checked={sourceIncludePii}
+              onChange={(event) => setSourceIncludePii(event.target.checked)}
+            >
+              {t("apps.importIncludePii")}
+            </Checkbox>
+          </Form.Item>
           <Form.Item
             label={t("apps.sourceMappingLabel")}
             extra={t("apps.sourceMappingHint")}
@@ -1116,6 +1748,14 @@ export default function AppDetailPage() {
         destroyOnHidden
       >
         <Text type="secondary">{t("apps.shareHint")}</Text>
+        {detail.columns.some((column) => column.pii) && (
+          <Alert
+            type="warning"
+            showIcon
+            message={t("apps.piiShareWarning")}
+            style={{ marginTop: 12 }}
+          />
+        )}
         <div style={{ marginTop: 12 }}>
           {shareLoading ? (
             <div style={{ padding: 24, textAlign: "center" }}>
@@ -1586,6 +2226,33 @@ export default function AppDetailPage() {
                     ) : (
                       "…"
                     )}
+                    {!isUser && item.citations?.length ? (
+                      <div
+                        style={{
+                          marginTop: 6,
+                          display: "flex",
+                          gap: 8,
+                          flexWrap: "wrap",
+                          fontSize: 12,
+                        }}
+                      >
+                        <Text type="secondary">
+                          {t("apps.assistantCitations")}:
+                        </Text>
+                        {item.citations.slice(0, 5).map((citation) => (
+                          <a
+                            key={`${citation.table}-${citation.row_id}`}
+                            onClick={() => {
+                              setDataTable(citation.table);
+                              setActiveView("data");
+                              setAssistantOpen(false);
+                            }}
+                          >
+                            {citation.row_id}
+                          </a>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}

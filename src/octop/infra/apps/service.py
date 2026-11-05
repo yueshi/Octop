@@ -15,17 +15,23 @@ of leaving the pair truncated or inconsistent.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import io
 import json
 import logging
+import re
+import secrets
 import threading
 import time
-from collections.abc import Mapping
-from dataclasses import dataclass, replace
+import zipfile
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from octop_harness.backends import BackendWorkspace
 
 from octop.infra.apps.importer import parse_import_file
+from octop.infra.apps.inspect import detect_pii, inspect_file
 from octop.infra.apps.models import (
     MAIN_TABLE_KEY,
     MAX_APPS_PER_OWNER,
@@ -36,10 +42,12 @@ from octop.infra.apps.models import (
     MAX_ROWS,
     MAX_TABLES_PER_APP,
     TABLE_KEY_RE,
+    Column,
     Schema,
     extend_schema,
     parse_csv,
     parse_schema_payload,
+    redact_rows,
     render_csv,
     validate_app_id,
     validate_description,
@@ -53,6 +61,8 @@ from octop.infra.db.repos.agents import AgentRepo
 from octop.infra.db.repos.apps import (
     PERMISSION_RANK,
     LightAppCollaboratorRow,
+    LightAppDataRow,
+    LightAppPublicationRow,
     LightAppRepo,
     LightAppRow,
     LightAppSourceRow,
@@ -71,6 +81,32 @@ FILE_MANIFEST = "manifest.json"
 FILE_PENDING = ".pending.json"
 TABLES_DIR = "tables"
 STAGED_SUFFIX = ".new"
+ASSETS_DIR = "assets"
+
+MAX_ASSET_BYTES = 5 * 1024 * 1024
+
+MAX_FAILED_ROWS = 200
+"""Largest per-row failure list returned by one import."""
+"""Largest asset an app may store (covers book covers and small icons)."""
+
+BACKUP_FORMAT = "octop.light-app.backup"
+BACKUP_VERSION = 1
+MAX_BACKUP_BYTES = 64 * 1024 * 1024
+"""Largest backup archive accepted for restore."""
+
+MAX_BACKUP_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
+"""Cap on the expanded archive; guards against zip bombs."""
+
+ASSET_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+"""Asset file names: no path separators, no leading dot, no traversal."""
+
+# The app page may not load remote images, so a cover or an icon has to be
+# stored next to the app. SVG is deliberately absent: it can carry script.
+_ASSET_SIGNATURES: tuple[tuple[str, bytes], ...] = (
+    ("image/png", b"\x89PNG\r\n\x1a\n"),
+    ("image/jpeg", b"\xff\xd8\xff"),
+    ("image/gif", b"GIF8"),
+)
 
 _APP_LOCKS: dict[str, asyncio.Lock] = {}
 _APP_LOCKS_GUARD = threading.Lock()
@@ -163,6 +199,9 @@ class AppRecord(Protocol):
     def data_bytes(self) -> int: ...
 
     @property
+    def storage_version(self) -> int: ...
+
+    @property
     def created_at(self) -> int: ...
 
     @property
@@ -243,6 +282,20 @@ class ImportResult:
     imported: int
     skipped: int
     errors: list[str]
+    updated: int = 0
+    """Rows replaced in place by an upsert key."""
+    warnings: list[str] = field(default_factory=list)
+    """Non-fatal notes, e.g. columns that look like sensitive data."""
+    would_import: int = 0
+    """Rows a dry run would have written."""
+    dry_run: bool = False
+    """True when nothing was written."""
+    pii_columns: list[str] = field(default_factory=list)
+    """Columns detected or marked as sensitive during this import."""
+    blocked_pii: list[str] = field(default_factory=list)
+    """Sensitive columns whose values were not written (``include_pii=false``)."""
+    failed_rows: list[dict[str, Any]] = field(default_factory=list)
+    """Up to ``MAX_FAILED_ROWS`` rejected rows with their errors, for retry."""
 
 
 @dataclass(frozen=True)
@@ -290,6 +343,16 @@ def _safe_import_filename(filename: str) -> str:
     if not name or name.startswith(".") or "/" in name:
         name = "data.csv"
     return name[:100]
+
+
+def _json_path(payload: Any, path: str) -> Any:
+    node = payload
+    for part in path.split("."):
+        if isinstance(node, dict) and part in node:
+            node = node[part]
+        else:
+            return None
+    return node
 
 
 def _extract_records(output: str, result_path: str) -> list[dict[str, str]]:
@@ -343,6 +406,142 @@ def _entry_field(entry: Any, key: str) -> Any:
     if isinstance(entry, Mapping):
         return entry.get(key)
     return getattr(entry, key, None)
+
+
+def _zip_entries(entries: list[tuple[str, bytes]]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in entries:
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+def _read_backup_zip(
+    data: bytes,
+) -> tuple[
+    dict[str, Any], dict[str, tuple[str, bytes, bytes]], str | None, list[tuple[str, bytes]]
+]:
+    """Read and validate a backup archive without touching the workspace."""
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        infos = archive.infolist()
+        if sum(info.file_size for info in infos) > MAX_BACKUP_UNCOMPRESSED_BYTES:
+            raise ValueError("archive expands beyond the allowed size")
+        names = {info.filename for info in infos}
+        if FILE_MANIFEST not in names:
+            raise ValueError("manifest.json is missing")
+        # Read through a running budget: the per-entry header size can be
+        # forged, so trust the bytes actually decompressed, not the manifest.
+        remaining = MAX_BACKUP_UNCOMPRESSED_BYTES
+
+        def read_entry(name: str) -> bytes:
+            nonlocal remaining
+            with archive.open(name) as handle:
+                content = handle.read(remaining + 1)
+            if len(content) > remaining:
+                raise ValueError("archive expands beyond the allowed size")
+            remaining -= len(content)
+            return content
+
+        try:
+            manifest = json.loads(read_entry(FILE_MANIFEST))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ValueError("manifest.json is not valid JSON") from None
+        if not isinstance(manifest, dict) or manifest.get("format") != BACKUP_FORMAT:
+            raise ValueError("not an Octop light-app backup")
+        version = manifest.get("version")
+        if not isinstance(version, int) or version > BACKUP_VERSION:
+            raise ValueError("backup was made by a newer version")
+        if not isinstance(manifest.get("app"), dict):
+            raise ValueError("manifest is missing app metadata")
+        raw_tables = manifest.get("tables")
+        if not isinstance(raw_tables, list) or not raw_tables:
+            raise ValueError("manifest is missing tables")
+        tables: dict[str, tuple[str, bytes, bytes]] = {}
+        for item in raw_tables:
+            if not isinstance(item, dict):
+                raise ValueError("manifest has an invalid table entry")
+            key = validate_table_key(str(item.get("table_key") or ""))
+            if key in tables:
+                raise ValueError(f"duplicate table: {key}")
+            schema_name = f"{TABLES_DIR}/{key}/{FILE_SCHEMA}"
+            csv_name = f"{TABLES_DIR}/{key}/{FILE_DATA}"
+            if schema_name not in names:
+                raise ValueError(f"table {key} has no schema")
+            label = str(item.get("label") or "")[:MAX_LABEL_LEN]
+            tables[key] = (
+                label,
+                read_entry(schema_name),
+                read_entry(csv_name) if csv_name in names else b"",
+            )
+        html: str | None = None
+        if FILE_HTML in names:
+            try:
+                html = read_entry(FILE_HTML).decode("utf-8")
+            except UnicodeDecodeError:
+                raise ValueError("app.html is not valid UTF-8") from None
+        assets: list[tuple[str, bytes]] = []
+        for name in names:
+            if not name.startswith(f"{ASSETS_DIR}/"):
+                continue
+            asset_name = name[len(ASSETS_DIR) + 1 :]
+            if not asset_name or "/" in asset_name or "\\" in asset_name:
+                continue
+            assets.append((asset_name, read_entry(name)))
+    return manifest, tables, html, assets
+
+
+def _normalize_rows(schema: Schema, rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Fill columns added after a row was written with empty cells."""
+    names = schema.names
+    return [{name: item.get(name, "") for name in names} for item in rows]
+
+
+def _with_detected_pii(schema: Schema, rows: Sequence[Mapping[str, str]]) -> Schema:
+    """Mark columns whose name or sample values look sensitive."""
+    columns: list[Column] = []
+    changed = False
+    for column in schema.columns:
+        if column.pii:
+            columns.append(column)
+            continue
+        samples = [str(row.get(column.name, "")) for row in rows[:50]]
+        kind = detect_pii(column.name, samples)
+        if kind is None and column.label != column.name:
+            kind = detect_pii(column.label, samples)
+        if kind is None:
+            columns.append(column)
+        else:
+            columns.append(replace(column, pii=kind))
+            changed = True
+    return replace(schema, columns=tuple(columns)) if changed else schema
+
+
+def _pii_names(schema: Schema) -> list[str]:
+    return [column.name for column in schema.columns if column.pii]
+
+
+def _apply_pii(
+    schema: Schema,
+    rows: list[dict[str, str]],
+    *,
+    redact_pii: bool,
+) -> tuple[Schema, list[dict[str, str]]]:
+    schema = _with_detected_pii(schema, rows)
+    return schema, (redact_rows(schema, rows) if redact_pii else rows)
+
+
+def _sniff_asset_mime(data: bytes) -> str | None:
+    """Return the media type of an image by its magic bytes.
+
+    The content type header of an upload is not trusted: an SVG or an HTML
+    document renamed to ``.png`` would end up in the app directory.
+    """
+    for mime, signature in _ASSET_SIGNATURES:
+        if data.startswith(signature):
+            return mime
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 class AppService:
@@ -465,6 +664,16 @@ class AppService:
         ws = await self._workspace(row.agent_id)
         sizes = await self._dir_sizes(ws, row.app_id)
         html_bytes = sizes.get(FILE_HTML, 0)
+        if row.storage_version >= 2:
+            # Rows live in the DB; the CSV is a create-time snapshot and must
+            # not overwrite the live data_bytes cache.
+            if html_bytes != row.html_bytes:
+                self._app_repo.set_file_stats(
+                    row.app_id,
+                    html_bytes=html_bytes,
+                    data_bytes=row.data_bytes,
+                )
+            return html_bytes, row.data_bytes
         data_bytes = 0
         for table in self.list_tables(row):
             _, data_file = table_file_names(table.table_key)
@@ -518,6 +727,81 @@ class AppService:
         agent = self._agent_repo.get(agent_id)
         return agent is not None and agent.user_id == user_id
 
+    def is_agent_accessible(self, agent_id: str, user_id: int) -> bool:
+        """True when the user may use this agent at all (owner or shared)."""
+        agent = self._agent_repo.get(agent_id)
+        if agent is None:
+            return False
+        if agent.user_id == user_id:
+            return True
+        return bool(getattr(agent, "is_shared", False))
+
+    def apps_for_agent(self, agent_id: str) -> list[LightAppRow]:
+        """Every app hosted in an agent's workspace, whoever created it."""
+        return self._app_repo.list_by_agent(agent_id)
+
+    async def transfer(
+        self,
+        row: AppRecord,
+        *,
+        target_agent_id: str,
+        actor_user_id: int,
+    ) -> LightAppRow:
+        """Move an app to another agent's workspace.
+
+        The app files are copied to the target workspace and the metadata
+        follows. The source copy is left in place: the backend protocol has no
+        portable delete, and it disappears with the source agent anyway.
+        """
+        if target_agent_id == row.agent_id:
+            raise _invalid(
+                ErrorCode.APP_SOURCE_INVALID,
+                "the app already belongs to that agent",
+            )
+        if not self.is_agent_accessible(target_agent_id, actor_user_id):
+            raise _invalid(
+                ErrorCode.APP_SOURCE_INVALID,
+                f"target agent is not accessible: {target_agent_id}",
+            )
+        source_ws = await self._workspace(row.agent_id)
+        target_ws = await self._workspace(target_agent_id)
+        async with _lock_for(row.app_id):
+            # Copy and metadata move together so an append cannot land in the
+            # source after the app has already moved.
+            await self._copy_app_files(source_ws, target_ws, row.app_id)
+            self._app_repo.set_agent_id(row.app_id, target_agent_id)
+            self._app_repo.touch(row.app_id)
+        moved = self._app_repo.get(row.app_id)
+        if moved is None:
+            raise OctopError.localized(ErrorCode.APP_NOT_FOUND)
+        return moved
+
+    async def _copy_app_files(
+        self,
+        source_ws: BackendWorkspace,
+        target_ws: BackendWorkspace,
+        app_id: str,
+    ) -> None:
+        """Copy the app directory (and its ``tables/`` subdirectory) between workspaces."""
+        for prefix in ("", f"{TABLES_DIR}/", f"{ASSETS_DIR}/"):
+            source_dir = app_path(app_id, prefix.rstrip("/")) if prefix else app_dir(app_id)
+            target_dir = app_path(app_id, prefix.rstrip("/")) if prefix else app_dir(app_id)
+            result = await source_ws.als(source_dir)
+            entries = list(getattr(result, "entries", None) or []) if result is not None else []
+            for entry in entries:
+                if _entry_field(entry, "is_dir"):
+                    continue
+                path = str(_entry_field(entry, "path") or "").replace("\\", "/")
+                name = path.rsplit("/", 1)[-1]
+                if not name or name.startswith("."):
+                    continue
+                # Read through the known directory rather than the entry's own
+                # path: backends report different shapes (relative vs root).
+                data = await source_ws.adownload_bytes(f"{source_dir}/{name}")
+                if data is None:
+                    continue
+                await target_ws.aupload_bytes(f"{target_dir}/{name}", data)
+
     # ----- workspace helpers -----
 
     async def _workspace(self, agent_id: str) -> BackendWorkspace:
@@ -527,6 +811,19 @@ class AppService:
         return ws
 
     async def _read_schema(
+        self,
+        ws: BackendWorkspace,
+        app_id: str,
+        table_key: str = MAIN_TABLE_KEY,
+    ) -> Schema:
+        app = self._app_repo.get(app_id)
+        if app is not None and app.storage_version >= 2:
+            stored = self._app_repo.get_table_schema(app_id, table_key)
+            if stored is not None:
+                return parse_schema_payload(stored[0])
+        return await self._read_schema_file(ws, app_id, table_key)
+
+    async def _read_schema_file(
         self,
         ws: BackendWorkspace,
         app_id: str,
@@ -542,7 +839,7 @@ class AppService:
             )
         return parse_schema_payload(text)
 
-    async def _read_rows(
+    async def _read_rows_file(
         self,
         ws: BackendWorkspace,
         app_id: str,
@@ -560,6 +857,54 @@ class AppService:
                 f"failed to read app data file for table {table_key!r}",
             )
         return parse_csv(text, schema)
+
+    async def _ensure_db_rows(self, row: AppRecord) -> bool:
+        """Migrate a legacy CSV app into the DB on first access.
+
+        Returns True when the app is on DB storage. A migration failure keeps
+        the app on CSV storage (the caller falls back) rather than losing rows.
+        """
+        if row.storage_version >= 2:
+            return True
+        async with _lock_for(row.app_id):
+            current = self._app_repo.get(row.app_id)
+            if current is None:
+                raise OctopError.localized(ErrorCode.APP_NOT_FOUND)
+            if current.storage_version >= 2:
+                return True
+            try:
+                ws = await self._workspace(current.agent_id)
+                self._ensure_main_table(current)
+                for table in self.list_tables(current):
+                    schema = await self._read_schema_file(ws, current.app_id, table.table_key)
+                    rows = await self._read_rows_file(
+                        ws,
+                        current.app_id,
+                        schema,
+                        table.table_key,
+                    )
+                    self._app_repo.set_table_schema(
+                        current.app_id,
+                        table.table_key,
+                        schema.to_json(),
+                        schema.version,
+                    )
+                    self._app_repo.replace_data_rows(
+                        current.app_id,
+                        table.table_key,
+                        rows,
+                        source="migration",
+                    )
+                self._app_repo.set_storage_version(current.app_id, 2)
+                await self._refresh_manifest(ws, current.app_id)
+                return True
+            except Exception:
+                logger.warning(
+                    "light app %s migration to DB storage failed; keeping CSV",
+                    current.app_id,
+                    exc_info=True,
+                )
+                return False
 
     def _require_live(self, app_id: str) -> None:
         if self._app_repo.get(app_id) is None:
@@ -659,6 +1004,7 @@ class AppService:
             "owner_user_id": row.owner_user_id,
             "row_count": row.row_count,
             "schema_version": main_version,
+            "data_storage": ("control-plane-db" if row.storage_version >= 2 else "workspace-csv"),
             "created_at": row.created_at,
             "updated_at": row.updated_at,
             "tables": tables,
@@ -692,6 +1038,67 @@ class AppService:
         except Exception:
             logger.warning("failed to refresh app manifest: %s", app_id, exc_info=True)
 
+    # ----- app templates (expert-provided shells) -----
+
+    async def list_app_templates(self, agent_id: str) -> list[dict[str, Any]]:
+        """List the app shells seeded from an expert's ``app_templates/``."""
+        ws = await self._workspace(agent_id)
+        result = await ws.aglob("app_templates/*/schema.json")
+        matches = list(getattr(result, "matches", None) or []) if result is not None else []
+        names: set[str] = set()
+        for entry in matches:
+            path = str(_entry_field(entry, "path") or "").replace("\\", "/")
+            parts = [part for part in path.split("/") if part]
+            if len(parts) >= 2 and parts[-1] == "schema.json":
+                names.add(parts[-2])
+        templates: list[dict[str, Any]] = []
+        for name in sorted(names):
+            if not name or name.startswith("."):
+                continue
+            templates.append(
+                {
+                    "template": name,
+                    "label": name,
+                    "has_html": await ws.aexists(f"app_templates/{name}/app.html"),
+                }
+            )
+        return templates
+
+    async def create_from_template(
+        self,
+        *,
+        agent_id: str,
+        owner_user_id: int,
+        template: str,
+        name: str | None = None,
+        description: str = "",
+    ) -> LightAppRow:
+        """Create an empty app from an expert-provided shell (schema + HTML)."""
+        clean = template.strip()
+        if not clean or "/" in clean or clean.startswith("."):
+            raise _invalid(ErrorCode.APP_NOT_FOUND, f"unknown app template: {template!r}")
+        ws = await self._workspace(agent_id)
+        schema_text = await ws.aread_text(f"app_templates/{clean}/schema.json")
+        if schema_text is None:
+            raise _invalid(ErrorCode.APP_NOT_FOUND, f"unknown app template: {clean}")
+        row = await self.create(
+            agent_id=agent_id,
+            owner_user_id=owner_user_id,
+            name=(name or clean).strip() or clean,
+            description=description,
+            columns=schema_text,
+        )
+        html = await ws.aread_text(f"app_templates/{clean}/app.html")
+        if html:
+            try:
+                await self.write_html(row, html)
+            except Exception:
+                # Do not leave an empty app behind when the template shell is
+                # rejected by the HTML sandbox rules.
+                await self.delete(row)
+                raise
+        return row
+
     # ----- create / metadata -----
 
     async def create(
@@ -720,6 +1127,7 @@ class AppService:
             owner_user_id=owner_user_id,
             name=clean_name,
             description=clean_description,
+            storage_version=2,
         )
         try:
             empty_csv = render_csv(schema, [])
@@ -727,6 +1135,12 @@ class AppService:
             await ws.awrite_text(app_path(app_id, FILE_DATA), empty_csv)
             data_bytes = len(empty_csv.encode("utf-8"))
             self._app_repo.create_table(app_id, MAIN_TABLE_KEY)
+            self._app_repo.set_table_schema(
+                app_id,
+                MAIN_TABLE_KEY,
+                schema.to_json(),
+                schema.version,
+            )
             self._app_repo.set_table_stats(
                 app_id,
                 MAIN_TABLE_KEY,
@@ -860,6 +1274,7 @@ class AppService:
                 {schema_file: schema.to_json(), data_file: empty_csv},
             )
             self._app_repo.create_table(row.app_id, key, clean_label)
+            self._app_repo.set_table_schema(row.app_id, key, schema.to_json(), schema.version)
             self._app_repo.set_table_stats(
                 row.app_id,
                 key,
@@ -939,6 +1354,7 @@ class AppService:
                 continue
             schema_file, data_file = table_file_names(table.table_key)
             names.extend((schema_file, data_file))
+        names.extend(f"{ASSETS_DIR}/{asset}" for asset in await self.list_assets(row))
         return [
             AppFile(
                 name=name,
@@ -947,6 +1363,66 @@ class AppService:
             )
             for name in names
         ]
+
+    # ----- assets -----
+
+    async def save_asset(self, row: AppRecord, name: str, data: bytes) -> str:
+        """Store an image next to the app and return its name.
+
+        The app page may not load remote images, so covers and icons live in
+        the app's own directory and are served through the app ACL.
+        """
+        clean = name.strip()
+        if not ASSET_NAME_RE.match(clean) or ".." in clean:
+            raise _invalid(
+                ErrorCode.APP_SOURCE_INVALID,
+                f"invalid asset name: {name!r}",
+            )
+        if not data:
+            raise _invalid(ErrorCode.APP_SOURCE_INVALID, "asset is empty")
+        if len(data) > MAX_ASSET_BYTES:
+            raise _invalid(
+                ErrorCode.APP_SOURCE_INVALID,
+                f"asset exceeds the {MAX_ASSET_BYTES // (1024 * 1024)} MB limit",
+            )
+        if _sniff_asset_mime(data) is None:
+            raise _invalid(
+                ErrorCode.APP_SOURCE_INVALID,
+                "asset must be a PNG, JPEG, WebP or GIF image",
+            )
+        ws = await self._workspace(row.agent_id)
+        async with _lock_for(row.app_id):
+            self._require_live(row.app_id)
+            await ws.aupload_bytes(app_path(row.app_id, f"{ASSETS_DIR}/{clean}"), data)
+            self._app_repo.touch(row.app_id)
+        return clean
+
+    async def read_asset(self, row: AppRecord, name: str) -> tuple[str, bytes]:
+        """Read one asset and its media type."""
+        clean = name.strip()
+        if not ASSET_NAME_RE.match(clean) or ".." in clean:
+            raise _invalid(ErrorCode.APP_SOURCE_INVALID, f"invalid asset name: {name!r}")
+        ws = await self._workspace(row.agent_id)
+        data = await ws.adownload_bytes(app_path(row.app_id, f"{ASSETS_DIR}/{clean}"))
+        if data is None:
+            raise _invalid(ErrorCode.APP_SOURCE_INVALID, f"asset not found: {clean}")
+        mime = _sniff_asset_mime(data) or "application/octet-stream"
+        return mime, data
+
+    async def list_assets(self, row: AppRecord) -> list[str]:
+        """Names of the assets stored next to the app."""
+        ws = await self._workspace(row.agent_id)
+        result = await ws.als(app_path(row.app_id, ASSETS_DIR))
+        entries = list(getattr(result, "entries", None) or []) if result is not None else []
+        names: list[str] = []
+        for entry in entries:
+            if _entry_field(entry, "is_dir"):
+                continue
+            path = str(_entry_field(entry, "path") or "").replace("\\", "/")
+            name = path.rsplit("/", 1)[-1]
+            if name and ASSET_NAME_RE.match(name):
+                names.append(name)
+        return sorted(names)
 
     async def write_html(self, row: AppRecord, html: str) -> int:
         content = validate_html(html)
@@ -974,28 +1450,79 @@ class AppService:
         limit: int = MAX_ROW_READ,
         offset: int = 0,
         table: str = MAIN_TABLE_KEY,
+        redact_pii: bool = False,
     ) -> tuple[Schema, list[dict[str, str]], int]:
+        schema, rows, _meta, total = await self.read_rows_detailed(
+            row,
+            limit=limit,
+            offset=offset,
+            table=table,
+            redact_pii=redact_pii,
+        )
+        return schema, rows, total
+
+    async def read_rows_detailed(
+        self,
+        row: AppRecord,
+        *,
+        limit: int = MAX_ROW_READ,
+        offset: int = 0,
+        table: str = MAIN_TABLE_KEY,
+        redact_pii: bool = False,
+    ) -> tuple[Schema, list[dict[str, str]], list[dict[str, Any]], int]:
+        """Read a page plus per-row ``row_id``/``version`` metadata."""
         key = self._require_table(row, table)
         safe_limit = max(1, min(int(limit), MAX_ROW_READ))
         safe_offset = max(0, int(offset))
+        await self._ensure_db_rows(row)
         async with _lock_for(row.app_id):
             self._require_live(row.app_id)
-            ws = await self._workspace(row.agent_id)
-            schema = await self._read_schema(ws, row.app_id, key)
-            rows = await self._read_rows(ws, row.app_id, schema, key)
+            current = self._app_repo.get(row.app_id) or row
+            ws = await self._workspace(current.agent_id)
+            schema = await self._read_schema(ws, current.app_id, key)
+            if current.storage_version >= 2:
+                data_page, total = self._app_repo.list_data_rows(
+                    current.app_id,
+                    key,
+                    limit=safe_limit,
+                    offset=safe_offset,
+                )
+                rows_page = _normalize_rows(schema, [item.values for item in data_page])
+                schema, rows_page = _apply_pii(schema, rows_page, redact_pii=redact_pii)
+                return (
+                    schema,
+                    rows_page,
+                    [
+                        {
+                            "row_id": item.row_id,
+                            "version": item.version,
+                            "source": item.source,
+                        }
+                        for item in data_page
+                    ],
+                    total,
+                )
+            rows = await self._read_rows_file(ws, current.app_id, schema, key)
             total = len(rows)
             # ``row_count`` is a list-view cache; reconcile it when a file-level
             # edit (or an interrupted append) made it drift from the CSV.
             # Reads must not bump updated_at or the list re-sorts on every GET.
-            cached = self._app_repo.get_table(row.app_id, key)
+            cached = self._app_repo.get_table(current.app_id, key)
             if cached is not None:
                 if total != cached.row_count:
-                    self._app_repo.set_table_row_count(row.app_id, key, total)
-                    self._app_repo.refresh_app_totals(row.app_id)
-            elif key == MAIN_TABLE_KEY and total != row.row_count:
+                    self._app_repo.set_table_row_count(current.app_id, key, total)
+                    self._app_repo.refresh_app_totals(current.app_id)
+            elif key == MAIN_TABLE_KEY and total != current.row_count:
                 # Legacy app: only ``light_apps.row_count`` tracks the main CSV.
-                self._app_repo.set_row_count(row.app_id, total, touch=False)
-            return schema, rows[safe_offset : safe_offset + safe_limit], total
+                self._app_repo.set_row_count(current.app_id, total, touch=False)
+            rows_page = rows[safe_offset : safe_offset + safe_limit]
+            schema, rows_page = _apply_pii(schema, rows_page, redact_pii=redact_pii)
+            return (
+                schema,
+                rows_page,
+                [{"row_id": "", "version": 1, "source": "manual"} for _ in rows_page],
+                total,
+            )
 
     async def query_rows(
         self,
@@ -1005,8 +1532,29 @@ class AppService:
         filters: Mapping[str, object] | None = None,
         limit: int = MAX_ROW_READ,
         offset: int = 0,
+        redact_pii: bool = False,
     ) -> tuple[Schema, list[dict[str, str]], int]:
-        """Read rows of one table, keeping only rows matching *filters*.
+        schema, rows, _meta, total = await self.query_rows_detailed(
+            row,
+            table=table,
+            filters=filters,
+            limit=limit,
+            offset=offset,
+            redact_pii=redact_pii,
+        )
+        return schema, rows, total
+
+    async def query_rows_detailed(
+        self,
+        row: AppRecord,
+        *,
+        table: str = MAIN_TABLE_KEY,
+        filters: Mapping[str, object] | None = None,
+        limit: int = MAX_ROW_READ,
+        offset: int = 0,
+        redact_pii: bool = False,
+    ) -> tuple[Schema, list[dict[str, str]], list[dict[str, Any]], int]:
+        """Read filtered rows plus per-row ``row_id``/``version`` metadata.
 
         Filter values compare case-insensitively against the stored cell text;
         unknown filter columns raise instead of silently matching nothing.
@@ -1015,10 +1563,12 @@ class AppService:
         clean_filters = {str(col).strip(): str(val) for col, val in (filters or {}).items()}
         safe_limit = max(1, min(int(limit), MAX_ROW_READ))
         safe_offset = max(0, int(offset))
+        await self._ensure_db_rows(row)
         async with _lock_for(row.app_id):
             self._require_live(row.app_id)
-            ws = await self._workspace(row.agent_id)
-            schema = await self._read_schema(ws, row.app_id, key)
+            current = self._app_repo.get(row.app_id) or row
+            ws = await self._workspace(current.agent_id)
+            schema = await self._read_schema(ws, current.app_id, key)
             for column in clean_filters:
                 if schema.column(column) is None:
                     raise _invalid(
@@ -1026,15 +1576,36 @@ class AppService:
                         f"unknown filter column: {column!r}",
                         table=key,
                     )
-            rows = await self._read_rows(ws, row.app_id, schema, key)
+            if current.storage_version >= 2:
+                data_rows = self._app_repo.list_all_data_rows(current.app_id, key)
+                rows = _normalize_rows(schema, [item.values for item in data_rows])
+                meta = [
+                    {
+                        "row_id": item.row_id,
+                        "version": item.version,
+                        "source": item.source,
+                    }
+                    for item in data_rows
+                ]
+            else:
+                rows = await self._read_rows_file(ws, current.app_id, schema, key)
+                meta = [{"row_id": "", "version": 1, "source": "manual"} for _ in rows]
         if clean_filters:
             wanted = {col: val.strip().lower() for col, val in clean_filters.items()}
-            rows = [
-                item
-                for item in rows
+            keep = [
+                index
+                for index, item in enumerate(rows)
                 if all(item.get(col, "").strip().lower() == val for col, val in wanted.items())
             ]
-        return schema, rows[safe_offset : safe_offset + safe_limit], len(rows)
+            rows = [rows[index] for index in keep]
+            meta = [meta[index] for index in keep]
+        end = safe_offset + safe_limit
+        schema, page = _apply_pii(
+            schema,
+            rows[safe_offset:end],
+            redact_pii=redact_pii,
+        )
+        return schema, page, meta[safe_offset:end], len(rows)
 
     async def append_row(
         self,
@@ -1042,14 +1613,74 @@ class AppService:
         values: Mapping[str, object],
         *,
         table: str = MAIN_TABLE_KEY,
+        client_request_id: str | None = None,
+        source: str = "manual",
+        source_id: str | None = None,
+        source_key: str | None = None,
+        created_by: int | None = None,
     ) -> tuple[int, dict[str, str]]:
+        index, stored = await self.append_row_record(
+            row,
+            values,
+            table=table,
+            client_request_id=client_request_id,
+            source=source,
+            source_id=source_id,
+            source_key=source_key,
+            created_by=created_by,
+        )
+        return index, stored.values
+
+    async def append_row_record(
+        self,
+        row: AppRecord,
+        values: Mapping[str, object],
+        *,
+        table: str = MAIN_TABLE_KEY,
+        client_request_id: str | None = None,
+        source: str = "manual",
+        source_id: str | None = None,
+        source_key: str | None = None,
+        created_by: int | None = None,
+    ) -> tuple[int, LightAppDataRow]:
         key = self._require_table(row, table)
+        await self._ensure_db_rows(row)
         async with _lock_for(row.app_id):
             self._require_live(row.app_id)
             self._ensure_main_table(row)
-            ws = await self._workspace(row.agent_id)
-            schema = await self._read_schema(ws, row.app_id, key)
-            rows = await self._read_rows(ws, row.app_id, schema, key)
+            current = self._app_repo.get(row.app_id) or row
+            ws = await self._workspace(current.agent_id)
+            schema = await self._read_schema(ws, current.app_id, key)
+            if current.storage_version >= 2:
+                if self._app_repo.count_data_rows(current.app_id, key) >= MAX_ROWS:
+                    raise _invalid(
+                        ErrorCode.APP_LIMIT_EXCEEDED,
+                        f"table has reached the {MAX_ROWS}-row limit",
+                        limit=MAX_ROWS,
+                    )
+                normalized = validate_row(schema, values)
+                table_view = self._app_repo.get_table(current.app_id, key)
+                current_bytes = table_view.data_bytes if table_view is not None else 0
+                payload_bytes = len(json.dumps(normalized, ensure_ascii=False).encode("utf-8"))
+                if current_bytes + payload_bytes > MAX_CSV_BYTES:
+                    raise _invalid(
+                        ErrorCode.APP_LIMIT_EXCEEDED,
+                        f"table data would exceed {MAX_CSV_BYTES // (1024 * 1024)} MB",
+                        limit=MAX_CSV_BYTES,
+                    )
+                index, stored = self._app_repo.append_data_row(
+                    current.app_id,
+                    key,
+                    normalized,
+                    source=source,
+                    source_id=source_id,
+                    source_key=source_key,
+                    client_request_id=client_request_id,
+                    created_by=created_by,
+                )
+                await self._refresh_manifest(ws, current.app_id)
+                return index, stored
+            rows = await self._read_rows_file(ws, current.app_id, schema, key)
             if len(rows) >= MAX_ROWS:
                 raise _invalid(
                     ErrorCode.APP_LIMIT_EXCEEDED,
@@ -1058,8 +1689,18 @@ class AppService:
                 )
             normalized = validate_row(schema, values)
             rows.append(normalized)
-            await self._persist_rows(ws, row, key, schema, rows)
-            return len(rows) - 1, normalized
+            await self._persist_rows(ws, current, key, schema, rows)
+            ts = int(time.time())
+            return len(rows) - 1, LightAppDataRow(
+                row_id="",
+                app_id=current.app_id,
+                table_key=key,
+                values=normalized,
+                version=1,
+                source=source,
+                created_at=ts,
+                updated_at=ts,
+            )
 
     async def _persist_rows(
         self,
@@ -1089,12 +1730,48 @@ class AppService:
         self._app_repo.touch(row.app_id)
         await self._refresh_manifest(ws, row.app_id)
 
+    async def _persist_schema(
+        self,
+        ws: BackendWorkspace,
+        app_id: str,
+        key: str,
+        schema: Schema,
+    ) -> None:
+        """Persist schema metadata (PII flags) without bumping its version."""
+        schema_file, _data_file = table_file_names(key)
+        schema_text = schema.to_json()
+        await self._write_atomic(ws, app_id, {schema_file: schema_text})
+        self._app_repo.set_table_schema(app_id, key, schema_text, schema.version)
+
     async def save_import_file(self, row: AppRecord, *, filename: str, data: bytes) -> str:
         """Store an uploaded import file under ``inbound/imports/`` in the workspace."""
         ws = await self._workspace(row.agent_id)
         path = f"{IMPORT_DIR}/{new_short_id(8)}-{_safe_import_filename(filename)}"
         await ws.aupload_bytes(path, data)
         return path
+
+    async def read_workspace_file(self, agent_id: str, path: str) -> bytes:
+        """Read a workspace file (a path outside the app's own directory)."""
+        source_path = _safe_import_path(path)
+        ws = await self._workspace(agent_id)
+        data = await ws.adownload_bytes(source_path)
+        if data is None:
+            raise _invalid(
+                ErrorCode.APP_ROW_INVALID,
+                f"file not found: {source_path}",
+            )
+        return data
+
+    async def inspect_workspace_file(self, agent_id: str, path: str) -> dict[str, Any]:
+        """Inspect a spreadsheet in the agent workspace and return a report.
+
+        The report is a compact description of the file — sheets, headers,
+        column statistics and a few sample rows — so an agent can propose a
+        schema without reading the whole file into its context.
+        """
+        source_path = _safe_import_path(path)
+        data = await self.read_workspace_file(agent_id, source_path)
+        return inspect_file(source_path, data)
 
     async def import_from_file(
         self,
@@ -1105,8 +1782,18 @@ class AppService:
         mode: str = IMPORT_MODE_APPEND,
         mapping: Mapping[str, str] | None = None,
         data: bytes | None = None,
+        sheet: str | None = None,
+        header_row: int | None = None,
+        dry_run: bool = False,
+        upsert_key: list[str] | None = None,
+        include_pii: bool = False,
     ) -> ImportResult:
-        """Parse a workspace file (or raw bytes) and import it into one table."""
+        """Parse a workspace file (or raw bytes) and import it into one table.
+
+        ``sheet`` and ``header_row`` point at the part of the file to import
+        (an Excel worksheet and its header line). ``dry_run`` validates and
+        counts the rows without writing anything.
+        """
         source_path = _safe_import_path(path)
         if data is None:
             ws = await self._workspace(row.agent_id)
@@ -1116,13 +1803,78 @@ class AppService:
                     ErrorCode.APP_ROW_INVALID,
                     f"import file not found: {source_path}",
                 )
-        records = parse_import_file(source_path, data)
+        records = parse_import_file(
+            source_path,
+            data,
+            sheet=sheet,
+            header_row=header_row,
+        )
         if not records:
             raise _invalid(
                 ErrorCode.APP_ROW_INVALID,
                 f"import file has no data rows: {source_path}",
             )
-        return await self.import_rows(row, records, table=table, mode=mode, mapping=mapping)
+        return await self.import_rows(
+            row,
+            records,
+            table=table,
+            mode=mode,
+            mapping=mapping,
+            dry_run=dry_run,
+            upsert_key=upsert_key,
+            include_pii=include_pii,
+        )
+
+    async def import_from_files(
+        self,
+        row: AppRecord,
+        *,
+        paths: list[str],
+        table: str = MAIN_TABLE_KEY,
+        mode: str = IMPORT_MODE_APPEND,
+        mapping: Mapping[str, str] | None = None,
+        sheet: str | None = None,
+        header_row: int | None = None,
+        dry_run: bool = False,
+        upsert_key: list[str] | None = None,
+        include_pii: bool = False,
+    ) -> ImportResult:
+        """Import a batch of workspace files into one table, in order."""
+        if not paths:
+            raise _invalid(ErrorCode.APP_ROW_INVALID, "no import files were given")
+        ws = await self._workspace(row.agent_id)
+        records: list[dict[str, str]] = []
+        for path in paths:
+            source_path = _safe_import_path(path)
+            data = await ws.adownload_bytes(source_path)
+            if data is None:
+                raise _invalid(
+                    ErrorCode.APP_ROW_INVALID,
+                    f"import file not found: {source_path}",
+                )
+            records.extend(
+                parse_import_file(
+                    source_path,
+                    data,
+                    sheet=sheet,
+                    header_row=header_row,
+                )
+            )
+        if not records:
+            raise _invalid(
+                ErrorCode.APP_ROW_INVALID,
+                "import files have no data rows",
+            )
+        return await self.import_rows(
+            row,
+            records,
+            table=table,
+            mode=mode,
+            mapping=mapping,
+            dry_run=dry_run,
+            upsert_key=upsert_key,
+            include_pii=include_pii,
+        )
 
     async def import_rows(
         self,
@@ -1132,12 +1884,17 @@ class AppService:
         table: str = MAIN_TABLE_KEY,
         mode: str = IMPORT_MODE_APPEND,
         mapping: Mapping[str, str] | None = None,
+        dry_run: bool = False,
+        upsert_key: list[str] | None = None,
+        include_pii: bool = False,
+        source: str = "import",
     ) -> ImportResult:
         """Validate and write parsed records into one table (append or replace).
 
         Rows that fail validation are skipped and counted, not fatal; a
         replace that would wipe the table because *every* record failed is
-        rejected instead of silently emptying it.
+        rejected instead of silently emptying it. With ``dry_run`` the rows
+        are validated and counted but nothing is written.
         """
         if mode not in IMPORT_MODES:
             raise _invalid(
@@ -1152,11 +1909,13 @@ class AppService:
                 f"import file exceeds the {MAX_ROWS}-row limit",
                 limit=MAX_ROWS,
             )
+        await self._ensure_db_rows(row)
         async with _lock_for(row.app_id):
             self._require_live(row.app_id)
             self._ensure_main_table(row)
-            ws = await self._workspace(row.agent_id)
-            schema = await self._read_schema(ws, row.app_id, key)
+            current = self._app_repo.get(row.app_id) or row
+            ws = await self._workspace(current.agent_id)
+            schema = await self._read_schema(ws, current.app_id, key)
             source_map = (
                 {str(src).strip(): str(dst).strip() for src, dst in mapping.items()}
                 if mapping
@@ -1168,48 +1927,505 @@ class AppService:
                     ErrorCode.APP_SCHEMA_INVALID,
                     f"unknown target columns: {', '.join(sorted(unknown))}",
                 )
+            if upsert_key:
+                unknown_keys = set(upsert_key) - set(schema.names)
+                if unknown_keys:
+                    raise _invalid(
+                        ErrorCode.APP_SCHEMA_INVALID,
+                        f"unknown upsert columns: {', '.join(sorted(unknown_keys))}",
+                    )
+            targets = [
+                {dst: str(record.get(src, "")) for src, dst in source_map.items()}
+                for record in clean
+            ]
+            schema_with_pii = _with_detected_pii(schema, targets)
+            pii_changed = schema_with_pii is not schema
+            schema = schema_with_pii
+            pii_columns = _pii_names(schema)
+            blocked_pii = [] if include_pii else pii_columns
+            required_blocked = [
+                name
+                for name in blocked_pii
+                if (column := schema.column(name)) is not None and column.required
+            ]
+            if required_blocked:
+                raise _invalid(
+                    ErrorCode.APP_ROW_INVALID,
+                    (
+                        "sensitive required columns cannot be skipped: "
+                        f"{', '.join(required_blocked)}; pass include_pii=true "
+                        "to import them, or make them optional"
+                    ),
+                    blocked_pii=required_blocked,
+                )
             imported_rows: list[dict[str, str]] = []
             errors: list[str] = []
-            for index, record in enumerate(clean):
-                target = {dst: str(record.get(src, "")) for src, dst in source_map.items()}
+            failed_rows: list[dict[str, Any]] = []
+            for index, target in enumerate(targets):
+                if blocked_pii:
+                    target = {
+                        name: ("" if name in blocked_pii else value)
+                        for name, value in target.items()
+                    }
                 try:
                     imported_rows.append(validate_row(schema, target))
                 except OctopError as exc:
                     if len(errors) < MAX_IMPORT_ERRORS:
                         errors.append(f"row {index + 1}: {exc.message}")
+                    if len(failed_rows) < MAX_FAILED_ROWS:
+                        failed_rows.append(
+                            {"row": index + 1, "values": target, "error": exc.message}
+                        )
                     continue
-            if mode == IMPORT_MODE_REPLACE:
-                # Replace always writes the whole table, so an empty result
-                # wipes it. That is never what "import zero records" means:
-                # either every row failed validation, or the source returned
-                # nothing (a connector can transiently do that). Refuse both
-                # instead of destroying the user's data.
-                if not imported_rows:
-                    raise _invalid(
-                        ErrorCode.APP_ROW_INVALID,
-                        (
-                            "every row failed validation; table left unchanged"
-                            if clean
-                            else "no records to import; table left unchanged"
-                        ),
-                        errors=errors,
+            warnings: list[str] = []
+            for name in pii_columns:
+                column = schema.column(name)
+                kind = column.pii if column is not None else "sensitive"
+                if name in blocked_pii:
+                    warnings.append(
+                        f"column {name!r} looks like {kind}; values were not imported "
+                        "(pass include_pii=true to keep them)"
                     )
-                rows = imported_rows
+                else:
+                    warnings.append(
+                        f"column {name!r} looks like {kind}; imported as sensitive data"
+                    )
+            # Replace always writes the whole table, so an empty result wipes
+            # it. That is never what "import zero records" means: either every
+            # row failed validation, or the source returned nothing (a
+            # connector can transiently do that). Refuse both instead of
+            # destroying the user's data.
+            if mode == IMPORT_MODE_REPLACE and not imported_rows:
+                raise _invalid(
+                    ErrorCode.APP_ROW_INVALID,
+                    (
+                        "every row failed validation; table left unchanged"
+                        if clean
+                        else "no records to import; table left unchanged"
+                    ),
+                    errors=errors,
+                )
+            if current.storage_version >= 2:
+                existing_count = (
+                    0
+                    if mode == IMPORT_MODE_REPLACE
+                    else self._app_repo.count_data_rows(current.app_id, key)
+                )
+                if existing_count + len(imported_rows) > MAX_ROWS:
+                    raise _invalid(
+                        ErrorCode.APP_LIMIT_EXCEEDED,
+                        f"table has reached the {MAX_ROWS}-row limit",
+                        limit=MAX_ROWS,
+                    )
+                table_view = self._app_repo.get_table(current.app_id, key)
+                current_bytes = (
+                    0
+                    if mode == IMPORT_MODE_REPLACE
+                    else (table_view.data_bytes if table_view is not None else 0)
+                )
+                added_bytes = sum(
+                    len(json.dumps(item, ensure_ascii=False).encode("utf-8"))
+                    for item in imported_rows
+                )
+                if current_bytes + added_bytes > MAX_CSV_BYTES:
+                    raise _invalid(
+                        ErrorCode.APP_LIMIT_EXCEEDED,
+                        f"table data would exceed {MAX_CSV_BYTES // (1024 * 1024)} MB",
+                        limit=MAX_CSV_BYTES,
+                    )
+                if dry_run:
+                    return ImportResult(
+                        imported=0,
+                        skipped=len(clean) - len(imported_rows),
+                        errors=errors,
+                        warnings=warnings,
+                        would_import=len(imported_rows),
+                        dry_run=True,
+                        pii_columns=pii_columns,
+                        blocked_pii=blocked_pii,
+                        failed_rows=failed_rows,
+                    )
+                if pii_changed:
+                    await self._persist_schema(ws, current.app_id, key, schema)
+                updated_count = 0
+                if mode == IMPORT_MODE_REPLACE:
+                    self._app_repo.replace_data_rows(current.app_id, key, imported_rows)
+                elif upsert_key:
+                    for item in imported_rows:
+                        key_values = [item.get(name, "") for name in upsert_key]
+                        if any(value == "" for value in key_values):
+                            self._app_repo.append_data_row(
+                                current.app_id,
+                                key,
+                                item,
+                                source=source,
+                            )
+                            continue
+                        source_key = "|".join(key_values)
+                        existing_row = self._app_repo.find_data_row_by_source(
+                            current.app_id,
+                            key,
+                            source,
+                            source_key,
+                        )
+                        if existing_row is None:
+                            self._app_repo.append_data_row(
+                                current.app_id,
+                                key,
+                                item,
+                                source=source,
+                                source_id=source,
+                                source_key=source_key,
+                            )
+                        else:
+                            self._app_repo.update_data_row(
+                                current.app_id,
+                                existing_row.row_id,
+                                item,
+                            )
+                            updated_count += 1
+                else:
+                    self._app_repo.append_data_rows(current.app_id, key, imported_rows)
+                await self._refresh_manifest(ws, current.app_id)
+                return ImportResult(
+                    imported=len(imported_rows) - updated_count,
+                    skipped=len(clean) - len(imported_rows),
+                    errors=errors,
+                    warnings=warnings,
+                    updated=updated_count,
+                    pii_columns=pii_columns,
+                    blocked_pii=blocked_pii,
+                    failed_rows=failed_rows,
+                )
+            updated_count = 0
+            if mode == IMPORT_MODE_REPLACE:
+                rows = list(imported_rows)
             else:
-                rows = await self._read_rows(ws, row.app_id, schema, key)
-                rows = rows + imported_rows
+                rows = await self._read_rows_file(ws, current.app_id, schema, key)
+                if upsert_key:
+                    index_by_key = {
+                        tuple(row.get(name, "") for name in upsert_key): position
+                        for position, row in enumerate(rows)
+                    }
+                    for item in imported_rows:
+                        item_key = tuple(item.get(name, "") for name in upsert_key)
+                        if item_key in index_by_key:
+                            rows[index_by_key[item_key]] = item
+                            updated_count += 1
+                        else:
+                            index_by_key[item_key] = len(rows)
+                            rows.append(item)
+                else:
+                    rows = rows + imported_rows
             if len(rows) > MAX_ROWS:
                 raise _invalid(
                     ErrorCode.APP_LIMIT_EXCEEDED,
                     f"table has reached the {MAX_ROWS}-row limit",
                     limit=MAX_ROWS,
                 )
-            await self._persist_rows(ws, row, key, schema, rows)
+            if dry_run:
+                # Everything above (limits, validation, the replace guard) is
+                # the real work; only the write is skipped.
+                return ImportResult(
+                    imported=0,
+                    skipped=len(clean) - len(imported_rows),
+                    errors=errors,
+                    warnings=warnings,
+                    would_import=len(imported_rows),
+                    dry_run=True,
+                    pii_columns=pii_columns,
+                    blocked_pii=blocked_pii,
+                    failed_rows=failed_rows,
+                )
+            if pii_changed:
+                await self._persist_schema(ws, current.app_id, key, schema)
+            await self._persist_rows(ws, current, key, schema, rows)
             return ImportResult(
-                imported=len(imported_rows),
+                imported=len(imported_rows) - updated_count,
                 skipped=len(clean) - len(imported_rows),
                 errors=errors,
+                warnings=warnings,
+                updated=updated_count,
+                pii_columns=pii_columns,
+                blocked_pii=blocked_pii,
+                failed_rows=failed_rows,
             )
+
+    async def update_row(
+        self,
+        row: AppRecord,
+        row_id: str,
+        values: Mapping[str, object],
+        *,
+        table: str = MAIN_TABLE_KEY,
+        expected_version: int | None = None,
+    ) -> dict[str, Any]:
+        """Update one row with an optional version check (CAS)."""
+        key = self._require_table(row, table)
+        await self._ensure_db_rows(row)
+        async with _lock_for(row.app_id):
+            self._require_live(row.app_id)
+            current = self._app_repo.get(row.app_id) or row
+            if current.storage_version < 2:
+                raise _invalid(
+                    ErrorCode.APP_ROW_NOT_FOUND,
+                    f"row not found: {row_id}",
+                )
+            ws = await self._workspace(current.agent_id)
+            schema = await self._read_schema(ws, current.app_id, key)
+            existing_row = self._app_repo.get_data_row(current.app_id, row_id)
+            if existing_row is None:
+                raise _invalid(ErrorCode.APP_ROW_NOT_FOUND, f"row not found: {row_id}")
+            normalized = validate_row(schema, values)
+            table_view = self._app_repo.get_table(current.app_id, key)
+            current_bytes = table_view.data_bytes if table_view is not None else 0
+            old_bytes = len(json.dumps(existing_row.values, ensure_ascii=False).encode("utf-8"))
+            new_bytes = len(json.dumps(normalized, ensure_ascii=False).encode("utf-8"))
+            if current_bytes - old_bytes + new_bytes > MAX_CSV_BYTES:
+                raise _invalid(
+                    ErrorCode.APP_LIMIT_EXCEEDED,
+                    f"table data would exceed {MAX_CSV_BYTES // (1024 * 1024)} MB",
+                    limit=MAX_CSV_BYTES,
+                )
+            updated = self._app_repo.update_data_row(
+                current.app_id,
+                row_id,
+                normalized,
+                expected_version=expected_version,
+            )
+            if updated is None:
+                raise OctopError(
+                    ErrorCode.APP_CONFLICT,
+                    "row changed since it was read; refresh and retry",
+                )
+            await self._refresh_manifest(ws, current.app_id)
+            return {
+                "row_id": updated.row_id,
+                "values": updated.values,
+                "version": updated.version,
+            }
+
+    async def delete_row(
+        self,
+        row: AppRecord,
+        row_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> str:
+        """Delete one row with an optional version check (CAS)."""
+        await self._ensure_db_rows(row)
+        async with _lock_for(row.app_id):
+            self._require_live(row.app_id)
+            current = self._app_repo.get(row.app_id) or row
+            if current.storage_version < 2:
+                raise _invalid(ErrorCode.APP_ROW_NOT_FOUND, f"row not found: {row_id}")
+            if self._app_repo.get_data_row(current.app_id, row_id) is None:
+                raise _invalid(ErrorCode.APP_ROW_NOT_FOUND, f"row not found: {row_id}")
+            if not self._app_repo.delete_data_row(
+                current.app_id,
+                row_id,
+                expected_version=expected_version,
+            ):
+                raise OctopError(
+                    ErrorCode.APP_CONFLICT,
+                    "row changed since it was read; refresh and retry",
+                )
+            ws = await self._workspace(current.agent_id)
+            await self._refresh_manifest(ws, current.app_id)
+            return row_id
+
+    async def export_rows(
+        self,
+        row: AppRecord,
+        *,
+        table: str = MAIN_TABLE_KEY,
+        redact_pii: bool = False,
+    ) -> tuple[str, str]:
+        """Render one table as CSV (a snapshot, not the live storage)."""
+        key = self._require_table(row, table)
+        await self._ensure_db_rows(row)
+        current = self._app_repo.get(row.app_id) or row
+        ws = await self._workspace(current.agent_id)
+        schema = await self._read_schema(ws, current.app_id, key)
+        if current.storage_version >= 2:
+            rows = _normalize_rows(
+                schema,
+                [item.values for item in self._app_repo.list_all_data_rows(current.app_id, key)],
+            )
+        else:
+            rows = await self._read_rows_file(ws, current.app_id, schema, key)
+        schema, rows = _apply_pii(schema, rows, redact_pii=redact_pii)
+        return f"{key}.csv", render_csv(schema, rows)
+
+    # ----- backup / restore -----
+
+    async def backup_archive(self, row: AppRecord) -> tuple[str, bytes]:
+        """Bundle the app shell, tables and assets into one zip.
+
+        The archive is a portable snapshot: the control-plane ids are not part
+        of it, so restoring it creates a new app.
+        """
+        current = self._app_repo.get(row.app_id) or row
+        entries: list[tuple[str, bytes]] = []
+        tables: list[dict[str, Any]] = []
+        for table_view in self.list_tables(current):
+            schema = await self.read_schema(current, table_view.table_key)
+            tables.append(
+                {
+                    "table_key": table_view.table_key,
+                    "label": table_view.label,
+                    "is_main": table_view.is_main,
+                }
+            )
+            entries.append(
+                (
+                    f"{TABLES_DIR}/{table_view.table_key}/{FILE_SCHEMA}",
+                    schema.to_json().encode("utf-8"),
+                )
+            )
+            _filename, csv_text = await self.export_rows(current, table=table_view.table_key)
+            entries.append(
+                (
+                    f"{TABLES_DIR}/{table_view.table_key}/{FILE_DATA}",
+                    csv_text.encode("utf-8"),
+                )
+            )
+        html = await self.read_html(current)
+        if html:
+            entries.append((FILE_HTML, html.encode("utf-8")))
+        for asset_name in await self.list_assets(current):
+            _mime, asset_data = await self.read_asset(current, asset_name)
+            entries.append((f"{ASSETS_DIR}/{asset_name}", asset_data))
+        manifest = {
+            "format": BACKUP_FORMAT,
+            "version": BACKUP_VERSION,
+            "created_at": int(time.time()),
+            "app": {"name": current.name, "description": current.description},
+            "tables": tables,
+        }
+        entries.insert(
+            0,
+            (
+                FILE_MANIFEST,
+                json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
+            ),
+        )
+        archive = await asyncio.to_thread(_zip_entries, entries)
+        return f"light-app-{current.app_id}.zip", archive
+
+    async def restore_archive(
+        self,
+        *,
+        agent_id: str,
+        owner_user_id: int,
+        data: bytes,
+    ) -> LightAppRow:
+        """Create a new app from a backup archive produced by :meth:`backup_archive`."""
+        if len(data) > MAX_BACKUP_BYTES:
+            raise _invalid(
+                ErrorCode.APP_SOURCE_INVALID,
+                f"backup exceeds the {MAX_BACKUP_BYTES // (1024 * 1024)} MB limit",
+            )
+        try:
+            manifest, tables, html, assets = await asyncio.to_thread(_read_backup_zip, data)
+        except zipfile.BadZipFile:
+            raise _invalid(
+                ErrorCode.APP_SOURCE_INVALID, "backup is not a valid zip archive"
+            ) from None
+        except ValueError as exc:
+            raise _invalid(ErrorCode.APP_SOURCE_INVALID, f"invalid app backup: {exc}") from None
+        app_meta = manifest.get("app")
+        assert isinstance(app_meta, dict)  # _read_backup_zip validated it
+        name = str(app_meta.get("name") or "").strip() or "Restored app"
+        description = str(app_meta.get("description") or "")
+        main = tables.get(MAIN_TABLE_KEY)
+        if main is None:
+            raise _invalid(ErrorCode.APP_SOURCE_INVALID, "backup has no main table")
+        try:
+            schemas = {
+                key: json.loads(schema_bytes.decode("utf-8"))
+                for key, (_label, schema_bytes, _csv) in tables.items()
+            }
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise _invalid(
+                ErrorCode.APP_SOURCE_INVALID,
+                "backup contains an unreadable table schema",
+            ) from None
+        row = await self.create(
+            agent_id=agent_id,
+            owner_user_id=owner_user_id,
+            name=name,
+            description=description,
+            columns=schemas[MAIN_TABLE_KEY],
+        )
+        try:
+            for key, (label, _schema_bytes, _csv) in tables.items():
+                if key == MAIN_TABLE_KEY:
+                    continue
+                await self.create_table(
+                    row,
+                    table_key=key,
+                    label=label,
+                    columns=schemas[key],
+                )
+            for key, (_label, _schema_bytes, csv_bytes) in tables.items():
+                records = parse_import_file(f"{key}.csv", csv_bytes) if csv_bytes.strip() else []
+                if records:
+                    await self.import_rows(
+                        row,
+                        records,
+                        table=key,
+                        mode=IMPORT_MODE_REPLACE,
+                        source="restore",
+                    )
+            if html:
+                await self.write_html(row, html)
+            for asset_name, asset_data in assets:
+                await self.save_asset(row, asset_name, asset_data)
+        except Exception:
+            logger.warning("failed to restore app, cleaning up: %s", row.app_id, exc_info=True)
+            await self.delete(row)
+            raise
+        return self.get(row.app_id)
+
+    # ----- public links -----
+
+    def get_publication(self, row: AppRecord) -> LightAppPublicationRow | None:
+        return self._app_repo.get_publication(row.app_id)
+
+    def create_publication(
+        self,
+        row: AppRecord,
+        *,
+        user_id: int,
+        ttl_days: int = 0,
+    ) -> tuple[str, int | None]:
+        """Create (or rotate) the read-only public token; returns it once."""
+        token = secrets.token_urlsafe(32)
+        expires_at = int(time.time()) + ttl_days * 86400 if ttl_days > 0 else None
+        self._app_repo.upsert_publication(
+            row.app_id,
+            token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            created_by=user_id,
+            expires_at=expires_at,
+        )
+        return token, expires_at
+
+    def revoke_publication(self, row: AppRecord) -> bool:
+        return self._app_repo.revoke_publication(row.app_id)
+
+    def resolve_public_app(self, token: str) -> AppRecord | None:
+        clean = token.strip()
+        if not clean:
+            return None
+        publication = self._app_repo.get_publication_by_hash(
+            hashlib.sha256(clean.encode("utf-8")).hexdigest()
+        )
+        if publication is None or publication.revoked_at is not None:
+            return None
+        if publication.expires_at is not None and publication.expires_at <= int(time.time()):
+            return None
+        return self._app_repo.get(publication.app_id)
 
     # ----- data sources -----
 
@@ -1260,9 +2476,16 @@ class AppService:
             for src, dst in (mapping or {}).items()
             if str(src).strip() and str(dst).strip()
         }
+        existing = self._app_repo.get_source(row.app_id, source_id)
+        if existing is not None:
+            try:
+                old_params = json.loads(existing.params_json)
+            except json.JSONDecodeError:
+                old_params = {}
+            if isinstance(old_params, dict) and old_params.get("cursor"):
+                clean_params.setdefault("cursor", str(old_params["cursor"]))
         params_json = json.dumps(clean_params, ensure_ascii=False)
         mapping_json = json.dumps(clean_mapping, ensure_ascii=False)
-        existing = self._app_repo.get_source(row.app_id, source_id)
         if existing is None:
             clash = any(
                 item.table_key == table_key for item in self._app_repo.list_sources(row.app_id)
@@ -1315,6 +2538,13 @@ class AppService:
             params = json.loads(item.params_json)
             if not isinstance(params, dict):
                 params = {}
+            raw_upsert = params.get("upsert_key")
+            upsert_key = (
+                [str(value) for value in raw_upsert]
+                if isinstance(raw_upsert, list) and raw_upsert
+                else None
+            )
+            include_pii = params.get("include_pii") is True
             if item.kind == SOURCE_KIND_WORKSPACE_FILE:
                 result = await self.import_from_file(
                     row,
@@ -1322,9 +2552,17 @@ class AppService:
                     table=item.table_key,
                     mode=item.mode,
                     mapping=json.loads(item.mapping_json),
+                    upsert_key=upsert_key,
+                    include_pii=include_pii,
                 )
             elif item.kind == SOURCE_KIND_EXTERNAL:
-                result = await self._run_external_source(row, item, params)
+                result = await self._run_external_source(
+                    row,
+                    item,
+                    params,
+                    upsert_key=upsert_key,
+                    include_pii=include_pii,
+                )
             else:
                 raise _invalid(
                     ErrorCode.APP_SOURCE_INVALID,
@@ -1382,6 +2620,9 @@ class AppService:
         row: AppRecord,
         item: Any,
         params: dict[str, Any],
+        *,
+        upsert_key: list[str] | None = None,
+        include_pii: bool = False,
     ) -> ImportResult:
         if self._external_tool_runner is None:
             raise _invalid(
@@ -1398,6 +2639,11 @@ class AppService:
         raw_args = params.get("args")
         args: dict[str, Any] = dict(raw_args) if isinstance(raw_args, dict) else {}
         result_path = str(params.get("result_path") or "").strip()
+        cursor_arg = str(params.get("cursor_arg") or "").strip()
+        cursor_path = str(params.get("cursor_path") or "").strip()
+        cursor = params.get("cursor")
+        if cursor_arg and cursor not in (None, ""):
+            args[cursor_arg] = cursor
         output = await asyncio.to_thread(
             self._external_tool_runner.run,
             instance_id=instance_id,
@@ -1405,13 +2651,29 @@ class AppService:
             args={str(k): v for k, v in args.items()},
         )
         records = _extract_records(output, result_path)
-        return await self.import_rows(
+        result = await self.import_rows(
             row,
             records,
             table=item.table_key,
             mode=item.mode,
             mapping=json.loads(item.mapping_json),
+            upsert_key=upsert_key,
+            include_pii=include_pii,
         )
+        if cursor_path:
+            try:
+                payload = json.loads(output)
+            except json.JSONDecodeError:
+                payload = None
+            next_cursor = _json_path(payload, cursor_path)
+            if next_cursor not in (None, ""):
+                updated = dict(params)
+                updated["cursor"] = str(next_cursor)[:1000]
+                self._app_repo.set_source_params(
+                    item.source_id,
+                    json.dumps(updated, ensure_ascii=False),
+                )
+        return result
 
     def _validate_source_params(
         self,
@@ -1424,7 +2686,13 @@ class AppService:
             except OctopError as exc:
                 # A bad path inside a source binding reads as bad config.
                 raise _invalid(ErrorCode.APP_SOURCE_INVALID, exc.message) from None
-            return {"path": path}
+            clean_params: dict[str, Any] = {"path": path}
+            upsert_key = self._clean_source_upsert_key(params)
+            if upsert_key:
+                clean_params["upsert_key"] = upsert_key
+            if params.get("include_pii") is True:
+                clean_params["include_pii"] = True
+            return clean_params
         instance_id = str(params.get("instance_id") or "").strip()
         tool = str(params.get("tool") or "").strip()
         if not instance_id or not tool:
@@ -1442,7 +2710,26 @@ class AppService:
             clean["args"] = {str(k): v for k, v in list(args.items())[:50]}
         if result_path:
             clean["result_path"] = result_path[:200]
+        for key in ("cursor_arg", "cursor_path"):
+            value = str(params.get(key) or "").strip()
+            if value:
+                clean[key] = value[:100]
+        cursor = params.get("cursor")
+        if isinstance(cursor, str) and cursor:
+            clean["cursor"] = cursor[:1000]
+        upsert_key = self._clean_source_upsert_key(params)
+        if upsert_key:
+            clean["upsert_key"] = upsert_key
+        if params.get("include_pii") is True:
+            clean["include_pii"] = True
         return clean
+
+    @staticmethod
+    def _clean_source_upsert_key(params: Mapping[str, Any]) -> list[str]:
+        raw = params.get("upsert_key")
+        if not isinstance(raw, list):
+            return []
+        return [str(value).strip()[:100] for value in raw[:20] if str(value).strip()]
 
     def _source_view(self, item: LightAppSourceRow) -> SourceView:
         try:
@@ -1483,12 +2770,48 @@ class AppService:
         table: str = MAIN_TABLE_KEY,
     ) -> Schema:
         key = self._require_table(row, table)
+        await self._ensure_db_rows(row)
         async with _lock_for(row.app_id):
             self._require_live(row.app_id)
             self._ensure_main_table(row)
-            ws = await self._workspace(row.agent_id)
-            schema = await self._read_schema(ws, row.app_id, key)
-            rows = await self._read_rows(ws, row.app_id, schema, key)
+            current = self._app_repo.get(row.app_id) or row
+            ws = await self._workspace(current.agent_id)
+            schema = await self._read_schema(ws, current.app_id, key)
+            if current.storage_version >= 2:
+                new_schema = extend_schema(schema, additions)
+                added = new_schema.columns[len(schema.columns) :]
+                if self._app_repo.count_data_rows(current.app_id, key) and any(
+                    col.required for col in added
+                ):
+                    raise _invalid(
+                        ErrorCode.APP_SCHEMA_INVALID,
+                        "new columns cannot be required while the app already has rows",
+                    )
+                self._app_repo.set_table_schema(
+                    current.app_id,
+                    key,
+                    new_schema.to_json(),
+                    new_schema.version,
+                )
+                self._app_repo.touch(current.app_id)
+                schema_file, _ = table_file_names(key)
+                try:
+                    await ws.awrite_text(
+                        app_path(current.app_id, schema_file),
+                        new_schema.to_json(),
+                    )
+                except Exception:
+                    # The DB copy is authoritative; the workspace schema.json
+                    # is only a mirror for the app directory.
+                    logger.warning(
+                        "failed to refresh schema mirror for %s/%s",
+                        current.app_id,
+                        key,
+                        exc_info=True,
+                    )
+                await self._refresh_manifest(ws, current.app_id)
+                return new_schema
+            rows = await self._read_rows_file(ws, current.app_id, schema, key)
             new_schema = extend_schema(schema, additions)
             added = new_schema.columns[len(schema.columns) :]
             if rows and any(col.required for col in added):
@@ -1500,22 +2823,151 @@ class AppService:
             schema_file, data_file = table_file_names(key)
             await self._write_atomic(
                 ws,
-                row.app_id,
+                current.app_id,
                 {
                     schema_file: new_schema.to_json(),
                     data_file: csv_text,
                 },
             )
-            self._app_repo.touch(row.app_id)
+            self._app_repo.touch(current.app_id)
             data_bytes = len(csv_text.encode("utf-8"))
             self._app_repo.set_table_stats(
-                row.app_id,
+                current.app_id,
                 key,
                 row_count=len(rows),
                 data_bytes=data_bytes,
             )
-            self._app_repo.refresh_app_totals(row.app_id)
-            await self._refresh_manifest(ws, row.app_id)
+            self._app_repo.refresh_app_totals(current.app_id)
+            await self._refresh_manifest(ws, current.app_id)
+            return new_schema
+
+    async def alter_schema(
+        self,
+        row: AppRecord,
+        *,
+        table: str = MAIN_TABLE_KEY,
+        renames: Mapping[str, str] | None = None,
+        drops: list[str] | None = None,
+        types: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> Schema:
+        """Rename, drop or retype columns, migrating every existing row.
+
+        A change is rejected as a whole when any row cannot be represented by
+        the new schema; nothing is half-written.
+        """
+        key = self._require_table(row, table)
+        clean_renames = {str(src): str(dst) for src, dst in (renames or {}).items()}
+        clean_drops = {str(name) for name in (drops or [])}
+        clean_types = {str(name): dict(spec) for name, spec in (types or {}).items()}
+        if not clean_renames and not clean_drops and not clean_types:
+            return await self._read_schema(await self._workspace(row.agent_id), row.app_id, key)
+        await self._ensure_db_rows(row)
+        async with _lock_for(row.app_id):
+            self._require_live(row.app_id)
+            current = self._app_repo.get(row.app_id) or row
+            ws = await self._workspace(current.agent_id)
+            schema = await self._read_schema(ws, current.app_id, key)
+            unknown = (set(clean_renames) | clean_drops | set(clean_types)) - set(schema.names)
+            if unknown:
+                raise _invalid(
+                    ErrorCode.APP_SCHEMA_INVALID,
+                    f"unknown columns: {', '.join(sorted(unknown))}",
+                )
+            new_columns = []
+            seen: set[str] = set()
+            for column in schema.columns:
+                if column.name in clean_drops:
+                    continue
+                name = clean_renames.get(column.name, column.name)
+                spec = clean_types.get(column.name, {})
+                column_type = str(spec.get("type", column.type))
+                payload: dict[str, Any] = {
+                    "name": name,
+                    "label": spec.get("label", column.label),
+                    "type": column_type,
+                    "required": spec.get("required", column.required),
+                }
+                if column_type == "enum":
+                    payload["values"] = spec.get("values", list(column.values))
+                if column.pii:
+                    payload["pii"] = column.pii
+                parsed = parse_schema_payload([payload]).columns[0]
+                if parsed.name in seen:
+                    raise _invalid(
+                        ErrorCode.APP_SCHEMA_INVALID,
+                        f"duplicate column name after rename: {parsed.name!r}",
+                    )
+                seen.add(parsed.name)
+                new_columns.append(parsed)
+            if not new_columns:
+                raise _invalid(
+                    ErrorCode.APP_SCHEMA_INVALID,
+                    "at least one column must remain",
+                )
+            new_schema = Schema(columns=tuple(new_columns), version=schema.version + 1)
+            errors: list[str] = []
+            if current.storage_version >= 2:
+                rewritten: list[tuple[str, dict[str, str]]] = []
+                for data_row in self._app_repo.list_all_data_rows(current.app_id, key):
+                    values = {
+                        clean_renames.get(name, name): value
+                        for name, value in data_row.values.items()
+                        if name not in clean_drops
+                    }
+                    try:
+                        rewritten.append((data_row.row_id, validate_row(new_schema, values)))
+                    except OctopError as exc:
+                        if len(errors) < MAX_IMPORT_ERRORS:
+                            errors.append(f"row {data_row.row_id}: {exc.message}")
+                if errors:
+                    raise _invalid(
+                        ErrorCode.APP_ROW_INVALID,
+                        "schema change rejected; existing rows do not fit the new schema",
+                        errors=errors,
+                    )
+                self._app_repo.set_table_schema(
+                    current.app_id,
+                    key,
+                    new_schema.to_json(),
+                    new_schema.version,
+                )
+                self._app_repo.rewrite_data_rows(current.app_id, key, rewritten)
+            else:
+                rows = await self._read_rows_file(ws, current.app_id, schema, key)
+                rewritten_rows: list[dict[str, str]] = []
+                for index, values_item in enumerate(rows):
+                    values = {
+                        clean_renames.get(name, name): value
+                        for name, value in values_item.items()
+                        if name not in clean_drops
+                    }
+                    try:
+                        rewritten_rows.append(validate_row(new_schema, values))
+                    except OctopError as exc:
+                        if len(errors) < MAX_IMPORT_ERRORS:
+                            errors.append(f"row {index + 1}: {exc.message}")
+                if errors:
+                    raise _invalid(
+                        ErrorCode.APP_ROW_INVALID,
+                        "schema change rejected; existing rows do not fit the new schema",
+                        errors=errors,
+                    )
+                await self._persist_rows(ws, current, key, new_schema, rewritten_rows)
+            schema_file, _ = table_file_names(key)
+            try:
+                await ws.awrite_text(
+                    app_path(current.app_id, schema_file),
+                    new_schema.to_json(),
+                )
+            except Exception:
+                logger.warning(
+                    "failed to refresh schema mirror for %s/%s",
+                    current.app_id,
+                    key,
+                    exc_info=True,
+                )
+            self._app_repo.touch(current.app_id)
+            await self._refresh_manifest(ws, current.app_id)
             return new_schema
 
     # ----- sharing -----

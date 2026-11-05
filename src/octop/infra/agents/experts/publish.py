@@ -56,6 +56,7 @@ _SEEDABLE_GLOB_PATTERNS = (
     "*.md",
     "skills/**/*",
     "agents/*.md",
+    "app_templates/**/*",
     ".octop/skills/**/*",
     ".octop/agents/*.md",
 )
@@ -290,4 +291,7 @@ def _is_seedable_path(path: str) -> bool:
         return True
     if parts[0] == "agents":
         return basename.endswith(".md")
+    if parts[0] == "app_templates":
+        # App shells only: schema + HTML, never data.csv or user assets.
+        return len(parts) >= 3 and basename in {"schema.json", "app.html"}
     return False

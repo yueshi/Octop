@@ -49,12 +49,12 @@
 
 ---
 
-## 3. 数据模型（v24）
+## 3. 数据模型（v27）
 
 新增迁移：
 
-- `src/octop/infra/db/migrations/024_external_events.sql`
-- `src/octop/infra/db/migrations/024_external_events.pg.sql`
+- `src/octop/infra/db/migrations/027_external_events.sql`
+- `src/octop/infra/db/migrations/027_external_events.pg.sql`
 
 遵循资源表约定：`id INTEGER` 代理 PK + 公开字符串 id；子表引用公开 id。
 
@@ -141,7 +141,7 @@
 
 `UNIQUE(event_id, subscription_id)`；索引 `(status, deliver_after)`, `(status, next_retry_at)`, `(lease_until)`。
 
-**迁移测试**：`tests/unit/db/test_db_pool.py` 当前 7 处断言 v23（`:102,226,365,390,425,508,714`），全部升 v24；新增表加入 `test_run_migrations_creates_tables`。
+**迁移测试**：`tests/unit/db/test_db_pool.py` 全部升到当前版本 v29；新增表加入 `test_run_migrations_creates_tables`。
 
 ---
 
@@ -196,7 +196,7 @@
 - `tests/unit/events/test_connector_poll.py` — cursor、dedupe、backoff、retention
 - `tests/unit/cron/test_cron_delivery.py` — usage_source
 - `tests/integration/test_external_events_api.py` — webhook→app、team judge decision、expert notify、connector poll、签名/时间戳/413、ACL、CRUD
-- `tests/unit/db/test_db_pool.py` v24 + `external_*` 表/索引断言
+- `tests/unit/db/test_db_pool.py` v29 + `external_*` 表/索引断言
 
 ---
 
@@ -358,7 +358,7 @@ class Target(Protocol):
 - [x] 修团队 `decision.py:563-564` usage 嵌套 dict；补回归测试。
 - [x] `external.event` 加入 judgment；snapshot 读 `summary`。
 - [x] 新增 `EXTERNAL_*` 错误码/i18n。
-- [x] 新增 024 迁移骨架 + v24 断言。
+- [x] 新增 027 迁移骨架 + v27 断言。
 - [x] `/api/hooks/` JWT 豁免 + middleware 测试骨架。
 
 **Gate**：团队 decision 测试绿；webhook 路径在 JWT/setup 下行为符合预期。未过不进 Phase 1。
@@ -420,7 +420,7 @@ class Target(Protocol):
 | 集成 | webhook→app replace；webhook→team autopilot decision；webhook→expert turn（fake）；manual team notify；重复 delivery；ACL 403 |
 | 中间件 | `/api/hooks/` 无 JWT 可入；`/api/external/*` 需 JWT；无用户时 setup lockdown 503；OpenAPI security 不加错 |
 | 可靠性 | worker 崩溃/lease 回收；expert 已开始不重复；team dedupe；app replace 幂等 |
-| 迁移 | v24 SQLite/PG；v22→v24；表/索引存在 |
+| 迁移 | v27 SQLite/PG；v25→v27；表/索引存在 |
 | 安全 | 错签/过期/超大/超频/越权 target/跨用户 source |
 | 跨平台 | `tmp_path`、不硬编码 POSIX；`posix_only` 仅用于平台相关 |
 
@@ -436,13 +436,13 @@ class Target(Protocol):
 | app 导入映射/权限不清 | MVP 只支持 flat JSON + replace + owner/edit_structure |
 | connector 工具无稳定 id | 拒接该工具；不做 snapshot 全量事件 |
 | 100 事件压测产生 >N 次 LLM | 强制 coalesce/限流；未达标不上 expert/team 自动触发 |
-| 迁移 v24 失败 | 回滚迁移；不进入 Phase 1 |
+| 迁移 v27 失败 | 回滚迁移；不进入 Phase 1 |
 
 ---
 
 ## 11. 上线与回滚
 
-- 迁移 v24 → 重启 → worker 启动（无 source 时为空转）。
+- 迁移 v27 → 重启 → worker 启动（无 source 时为空转）。
 - 先创建一个测试 webhook source + 测试 app/team 订阅；用 curl 验证 HMAC、重复、retry。
 - 观察 `external_events`/`external_deliveries`/日志；确认无 secret/payload 泄漏。
 - 回滚：禁用所有 source（不删数据）→ 停 worker/重启旧 wheel；迁移保留但无代码读取。不要自动删表。

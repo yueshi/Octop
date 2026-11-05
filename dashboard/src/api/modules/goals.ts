@@ -1,7 +1,7 @@
 import { request } from "../request";
 
 export type DeliverableStatus = "pending" | "produced";
-export type ArtifactType = "none" | "file" | "link" | "text";
+export type ArtifactType = "none" | "file" | "link" | "text" | "app";
 
 export interface GoalDeliverable {
   deliverable_id: string;

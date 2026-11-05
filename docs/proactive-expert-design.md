@@ -12,7 +12,7 @@
 依据（均有代码实据）：
 
 1. **无人值守执行链路对单专家是现成的。** 普通专家默认拥有全部 6 个 `cronjob_*` 自注册工具（cron 工具仅对 team host 跳过，`infra/agents/manager.py:3782-3786`），cron `task_type=agent` 的完整执行链（session 锁内 stream、usage 记账 `source="cron"`、结果推送）与专家无关 kind 地可用（`infra/cron/delivery.py:134-192`）。团队版 P2 要"解禁"的东西，单专家现状就有。
-2. **任务/看板底座已落地且 repo 层零 kind 过滤。** `team_goals` / `team_tasks` 的外键是 `REFERENCES agents(agent_id)`，无 kind 约束（`infra/db/migrations/022_light_apps.sql:98-133`）；`team_tasks.assignee` 同样引用 `agents(agent_id)`——专家自治任务 `assignee=self` 与团队派工 `assignee=成员` 在同一张表里语义天然统一。repo（`team_tasks.py`/`team_goals.py`）、状态机（`task_state.py`）、工具实现（`board_tools._tool_ctx()` 从 `current_tool_scope`/configurable 取 agent_id，agent 无关，`board_tools.py:47-60`）全部可直接复用。kind 过滤只存在于两处薄层：API 路由（`teams.py:70-72` 的 `is_team_agent` 检查）与工具挂载条件（`manager.py:3833` 的 `if team_host:`）。
+2. **任务/看板底座已落地且 repo 层零 kind 过滤。** `team_goals` / `team_tasks` 的外键是 `REFERENCES agents(agent_id)`，无 kind 约束（`infra/db/migrations/025_light_apps.sql:98-133`）；`team_tasks.assignee` 同样引用 `agents(agent_id)`——专家自治任务 `assignee=self` 与团队派工 `assignee=成员` 在同一张表里语义天然统一。repo（`team_tasks.py`/`team_goals.py`）、状态机（`task_state.py`）、工具实现（`board_tools._tool_ctx()` 从 `current_tool_scope`/configurable 取 agent_id，agent 无关，`board_tools.py:47-60`）全部可直接复用。kind 过滤只存在于两处薄层：API 路由（`teams.py:70-72` 的 `is_team_agent` 检查）与工具挂载条件（`manager.py:3833` 的 `if team_host:`）。
 3. **单专家比团队少一整层分布式复杂度。** 无派工/inbox/房间编排/回叫——"读任务→领取→执行→回写→汇报"在**同一个 ReAct 回合**内闭环；`docs/expert-teams.md:156-162` 明示的「inbox 重启丢在途任务」非目标对单专家自治基本不构成威胁（无跨 agent 在途状态）。
 4. **单 agent 主动行为已有先例。** 主动关怀（proactive care）具备完整的 per-agent 调度器、免打扰窗、随机频控、去重与推送链路（`infra/proactive/scheduler.py:44-108,274`、`infra/proactive/service.py:117-263`），其策略参数可直接泛化为自治运行策略。
 
@@ -34,7 +34,7 @@
 
 | 机制 | 设计章节 | 实施状态（v3 记载） |
 |---|---|---|
-| `team_goals` / `team_tasks` / `hitl_pending` 三表 | §7.1 | ✅ 已落地（迁移折叠进 022，`022_light_apps.sql:98-157`） |
+| `team_goals` / `team_tasks` / `hitl_pending` 三表 | §7.1 | ✅ 已落地（迁移折叠进 025，`025_light_apps.sql:98-157`） |
 | 主持人 4 工具 `goal_set/task_create/task_update/task_list` | §7.2-① | ✅ 已落地（`infra/agents/teams/board_tools.py`，仅挂 team host） |
 | REST `GET/POST goals`、`GET tasks`、`PATCH task (CAS+状态机校验)` | §八 P1 | ✅ 已落地（`api/routers/teams.py:228-300`） |
 | 驱动循环 cron（白名单解禁+隐形 wake+预算闸门+kill switch） | §7.3 | ⬜ P2 未实施 |
@@ -81,7 +81,7 @@
 
 ### 3.4 数据库与迁移
 
-- `team_goals/team_tasks/hitl_pending` 三表已在未发布的 022 中，FK 全部 `REFERENCES agents(agent_id)`，**无 kind 约束**；`cron_jobs.meta` 列已加（`022_light_apps.sql:98-160`）。
+- `team_goals/team_tasks/hitl_pending` 三表已在未发布的 025 中，FK 全部 `REFERENCES agents(agent_id)`，**无 kind 约束**；`cron_jobs.meta` 列已加（`025_light_apps.sql:98-160`）。
 - `usage_log`：token 明细 + cache/reasoning 列，按 agent/user/thread 聚合查询齐备；**无预算检查**（`001_initial.sql:181-190`、`008_usage_cache_tokens.sql`、`infra/db/repos/usage.py:250-498`）。
 - `proactive_care_config/care_push_records`：active_hours、min/max_interval、episode 去重（`001_initial.sql:246-265`）。
 - `published_experts`：专家模板市场表；用户自建 expert = 普通 `kind=expert` agent，无特殊运行时（`005_shared_experts_sso_knowledge.sql:5-18`、`infra/agents/experts/`）。
@@ -102,7 +102,7 @@
 
 | 团队版机制 | 单专家判定 | 说明 / 改造点 |
 |---|---|---|
-| `team_goals/team_tasks` 表（§7.1） | **直接复用** | FK 无 kind 约束（`022:100,117`）；`assignee=self` 语义统一；表名不改，文档注明 owner 语义 |
+| `team_goals/team_tasks` 表（§7.1） | **直接复用** | FK 无 kind 约束（`025:100,117`）；`assignee=self` 语义统一；表名不改，文档注明 owner 语义 |
 | board 4 工具（`board_tools.py`） | **改造后复用** | 实现已 agent 无关（`_tool_ctx`），仅挂载条件 `if team_host:`（`manager.py:3833`）需放宽 + expert 变体 prompt |
 | 状态机 `task_state.py` | **直接复用** | `TASK_STATUSES`/`is_valid_task_transition` 与 agent 无关 |
 | REST goals/tasks（`teams.py:228-300`） | **改造后复用** | `_require_owned_team` 有 `is_team_agent` 检查（`teams.py:70-72`）→ 新增 agent 通用路由指向同一 repo（见 §五 E1） |
@@ -126,7 +126,7 @@
 
 **E1 底座通用化（改动最小的一档）**
 
-- 数据：**零迁移**（三表复用；若要语义清晰可选做 SQL 视图 `agent_goals/agent_tasks`，不推荐增加维护面）。`agents` 行新增开关 `autonomy_enabled`（默认关）→ 折叠进未发布的 022（团队版 B9 结论：022 未进 main/develop）。
+- 数据：**零迁移**（三表复用；若要语义清晰可选做 SQL 视图 `agent_goals/agent_tasks`，不推荐增加维护面）。`agents` 行新增开关 `autonomy_enabled`（默认关）→ 折叠进未发布的 025（团队版 B9 结论：025 未进 main/develop）。
 - 工具挂载：`manager.py:3833` 条件 `if team_host:` → `if team_host or (autonomy_enabled and not team_host)`；挂的是同一 `build_team_board_tools()`。`assignee` 对单专家恒为自身 agent_id（工具内校验：expert 上下文不允许 assignee 指向他人，防自治专家把任务甩给别的 agent 而无派工语义）。
 - API：新增 `api/routers/agent_work.py`——`GET/POST /api/agents/{agent_id}/goals`、`GET /api/agents/{agent_id}/tasks`、`PATCH /api/agents/{agent_id}/tasks/{task_id}`（鉴权 `assert_agent_owner` + admin bypass，沿用 P1 的 CAS 409 + 状态机 400 校验）。`/teams/*` 路由保留不动。
 - i18n：`teams.autopilot_briefing` 增专家变体键（en/zh 对齐，跑 `tests/unit/i18n`）——强调"自产自执行自回写、blocked 时 ask_owner"。
@@ -215,7 +215,7 @@
 
 | 阶段 | 内容 | 与团队版关系 | 验证 |
 |---|---|---|---|
-| **E1 底座通用化** | `autonomy_enabled` 开关（折叠进 022）；挂载条件放宽；agent 通用 API；i18n 专家变体；prompt 注入钩子 | P1 的薄扩展（同 repo） | `make all`；单测：挂载条件/assignee 自我校验 |
+| **E1 底座通用化** | `autonomy_enabled` 开关（折叠进 025）；挂载条件放宽；agent 通用 API；i18n 专家变体；prompt 注入钩子 | P1 的薄扩展（同 repo） | `make all`；单测：挂载条件/assignee 自我校验 |
 | **E2 驱动循环** | `meta.autopilot` 模板锁定 + 限频；隐形 wake；预算闸门；kill switch | **= 团队 P2 主体**（同一批 PR，两 agent 受益） | date 单次 + interval 周期；wake 帧不上墙；重启回收 |
 | **E3 求助闭环** | HITL 持久化 + delivery 挂起 + `ask_owner` + 定向通知 | **= 团队 P3 主体**（单专家可作试点场景） | 无人值守审批→owner 批准→续跑；重启恢复 |
 | **E4 看板** | agent 通用看板页（kind 徽标） | **= 团队 P4**（建模即通用，避免返工） | 拖拽 CAS/409；双 kind 同页渲染 |

@@ -227,7 +227,7 @@ def test_usage_team_id_roundtrip(pool: SqlitePool) -> None:
 
 
 def test_team_board_repairs_pre_coordination_shape(pool: SqlitePool) -> None:
-    """A DB that recorded v22 with the old team_tasks shape still migrates."""
+    """A DB that recorded v25 with the old team_tasks shape still migrates."""
     with pool.transaction() as conn:
         conn.execute("DROP TABLE IF EXISTS team_task_deps")
         conn.execute("DROP TABLE IF EXISTS team_tasks")
@@ -281,7 +281,7 @@ def test_usage_team_backfill_is_idempotent(pool: SqlitePool) -> None:
             "total_tokens, source) VALUES (1, 'team-x', ?, 10, 5, 15, 'cron')",
             (uid,),
         )
-    # DBs that recorded v22 before the team_id fold repair through this helper;
+    # DBs that recorded v25 before the team_id fold repair through this helper;
     # running it twice must be a no-op, not a reset.
     _ensure_team_board_schema(pool)
     _ensure_team_board_schema(pool)

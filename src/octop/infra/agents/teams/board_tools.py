@@ -22,6 +22,7 @@ from octop.infra.agents.teams.task_state import TASK_STATUSES, is_valid_task_tra
 from octop.infra.agents.threads.artifact import artifact_path_allowed
 from octop.infra.agents.tool_scope import current_tool_scope
 from octop.infra.db.repos.agents import AgentRepo
+from octop.infra.db.repos.apps import LightAppRepo
 from octop.infra.db.repos.goal_deliverables import GoalDeliverableRepo
 from octop.infra.db.repos.team_goals import TeamGoalRepo
 from octop.infra.db.repos.team_runtime import TeamRuntimeRepo
@@ -134,6 +135,7 @@ def build_team_board_tools(
     goal_repo: TeamGoalRepo,
     task_repo: TeamTaskRepo,
     deliverable_repo: GoalDeliverableRepo | None = None,
+    light_app_repo: LightAppRepo | None = None,
     agent_repo: AgentRepo,
     task_notify: TaskNotify | None = None,
     event_recorder: Any | None = None,
@@ -174,6 +176,27 @@ def build_team_board_tools(
             return "team roster is unavailable; cannot validate assignee"
         if assignee not in roster:
             return f"assignee is not a member of this team: {assignee}"
+        return None
+
+    def _app_error(host_id: str, app_id: str) -> str | None:
+        """Reject an app artifact outside this team / digital employee."""
+        if light_app_repo is None:
+            return "light app ledger is not available"
+        app = light_app_repo.get(app_id)
+        if app is None:
+            return f"light app not found: {app_id}"
+        if self_only:
+            if app.agent_id != host_id:
+                return "autonomous agents may only deliver their own apps"
+            return None
+        allowed = {host_id}
+        if member_ids_fn is not None:
+            try:
+                allowed |= set(member_ids_fn(host_id))
+            except Exception:
+                return "team roster is unavailable; cannot validate app"
+        if app.agent_id not in allowed:
+            return "light app is not hosted by this team"
         return None
 
     async def goal_set(
@@ -335,7 +358,8 @@ def build_team_board_tools(
         deliverable_id: str = Field(..., description="Deliverable id from goal/deliverable views."),
         status: str = Field("produced", description="pending or produced."),
         artifact_type: str = Field(
-            "none", description="none, file (workspace path), link (http/https), or text."
+            "none",
+            description="none, file (workspace path), link (http/https), text, or app (light app id).",
         ),
         artifact_ref: str = Field("", description="Workspace path, URL, or text body."),
         artifact_name: str = Field("", description="Display name for the artifact."),
@@ -357,12 +381,12 @@ def build_team_board_tools(
                 return _err(f"deliverable not found: {deliverable_id}")
             if status not in ("pending", "produced"):
                 return _err(f"invalid deliverable status: {status}")
-            if artifact_type not in ("none", "file", "link", "text"):
+            if artifact_type not in ("none", "file", "link", "text", "app"):
                 return _err(f"invalid artifact type: {artifact_type}")
             fields: dict[str, object] = {"status": status}
             if artifact_type == "none":
                 if status == "produced":
-                    return _err("produced deliverables need a file, link or text artifact")
+                    return _err("produced deliverables need a file, link, text or app artifact")
                 fields.update(
                     artifact_type="none",
                     artifact_ref="",
@@ -385,6 +409,11 @@ def build_team_board_tools(
                     parsed = urlparse(ref)
                     if parsed.scheme not in ("http", "https") or not parsed.netloc:
                         return _err("artifact link must be http(s)")
+                    fields["artifact_agent_id"] = None
+                elif artifact_type == "app":
+                    app_error = _app_error(agent_id, ref)
+                    if app_error is not None:
+                        return _err(app_error)
                     fields["artifact_agent_id"] = None
                 else:
                     if len(ref) > 4000:

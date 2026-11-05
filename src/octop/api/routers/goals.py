@@ -58,7 +58,7 @@ class DeliverablePatchBody(BaseModel):
     required: bool | None = None
     status: Literal["pending", "produced"] | None = None
     task_id: str | None = Field(None, max_length=80)
-    artifact_type: Literal["none", "file", "link", "text"] | None = None
+    artifact_type: Literal["none", "file", "link", "text", "app"] | None = None
     artifact_ref: str | None = Field(None, max_length=_MAX_TEXT_ARTIFACT)
     artifact_name: str | None = Field(None, max_length=200)
     artifact_agent_id: str | None = Field(None, max_length=80)
@@ -175,7 +175,7 @@ def _validate_artifact_fields(
         if status == "produced":
             raise OctopError(
                 ErrorCode.GOAL_DELIVERABLE_INVALID,
-                "produced deliverables need a file, link or text artifact",
+                "produced deliverables need a file, link, text or app artifact",
             )
         fields["artifact_type"] = "none"
         fields["artifact_ref"] = ""
@@ -201,6 +201,14 @@ def _validate_artifact_fields(
     elif artifact_type == "text":
         if len(ref) > _MAX_TEXT_ARTIFACT:
             raise OctopError(ErrorCode.GOAL_DELIVERABLE_INVALID, "artifact text is too long")
+        fields["artifact_agent_id"] = None
+    elif artifact_type == "app":
+        app = _repos(server).light_app_repo.get(ref)
+        if app is None or not _artifact_agent_allowed(server, agent_id, owner_row, app.agent_id):
+            raise OctopError(
+                ErrorCode.GOAL_DELIVERABLE_INVALID,
+                "artifact app must be hosted by the goal owner or a team member",
+            )
         fields["artifact_agent_id"] = None
     fields["artifact_ref"] = ref
 

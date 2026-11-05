@@ -86,7 +86,7 @@ SSE token 流 → Dashboard 助手面板显示回答
 
 | 项 | 决定 |
 |----|------|
-| 存储 | 专用表 `light_app_assistant_messages`（v22 迁移，随多表 DDL 一起落地），按 `(app_id, user_id)` 隔离；**未**复用线程表 |
+| 存储 | 专用表 `light_app_assistant_messages`（v25 迁移，随多表 DDL 一起落地），按 `(app_id, user_id)` 隔离；**未**复用线程表 |
 | 清理 | repo 插入时裁剪到最近 200 条；应用删除时按 `app_id` 清空 |
 | 上下文裁剪 | 每次提问回放最近 12 条历史消息作为上下文 |
 
@@ -156,7 +156,7 @@ SSE 沿用 `api/routers/chat/sse.py` 的 `format_sse`，事件名统一为 `chun
 
 ### 3.3 表单结构（控制面）
 
-新表 `light_app_sources`（✅ 已折入 v22 迁移；每张表至多一个绑定，DB 层 `UNIQUE(app_id, table_key)` 兜底）：
+新表 `light_app_sources`（✅ 已折入 v25 迁移；每张表至多一个绑定，DB 层 `UNIQUE(app_id, table_key)` 兜底）：
 
 ```
 id, source_id(公开字符串), app_id → light_apps(app_id),
@@ -228,7 +228,7 @@ mode=append → 追加到该表；mode=replace → 覆盖该表
 
 实施记录（2026-10-24，M5 已落地）：
 - 调度器 `infra/apps/scheduler.py`：`AppSourceScheduler` 单协程循环（30s 扫描），`start()` / `shutdown()` / `tick(now)`（tick 公开供测试）；由 `infra/server.py` 在启动时构建并拉起，`stop()` 关停，向导热切换 DB 经 `replace_persistence` 重绑。
-- 列：`next_run_at`（NULL=到期即跑）+ `fail_count` 折入未发布的 v22 迁移；`update_source` 重置两者。
+- 列：`next_run_at`（NULL=到期即跑）+ `fail_count` 折入未发布的 v25 迁移；`update_source` 重置两者。
 - 领取即租约：`claim_source` 是条件 UPDATE（`COALESCE(next_run_at,0) <= now` 才置为 `now + schedule_seconds`），无独立租约列；进程崩溃最多丢一个周期。
 - 退避：`run_source` 统一记账（手动/自动同路）——成功 `next_run_at = run_at + schedule_seconds`、`fail_count = 0`；失败 `next_run_at = run_at + min(schedule · 2^(fail_count-1), 24h)`。
 - `append` 去重（`source_key`）未做——与手动导入行为一致（append 就是重复灌入），需要幂等请用 replace 模式。

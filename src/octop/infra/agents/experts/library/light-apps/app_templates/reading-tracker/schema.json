@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "columns": [
+    { "name": "title", "label": "书名", "type": "text", "required": true },
+    { "name": "author", "label": "作者", "type": "string" },
+    { "name": "status", "label": "状态", "type": "enum", "values": ["想读", "在读", "读完"] },
+    { "name": "rating", "label": "评分", "type": "integer" },
+    { "name": "note", "label": "备注", "type": "text" }
+  ]
+}

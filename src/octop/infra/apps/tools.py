@@ -5,26 +5,33 @@ from __future__ import annotations
 import json
 from typing import Annotated, Any
 
+import httpx
 from langchain_core.tools import StructuredTool
 from langgraph.config import get_config
 from pydantic import Field
 
 from octop.infra.agents.tool_scope import current_tool_scope
 from octop.infra.apps.models import MAIN_TABLE_KEY
-from octop.infra.apps.service import AppService, AppTableView
-from octop.infra.db.repos.apps import LightAppRow
+from octop.infra.apps.service import MAX_ASSET_BYTES, AppService, AppTableView
+from octop.infra.db.repos.apps import PERMISSION_RANK, LightAppRow
 
 APP_DELETE_TOOL_NAME = "app_delete"
 
 APP_TOOL_NAMES: tuple[str, ...] = (
+    "app_inspect_file",
     "app_list",
     "app_create",
+    "app_create_from_template",
     "app_add_table",
     "app_update_schema",
+    "app_alter_schema",
     "app_write_html",
     "app_read_data",
     "app_append_row",
+    "app_update_row",
+    "app_delete_row",
     "app_import_rows",
+    "app_save_asset",
     APP_DELETE_TOOL_NAME,
 )
 """Names of the built-in light-app tools, in the order they are registered."""
@@ -33,7 +40,8 @@ _COLUMNS_HELP = (
     "Column definitions. Each item: "
     '{"name": "snake_case identifier", "label": "display label", '
     '"type": "string|text|integer|number|boolean|date|datetime|enum", '
-    '"required": false, "values": ["only for enum"]}. '
+    '"required": false, "values": ["only for enum"], '
+    '"pii": "optional id_card|bank_card|phone|address|salary"}. '
     "Up to 50 columns; names must start with a letter or underscore."
 )
 
@@ -79,13 +87,37 @@ def _err(exc: Exception) -> str:
     return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
 
-def _get_owned(service: AppService, app_id: str, agent_id: str, user_id: int) -> LightAppRow:
-    if not service.is_agent_owner(agent_id, user_id):
-        raise ValueError("light apps can only be managed by the agent owner")
+def _get_for_actor(
+    service: AppService,
+    app_id: str,
+    agent_id: str,
+    user_id: int,
+    needed: str,
+) -> LightAppRow:
+    """Resolve an app for the acting user, using the app ACL.
+
+    The agent is only the executor: what the user may do with an app comes
+    from the app's own collaborator list, so a shared agent's members can use
+    the apps they were given and nobody inherits access from owning an agent.
+    """
+    if not service.is_agent_accessible(agent_id, user_id):
+        raise ValueError("agent is not accessible to this user")
     row = service.get(app_id)
-    if row.agent_id != agent_id or row.owner_user_id != user_id:
+    if row is None:
         raise ValueError(f"light app not found: {app_id}")
+    granted = service.permission_for(row, user_id, is_admin=False)
+    if granted is None or PERMISSION_RANK.get(granted, 0) < PERMISSION_RANK[needed]:
+        raise ValueError(
+            f"this user has no '{needed}' permission on light app {app_id} "
+            f"(granted: {granted or 'none'})"
+        )
     return row
+
+
+def _may_see_pii(service: AppService, row: LightAppRow, user_id: int) -> bool:
+    """Editors and owners see sensitive columns; viewers do not."""
+    permission = service.permission_for(row, user_id, is_admin=False)
+    return PERMISSION_RANK.get(permission or "", 0) >= PERMISSION_RANK["edit_data"]
 
 
 def _summary(row: LightAppRow) -> dict[str, Any]:
@@ -108,13 +140,83 @@ def _table_summary(table: AppTableView) -> dict[str, Any]:
     }
 
 
+async def _read_asset_source(service: AppService, agent_id: str, source: str) -> bytes:
+    """Read the bytes of an image from a URL or from the agent workspace."""
+    text = source.strip()
+    if text.startswith(("http://", "https://")):
+        return await _download_asset(text)
+    return await service.read_workspace_file(agent_id, text)
+
+
+async def _download_asset(url: str) -> bytes:
+    """Download an image, refusing private and loopback targets on every hop.
+
+    The body is capped while it streams: a server that lies about its size
+    must not be able to fill memory.
+    """
+    from octop_harness.security.ssrf import validate_agent_fetch_url
+
+    current = validate_agent_fetch_url(url)
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+        for _ in range(5):
+            async with client.stream("GET", current) as response:
+                if response.is_redirect:
+                    location = (response.headers.get("location") or "").strip()
+                    if not location:
+                        break
+                    current = validate_agent_fetch_url(str(response.url.join(location)))
+                    continue
+                if response.is_error:
+                    raise ValueError(f"download failed: HTTP {response.status_code}")
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    if total > MAX_ASSET_BYTES:
+                        raise ValueError("asset exceeds the 5 MB limit")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+    raise ValueError("too many redirects while downloading the asset")
+
+
 def build_app_tools(service: AppService) -> list[StructuredTool]:
     """Return built-in light-app tools (wired via ``HarnessAgentConfig.tools``)."""
+
+    async def app_inspect_file(
+        path: Annotated[
+            str,
+            Field(
+                description=(
+                    "Workspace-relative path of the file to inspect "
+                    "(CSV/TSV/JSON/.xlsx/.xls), e.g. inbound/imports/sales.xlsx. "
+                    "Hidden files (starting with a dot) are rejected."
+                )
+            ),
+        ],
+    ) -> str:
+        try:
+            agent_id, user_id = _tool_ctx()
+            if not service.is_agent_accessible(agent_id, user_id):
+                raise ValueError("agent is not accessible to this user")
+            report = await service.inspect_workspace_file(agent_id, path)
+            return _ok(
+                {
+                    "octop_ui": {"renderer": "app_inspect_card", "version": 1},
+                    "data": report,
+                    "text": (
+                        f"Inspected {report['file']}: "
+                        f"{len(report['sheets'])} sheet(s), "
+                        f"{len(report['pii_columns'])} sensitive column(s)."
+                    ),
+                }
+            )
+        except Exception as exc:
+            return _err(exc)
 
     async def app_list() -> str:
         try:
             agent_id, user_id = _tool_ctx()
-            if not service.is_agent_owner(agent_id, user_id):
+            if not service.is_agent_accessible(agent_id, user_id):
                 return _ok({"apps": []})
             rows = service.list_for_agent(agent_id, user_id)
             return _ok(
@@ -147,8 +249,8 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
     ) -> str:
         try:
             agent_id, user_id = _tool_ctx()
-            if not service.is_agent_owner(agent_id, user_id):
-                raise ValueError("light apps can only be managed by the agent owner")
+            if not service.is_agent_accessible(agent_id, user_id):
+                raise ValueError("this user cannot use this agent")
             row = await service.create(
                 agent_id=agent_id,
                 owner_user_id=user_id,
@@ -178,11 +280,53 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
     ) -> str:
         try:
             agent_id, user_id = _tool_ctx()
-            row = _get_owned(service, app_id, agent_id, user_id)
+            row = _get_for_actor(service, app_id, agent_id, user_id, "edit_structure")
             schema = await service.add_columns(row, columns, table=table)
             return _ok(
                 {
                     "app_id": row.app_id,
+                    "table": table,
+                    "version": schema.version,
+                    "columns": schema.to_dict()["columns"],
+                }
+            )
+        except Exception as exc:
+            return _err(exc)
+
+    async def app_alter_schema(
+        app_id: Annotated[str, Field(description="App id returned by app_create/app_list.")],
+        renames: Annotated[
+            dict[str, str] | None,
+            Field(description="Old column name -> new column name."),
+        ] = None,
+        drops: Annotated[
+            list[str] | None,
+            Field(description="Columns to remove; their data is deleted."),
+        ] = None,
+        types: Annotated[
+            dict[str, dict[str, Any]] | None,
+            Field(
+                description=(
+                    "Column name -> {type, label?, required?, values?}. Types: "
+                    "string, text, integer, number, boolean, date, datetime, enum."
+                )
+            ),
+        ] = None,
+        table: Annotated[str, Field(description=_TABLE_HELP)] = MAIN_TABLE_KEY,
+    ) -> str:
+        try:
+            agent_id, user_id = _tool_ctx()
+            app = _get_for_actor(service, app_id, agent_id, user_id, "edit_structure")
+            schema = await service.alter_schema(
+                app,
+                table=table,
+                renames=renames,
+                drops=drops,
+                types=types,
+            )
+            return _ok(
+                {
+                    "app_id": app.app_id,
                     "table": table,
                     "version": schema.version,
                     "columns": schema.to_dict()["columns"],
@@ -197,9 +341,40 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
     ) -> str:
         try:
             agent_id, user_id = _tool_ctx()
-            row = _get_owned(service, app_id, agent_id, user_id)
+            row = _get_for_actor(service, app_id, agent_id, user_id, "edit_structure")
             size = await service.write_html(row, html)
             return _ok({"app_id": row.app_id, "bytes": size})
+        except Exception as exc:
+            return _err(exc)
+
+    async def app_create_from_template(
+        template: Annotated[
+            str,
+            Field(description="Template name from the agent's app_templates directory."),
+        ],
+        name: Annotated[
+            str | None,
+            Field(description="Optional app name; defaults to the template name."),
+        ] = None,
+        description: Annotated[str, Field(description="Optional app description.")] = "",
+    ) -> str:
+        try:
+            agent_id, user_id = _tool_ctx()
+            if not service.is_agent_accessible(agent_id, user_id):
+                raise ValueError("agent is not accessible to this user")
+            row = await service.create_from_template(
+                agent_id=agent_id,
+                owner_user_id=user_id,
+                template=template,
+                name=name,
+                description=description,
+            )
+            return _ok(
+                {
+                    **_summary(row),
+                    "next_step": "call app_write_html only if you want to change the shell",
+                }
+            )
         except Exception as exc:
             return _err(exc)
 
@@ -225,7 +400,7 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
     ) -> str:
         try:
             agent_id, user_id = _tool_ctx()
-            row = _get_owned(service, app_id, agent_id, user_id)
+            row = _get_for_actor(service, app_id, agent_id, user_id, "edit_structure")
             table = await service.create_table(
                 row,
                 table_key=key,
@@ -254,12 +429,13 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
     ) -> str:
         try:
             agent_id, user_id = _tool_ctx()
-            row = _get_owned(service, app_id, agent_id, user_id)
-            schema, rows, total = await service.read_rows(
+            row = _get_for_actor(service, app_id, agent_id, user_id, "view")
+            schema, rows, row_meta, total = await service.read_rows_detailed(
                 row,
                 limit=limit,
                 offset=offset,
                 table=table,
+                redact_pii=not _may_see_pii(service, row, user_id),
             )
             return _ok(
                 {
@@ -267,6 +443,7 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                     "table": table,
                     "columns": schema.to_dict()["columns"],
                     "rows": rows,
+                    "row_meta": row_meta,
                     "total": total,
                     "limit": limit,
                     "offset": offset,
@@ -290,19 +467,80 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
             str,
             Field(description=_TABLE_HELP),
         ] = MAIN_TABLE_KEY,
+        client_request_id: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Optional idempotency key. Retrying with the same value does "
+                    "not create a duplicate row."
+                )
+            ),
+        ] = None,
     ) -> str:
         try:
             agent_id, user_id = _tool_ctx()
-            app = _get_owned(service, app_id, agent_id, user_id)
-            index, stored = await service.append_row(app, row, table=table)
+            app = _get_for_actor(service, app_id, agent_id, user_id, "edit_data")
+            index, stored = await service.append_row_record(
+                app,
+                row,
+                table=table,
+                client_request_id=client_request_id,
+                created_by=user_id,
+                source="agent",
+            )
             return _ok(
                 {
                     "app_id": app.app_id,
                     "table": table,
                     "row_index": index,
-                    "row": stored,
+                    "row_id": stored.row_id,
+                    "version": stored.version,
+                    "row": stored.values,
                 }
             )
+        except Exception as exc:
+            return _err(exc)
+
+    async def app_update_row(
+        app_id: Annotated[str, Field(description="App id returned by app_create/app_list.")],
+        row_id: Annotated[
+            str, Field(description="Row id returned by app_read_data/app_append_row.")
+        ],
+        row: Annotated[
+            dict[str, Any],
+            Field(description="Complete row keyed by column name; missing columns become empty."),
+        ],
+        expected_version: Annotated[
+            int | None,
+            Field(description="Reject the update when the stored row version differs."),
+        ] = None,
+    ) -> str:
+        try:
+            agent_id, user_id = _tool_ctx()
+            app = _get_for_actor(service, app_id, agent_id, user_id, "edit_data")
+            updated = await service.update_row(
+                app,
+                row_id,
+                row,
+                expected_version=expected_version,
+            )
+            return _ok({"app_id": app.app_id, **updated})
+        except Exception as exc:
+            return _err(exc)
+
+    async def app_delete_row(
+        app_id: Annotated[str, Field(description="App id returned by app_create/app_list.")],
+        row_id: Annotated[str, Field(description="Row id returned by app_read_data.")],
+        expected_version: Annotated[
+            int | None,
+            Field(description="Reject the delete when the stored row version differs."),
+        ] = None,
+    ) -> str:
+        try:
+            agent_id, user_id = _tool_ctx()
+            app = _get_for_actor(service, app_id, agent_id, user_id, "edit_data")
+            deleted = await service.delete_row(app, row_id, expected_version=expected_version)
+            return _ok({"app_id": app.app_id, "deleted": deleted})
         except Exception as exc:
             return _err(exc)
 
@@ -317,7 +555,16 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                     "Hidden files (starting with a dot) are rejected."
                 )
             ),
-        ],
+        ] = "",
+        paths: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "Import several workspace files into the same table, in order. "
+                    "Use either path or paths."
+                )
+            ),
+        ] = None,
         table: Annotated[
             str,
             Field(description=_TABLE_HELP),
@@ -337,24 +584,139 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                 )
             ),
         ] = None,
+        sheet: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Worksheet to import from: a sheet name or a 0-based index. "
+                    "Defaults to the first sheet."
+                )
+            ),
+        ] = None,
+        header_row: Annotated[
+            int | None,
+            Field(
+                description=(
+                    "0-based index of the header line, for files that start with a "
+                    "title. Defaults to the first line."
+                )
+            ),
+        ] = None,
+        dry_run: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Validate and count the rows without writing them. Use it to "
+                    "show the user what would land before importing for real."
+                )
+            ),
+        ] = False,
+        upsert_key: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "Columns whose combined value identifies an existing row; "
+                    "matching rows are updated instead of duplicated (e.g. "
+                    "['employee_no', 'month'] for a monthly ledger)."
+                )
+            ),
+        ] = None,
+        include_pii: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Import values of columns detected as sensitive. Default "
+                    "false drops them; ask the user before setting true."
+                )
+            ),
+        ] = False,
     ) -> str:
         try:
             agent_id, user_id = _tool_ctx()
-            app = _get_owned(service, app_id, agent_id, user_id)
-            result = await service.import_from_file(
-                app,
-                path=path,
-                table=table,
-                mode=mode,
-                mapping=mapping,
-            )
+            app = _get_for_actor(service, app_id, agent_id, user_id, "edit_data")
+            if paths and path:
+                raise ValueError("use either path or paths, not both")
+            if not paths and not path:
+                raise ValueError("an import path is required")
+            if paths:
+                result = await service.import_from_files(
+                    app,
+                    paths=paths,
+                    table=table,
+                    mode=mode,
+                    mapping=mapping,
+                    sheet=sheet,
+                    header_row=header_row,
+                    dry_run=dry_run,
+                    upsert_key=upsert_key,
+                    include_pii=include_pii,
+                )
+            else:
+                result = await service.import_from_file(
+                    app,
+                    path=path,
+                    table=table,
+                    mode=mode,
+                    mapping=mapping,
+                    sheet=sheet,
+                    header_row=header_row,
+                    dry_run=dry_run,
+                    upsert_key=upsert_key,
+                    include_pii=include_pii,
+                )
             return _ok(
                 {
                     "app_id": app.app_id,
                     "table": table,
                     "imported": result.imported,
+                    "updated": result.updated,
+                    "warnings": result.warnings,
+                    "would_import": result.would_import,
+                    "dry_run": result.dry_run,
                     "skipped": result.skipped,
                     "errors": result.errors,
+                    "pii_columns": result.pii_columns,
+                    "blocked_pii": result.blocked_pii,
+                    "failed_rows": result.failed_rows,
+                }
+            )
+        except Exception as exc:
+            return _err(exc)
+
+    async def app_save_asset(
+        app_id: Annotated[str, Field(description="App id returned by app_create/app_list.")],
+        source: Annotated[
+            str,
+            Field(
+                description=(
+                    "Where to take the image from: an http(s) URL to download, "
+                    "or a workspace-relative path (e.g. inbound/cover.jpg)."
+                )
+            ),
+        ],
+        name: Annotated[
+            str,
+            Field(
+                description=(
+                    "File name to store it under, e.g. cover.jpg. Letters, "
+                    "digits, dot, dash and underscore only."
+                )
+            ),
+        ],
+    ) -> str:
+        try:
+            agent_id, user_id = _tool_ctx()
+            app = _get_for_actor(service, app_id, agent_id, user_id, "edit_data")
+            data = await _read_asset_source(service, app.agent_id, source)
+            stored = await service.save_asset(app, name, data)
+            return _ok(
+                {
+                    "app_id": app.app_id,
+                    "name": stored,
+                    "size": len(data),
+                    # Not a fetchable URL: the sandbox has no network. The page
+                    # reads the asset through the SDK.
+                    "usage": f'octopApp.asset("{stored}")',
                 }
             )
         except Exception as exc:
@@ -365,13 +727,23 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
     ) -> str:
         try:
             agent_id, user_id = _tool_ctx()
-            row = _get_owned(service, app_id, agent_id, user_id)
+            row = _get_for_actor(service, app_id, agent_id, user_id, "edit_structure")
             await service.delete(row)
             return _ok({"deleted": row.app_id})
         except Exception as exc:
             return _err(exc)
 
     return [
+        StructuredTool.from_function(
+            coroutine=app_inspect_file,
+            name="app_inspect_file",
+            description=(
+                "Inspect a spreadsheet file in the workspace and return a compact report: "
+                "sheets, header row, per-column type/emptiness/distinct counts, sample "
+                "values and PII warnings. Use it before creating an app from a ledger — "
+                "never read the file row by row."
+            ),
+        ),
         StructuredTool.from_function(
             coroutine=app_list,
             name="app_list",
@@ -388,6 +760,15 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                 "agent workspace. Define 1-50 columns up front, then call app_write_html to "
                 "build the interface and app_append_row to add data. Use this when the user "
                 "asks for a small tracker, dashboard, list or calculator-like tool."
+            ),
+        ),
+        StructuredTool.from_function(
+            coroutine=app_create_from_template,
+            name="app_create_from_template",
+            description=(
+                "Create an empty app from an expert-provided app template "
+                "(schema + HTML shell). The template carries no user data; use it "
+                "when the user asks for a standard tool such as a ledger or tracker."
             ),
         ),
         StructuredTool.from_function(
@@ -408,6 +789,15 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
             ),
         ),
         StructuredTool.from_function(
+            coroutine=app_alter_schema,
+            name="app_alter_schema",
+            description=(
+                "Rename, drop or retype columns of a lightweight app. Every "
+                "existing row is migrated; the change is rejected when a row "
+                "does not fit the new schema."
+            ),
+        ),
+        StructuredTool.from_function(
             coroutine=app_write_html,
             name="app_write_html",
             description=(
@@ -420,7 +810,8 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
             name="app_read_data",
             description=(
                 "Read a page of rows from a lightweight app together with its column "
-                "definitions. Use it before answering questions about the app's data."
+                "definitions. `row_meta` is parallel to `rows` and carries the row_id "
+                "and version needed by app_update_row / app_delete_row."
             ),
         ),
         StructuredTool.from_function(
@@ -432,12 +823,38 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
             ),
         ),
         StructuredTool.from_function(
+            coroutine=app_update_row,
+            name="app_update_row",
+            description=(
+                "Replace one row of a lightweight app. Pass expected_version to "
+                "reject a stale edit instead of overwriting another user's change."
+            ),
+        ),
+        StructuredTool.from_function(
+            coroutine=app_delete_row,
+            name="app_delete_row",
+            description=(
+                "Delete one row of a lightweight app. Pass expected_version to "
+                "reject a stale delete."
+            ),
+        ),
+        StructuredTool.from_function(
             coroutine=app_import_rows,
             name="app_import_rows",
             description=(
                 "Import rows from a workspace file (CSV/TSV/JSON/.xlsx/.xls) into a "
                 "lightweight app table. Rows that fail validation are skipped and "
                 "counted. Use it to bulk-load data the user provided or exported."
+            ),
+        ),
+        StructuredTool.from_function(
+            coroutine=app_save_asset,
+            name="app_save_asset",
+            description=(
+                "Store an image next to the app (a book cover, an icon). The app "
+                "page cannot load remote images, so covers have to be saved "
+                "here and shown through octopApp.asset(name). PNG, JPEG, WebP "
+                "or GIF, at most 5 MB."
             ),
         ),
         StructuredTool.from_function(

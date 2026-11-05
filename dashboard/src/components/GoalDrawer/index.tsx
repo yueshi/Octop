@@ -15,7 +15,7 @@ import {
   Typography,
   message,
 } from "antd";
-import { Link2, Paperclip, Target } from "lucide-react";
+import { AppWindow, Link2, Paperclip, Target } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -467,6 +467,19 @@ export default function GoalDrawer({
                     <Link2 size={13} /> {deliverable.artifact_name || url}
                   </a>
                 ) : null}
+                {deliverable.artifact_type === "app" &&
+                deliverable.artifact_ref ? (
+                  <a
+                    href={`/apps/${encodeURIComponent(
+                      deliverable.artifact_ref,
+                    )}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <AppWindow size={13} />{" "}
+                    {deliverable.artifact_name || deliverable.artifact_ref}
+                  </a>
+                ) : null}
                 <div style={{ marginTop: 8 }}>
                   <Button
                     size="small"
@@ -572,6 +585,7 @@ export default function GoalDrawer({
                 { value: "file", label: t("goals.artifact.file") },
                 { value: "link", label: t("goals.artifact.link") },
                 { value: "text", label: t("goals.artifact.text") },
+                { value: "app", label: t("goals.artifact.app") },
               ]}
             />
           </Form.Item>
@@ -613,6 +627,15 @@ export default function GoalDrawer({
               rules={[{ required: true }]}
             >
               <Input.TextArea rows={5} maxLength={4000} />
+            </Form.Item>
+          ) : null}
+          {artifactType === "app" ? (
+            <Form.Item
+              name="artifact_ref"
+              label={t("goals.artifact.appId")}
+              rules={[{ required: true }]}
+            >
+              <Input placeholder="app_…" />
             </Form.Item>
           ) : null}
           <Form.Item name="artifact_name" label={t("goals.artifact.name")}>

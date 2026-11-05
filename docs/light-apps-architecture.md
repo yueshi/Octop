@@ -142,8 +142,8 @@ WorkBuddy 的资料库/轻应用验证了正确方向：CSV 在云端作为“�
 
 ### 4.5 DDL 示例（SQLite）
 
-022 是未发布版本，规范做法是把新列直接写进 `CREATE TABLE light_apps`、新表直接追加到
-022；对于已经记录为 v22 的本地库（开发机、已部署实例），由 `migrate.py` 的
+025 是未发布版本，规范做法是把新列直接写进 `CREATE TABLE light_apps`、新表直接追加到
+025；对于已经记录为 v25 的本地库（开发机、已部署实例），由 `migrate.py` 的
 `_ensure_column` / `CREATE TABLE IF NOT EXISTS` 幂等补齐。下面的 `ALTER` 片段对应后者。
 新建应用直接写 `storage_version = 2` 与 `schema_json`，不经过迁移路径。
 
@@ -182,15 +182,18 @@ PostgreSQL 版本将 `INTEGER PRIMARY KEY AUTOINCREMENT` 换成
 
 ### 4.6 迁移编号
 
-`022_light_apps` 尚未随版本发布，按 `AGENTS.md` 的规则**折叠进 022**，不新开 023：
+上游 `develop` 已占用 022–024（`skill_package_shared`、`user_groups`、
+`user_group_profile`），本分支的轻应用迁移因此整体重排为 **025–029**：
 
-- 同时修改 `infra/db/migrations/022_light_apps.sql` 与 `.pg.sql`；
-- 在 `migrate.py` 的 `_ensure_light_apps_schema` 中补 `_ensure_column` 与
-  `CREATE TABLE IF NOT EXISTS`，保持幂等；
-- `_schema_version` 保持 22，`tests/unit/db/test_db_pool.py` 的断言不变，
-  另加新表存在性断言。
-
-如果实施时 022 已随版本发布，则改为切 023 并同步提升版本断言。
+- `025_light_apps`：应用、协作者、多表、助手历史、数据源、团队看板；
+- `026_goal_deliverables`、`027_external_events`、`028_light_app_rows`、
+  `029_light_app_publications`。
+- 同时维护 `.sql` / `.pg.sql` 成对文件；`migrate.py` 的
+  `_ensure_light_apps_schema` / `_ensure_light_app_rows_schema` /
+  `_ensure_light_app_publications_schema` 保持幂等，覆盖已记录旧编号的库。
+- `_schema_version` 最终为 29，`tests/unit/db/test_db_pool.py` 的断言同步更新。
+- 若库的 watermark 已高于上游 023，`_ensure_user_groups_schema` 会补建
+  `user_group` / `user_group_member` / `resource_group_grant`，避免合并后缺表。
 
 ---
 
@@ -520,7 +523,7 @@ dashboard/src/pages/Apps/components/
 
 | 阶段 | 内容 | 人日 | 验证 |
 |------|------|------|------|
-| P0-1 | 022 表结构 + repo + migrate 助手 | 3–4 | 建库/升级/表存在性测试 |
+| P0-1 | 025 表结构 + repo + migrate 助手 | 3–4 | 建库/升级/表存在性测试 |
 | P0-2 | service 读写切 DB、懒迁移、并发、限额、幂等 | 5–7 | 旧应用迁移后行数与 CSV 一致；并发 append 都落库；stale update 409 |
 | P0-3 | 工具/接口按实际操作者鉴权 | 2–3 | shared agent 协作者按 ACL 读写；结构变更仍 owner-only |
 | P0-4 | 只读数据表 + CSV 导出 | 3 | 列表不再扫描工作区目录；导出与 DB 一致 |
@@ -540,7 +543,7 @@ MVP = P0（13–17 人日）。若优先传播能力，可将 P2-1 提前到 P1 
 
 ### 14.1 后端
 
-- `tests/unit/db/`：022 迁移、表/索引存在性、repo CRUD、部分唯一索引冲突；
+- `tests/unit/db/`：025 迁移、表/索引存在性、repo CRUD、部分唯一索引冲突；
 - `tests/unit/apps/`：schema/row 校验、并发追加、幂等追加、CAS 冲突、限额；
 - `tests/unit/apps/test_migration.py`：旧文件 → DB，重复调用不重复插入；
 - `tests/integration/test_apps_api.py`：行 CRUD、导入/导出、ACL、发布/撤销、
@@ -612,7 +615,7 @@ WorkBuddy 明确轻应用不适合复杂业务逻辑、高并发写入、严格�
 | Schema/行校验、CSV 序列化 | `src/octop/infra/apps/models.py` |
 | Agent 工具 | `src/octop/infra/apps/tools.py` |
 | 元数据/ACL repo | `src/octop/infra/db/repos/apps.py` |
-| 迁移 | `src/octop/infra/db/migrations/022_light_apps*.sql`、`src/octop/infra/db/migrate.py` |
+| 迁移 | `src/octop/infra/db/migrations/025_light_apps*.sql`、`src/octop/infra/db/migrate.py` |
 | HTTP 路由 | `src/octop/api/routers/apps.py` |
 | JWT 豁免 | `src/octop/api/deps.py` |
 | 连接器/MCP | `src/octop/infra/connectors/service.py`、`octop_harness/mcp.py` |

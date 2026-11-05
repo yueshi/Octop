@@ -22,6 +22,18 @@ def _xlsx_bytes(rows: list[list[object]]) -> bytes:
     return buffer.getvalue()
 
 
+def _xlsx_sheets_bytes(sheets: dict[str, list[list[object]]]) -> bytes:
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    for name, rows in sheets.items():
+        sheet = workbook.create_sheet(title=name)
+        for row in rows:
+            sheet.append(row)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
 def test_parse_csv_with_headers() -> None:
     rows = parse_import_file("items.csv", b"name,qty\ncup,3\npen,\n")
     assert rows == [{"name": "cup", "qty": "3"}, {"name": "pen", "qty": ""}]
@@ -66,3 +78,31 @@ def test_unsupported_extension_rejected() -> None:
         parse_import_file("items.pdf", b"%PDF-1.4")
     assert exc.value.code == ErrorCode.APP_ROW_INVALID
     assert "unsupported" in exc.value.message
+
+
+def test_parse_import_file_selects_sheet_by_name_and_index() -> None:
+    data = _xlsx_sheets_bytes(
+        {"9月": [["name", "qty"], ["sep", 1]], "10月": [["name", "qty"], ["oct", 2]]}
+    )
+    assert parse_import_file("q3.xlsx", data, sheet="10月") == [{"name": "oct", "qty": "2"}]
+    assert parse_import_file("q3.xlsx", data, sheet="1") == [{"name": "oct", "qty": "2"}]
+    assert parse_import_file("q3.xlsx", data) == [{"name": "sep", "qty": "1"}]
+
+
+def test_parse_import_file_rejects_unknown_sheet() -> None:
+    data = _xlsx_sheets_bytes({"9月": [["name"], ["sep"]]})
+    with pytest.raises(OctopError) as exc:
+        parse_import_file("q3.xlsx", data, sheet="nope")
+    assert exc.value.code == ErrorCode.APP_ROW_INVALID
+
+
+def test_parse_import_file_uses_the_given_header_row() -> None:
+    text = "标题行\nname,qty\ncup,3\n"
+    # Without the hint the first line is the header, so the columns are off.
+    assert parse_import_file("items.csv", text.encode()) == [
+        {"标题行": "name"},
+        {"标题行": "cup"},
+    ]
+    assert parse_import_file("items.csv", text.encode(), header_row=1) == [
+        {"name": "cup", "qty": "3"}
+    ]

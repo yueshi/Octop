@@ -172,7 +172,7 @@ waiting → settled
 
 ## 4. 数据模型
 
-> 迁移规则：若 022 仍未发布，折叠进 `022_light_apps`；若已发布，新开下一个编号。无论哪种，都必须同时更新 `.sql`/`.pg.sql`、扩展 `src/octop/infra/db/migrate.py` 的 `_ensure_team_board_schema`（供已记录 v22 的库补表/补列），并更新 `tests/unit/db/test_db_pool.py` 的版本断言。
+> 迁移规则：团队看板随 `025_light_apps` 一起发布；同时维护 `.sql`/`.pg.sql`、扩展 `src/octop/infra/db/migrate.py` 的 `_ensure_team_board_schema`（供已记录旧编号的库补表/补列），并更新 `tests/unit/db/test_db_pool.py` 的版本断言。
 
 ### 4.1 `team_runtime`
 
@@ -618,7 +618,7 @@ for task in ready_tasks(team_id) order by priority desc, deadline asc:
 
 | 阶段 | 内容 | 验证 |
 |---|---|---|
-| 0 | 计量 + schema：`usage_log.team_id`、成员/收口 usage、5 张新表、`team_tasks` 列、迁移 helper | 单测；v22 库补表；PG/SQLite 一致 |
+| 0 | 计量 + schema：`usage_log.team_id`、成员/收口 usage、5 张新表、`team_tasks` 列、迁移 helper | 单测；旧编号库补表；PG/SQLite 一致 |
 | 1 | 事件影子：`on_reply`/board/HITL/用户消息写 `team_events`；coordinator 只观察/分类，不替换旧循环 | 事件不丢、dedupe、无自激、routine 占比 |
 | 2 | 决策/派发影子：快照 + plan dry-run；dispatcher 只计算不执行 | 计划合法、幂等、预算预留、顺序正确 |
 | 3 | 切换：runtime 权威；全局 sweeper；迁移 drive cron；wait 结算 | 端到端：事件→决策→派发→回叫→结算；崩溃恢复 |
@@ -637,7 +637,7 @@ for task in ready_tasks(team_id) order by priority desc, deadline asc:
 - 单元：事件去重/聚合/self-event 抑制；routine/judgment 路由；plan 校验；dispatch 依赖/并发/预算/窗口/deadline；wait settle/timeout；预算日切换；pause/stop。
 - 集成：成员完成不触发 host 回合；失败触发 decision；审批恢复；重复 `inbox_id` 不重复结算；进程重启后 waits 恢复；stop 不复活。
 - 成本：routine 完成零 LLM；一次事件风暴只产生一个 decision；快照不含全量房间；决策 token 上限。
-- 迁移：v1 库带 drive cron/任务/HITL；v22 已记录版本的补表；SQLite/PG 一致；Windows 路径/时区/DST。
+- 迁移：v1 库带 drive cron/任务/HITL；旧编号已记录版本的补表；SQLite/PG 一致；Windows 路径/时区/DST。
 - 跨平台：遵循 `AGENTS.md` §7，`tmp_path`、`posix_only`、不硬编码 `/`。
 
 ---
@@ -709,7 +709,7 @@ for task in ready_tasks(team_id) order by priority desc, deadline asc:
 - 派发缝：`src/octop/infra/agents/teams/team_manager.py`（`wire_host_dispatch`、`on_reply`、`stream_peer_to_room`）。
 - 驱动 cron/停止：`src/octop/infra/agents/teams/drive.py`（`enable_team_drive`、`stop_team_drive`、`reap_stale_tasks`）。
 - 看板状态机：`src/octop/infra/agents/teams/task_state.py`、`board_tools.py`。
-- 持久 HITL：`src/octop/infra/db/repos/hitl.py`、`022_light_apps.sql`。
+- 持久 HITL：`src/octop/infra/db/repos/hitl.py`、`025_light_apps.sql`。
 - 用量：`src/octop/infra/db/repos/usage.py`、`001_initial.sql` 的 `usage_log`。
 - 系统任务注册：`src/octop/infra/cron/manager.py`（`schedule_system_job`）。
 - 迁移 helper：`src/octop/infra/db/migrate.py`（`_ensure_team_board_schema`）。

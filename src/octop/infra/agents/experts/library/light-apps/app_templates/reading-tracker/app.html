@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>读书清单</title>
+<style>
+  body { font-family: system-ui, -apple-system, "PingFang SC", sans-serif; margin: 0; padding: 16px; color: #1f2937; }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  input, select { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; }
+  button { padding: 6px 12px; border: 0; border-radius: 6px; background: #0ea5e9; color: #fff; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #e5e7eb; font-size: 13px; }
+  .muted { color: #6b7280; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>读书清单</h1>
+<form id="add">
+  <input name="title" placeholder="书名" required>
+  <input name="author" placeholder="作者">
+  <select name="status">
+    <option value="想读">想读</option>
+    <option value="在读">在读</option>
+    <option value="读完">读完</option>
+  </select>
+  <input name="rating" placeholder="评分 1-5" inputmode="numeric">
+  <button type="submit">添加</button>
+</form>
+<p class="muted" id="empty">还没有书，先加一本吧。</p>
+<table id="list"><thead><tr><th>书名</th><th>作者</th><th>状态</th><th>评分</th></tr></thead><tbody></tbody></table>
+<script>
+  async function refresh() {
+    const { rows } = await octopApp.listRows({ limit: 500 });
+    const body = document.querySelector("#list tbody");
+    body.innerHTML = "";
+    for (const row of rows) {
+      const tr = document.createElement("tr");
+      for (const key of ["title", "author", "status", "rating"]) {
+        const td = document.createElement("td");
+        td.textContent = row[key] || "";
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    }
+    document.querySelector("#empty").style.display = rows.length ? "none" : "block";
+  }
+  document.querySelector("#add").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.target);
+    await octopApp.appendRow({
+      title: data.get("title"),
+      author: data.get("author"),
+      status: data.get("status"),
+      rating: data.get("rating") || "",
+    });
+    event.target.reset();
+    await refresh();
+  });
+  refresh().catch((err) => {
+    document.querySelector("#empty").textContent = "加载失败：" + err.message;
+  });
+</script>
+</body>
+</html>

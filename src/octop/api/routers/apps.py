@@ -7,6 +7,8 @@ rows. Ownership and sharing are enforced through ``AppService``.
 
 from __future__ import annotations
 
+import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import asdict
 from typing import Any, Literal
@@ -23,6 +25,8 @@ from octop.infra.apps.assistant import AppAssistant
 from octop.infra.apps.models import MAIN_TABLE_KEY, Schema
 from octop.infra.apps.service import (
     IMPORT_MODE_REPLACE,
+    MAX_ASSET_BYTES,
+    MAX_BACKUP_BYTES,
     AppRecord,
     AppService,
     AppTableView,
@@ -46,6 +50,10 @@ class AppColumn(BaseModel):
     type: str = Field(description="Value type (string, integer, boolean, date, enum, …).")
     required: bool = Field(default=False, description="Whether the column must be non-empty.")
     values: list[str] = Field(default_factory=list, description="Allowed values for enum columns.")
+    pii: str | None = Field(
+        default=None,
+        description="Sensitive-data kind; values are masked for viewers and public links.",
+    )
 
 
 class AppSummary(BaseModel):
@@ -108,24 +116,91 @@ class AppDetail(AppSummary):
     )
 
 
+class RowMeta(BaseModel):
+    row_id: str = Field(
+        default="",
+        description="Stable row id for update/delete; empty for legacy CSV apps.",
+    )
+    version: int = Field(default=1, description="Row version for optimistic concurrency.")
+    source: str = Field(
+        default="manual",
+        description="How the row got here: manual, import, migration, connector, agent.",
+    )
+
+
 class AppRowsResponse(BaseModel):
     columns: list[AppColumn]
     rows: list[dict[str, str]]
+    row_meta: list[RowMeta] = Field(
+        default_factory=list,
+        description="Parallel to rows: row id and version for editing.",
+    )
     total: int
     limit: int
     offset: int
     table: str = Field(default="main", description="Table the rows came from.")
+    pii_columns: list[str] = Field(
+        default_factory=list,
+        description="Sensitive columns whose values are masked for this caller.",
+    )
 
 
 class AppendRowBody(BaseModel):
     row: dict[str, Any] = Field(description="One row keyed by column name.")
     table: str = Field(default="main", description="Table to append to.")
+    client_request_id: str | None = Field(
+        default=None,
+        max_length=200,
+        description="Idempotency key; retrying with the same id does not duplicate the row.",
+    )
 
 
 class AppendRowResponse(BaseModel):
     row_index: int = Field(description="Zero-based index of the appended row.")
     row: dict[str, str]
     table: str = Field(default="main", description="Table the row was appended to.")
+    row_id: str = Field(default="", description="Stable row id for later updates.")
+    version: int = Field(default=1, description="Version of the appended row.")
+
+
+class UpdateRowBody(BaseModel):
+    row: dict[str, Any] = Field(description="Complete row keyed by column name.")
+    expected_version: int | None = Field(
+        default=None,
+        description="Reject the update when the stored version differs.",
+    )
+
+
+class UpdateRowResponse(BaseModel):
+    row_id: str
+    row: dict[str, str]
+    version: int
+
+
+class DeleteRowResponse(BaseModel):
+    deleted: str
+
+
+class ColumnTypeSpec(BaseModel):
+    type: str | None = Field(default=None, description="New column type.")
+    label: str | None = Field(default=None, description="New display label.")
+    required: bool | None = Field(default=None, description="Required flag.")
+    values: list[str] | None = Field(default=None, description="Allowed values for an enum.")
+
+
+class AlterSchemaBody(BaseModel):
+    renames: dict[str, str] = Field(
+        default_factory=dict,
+        description="Old column name -> new column name.",
+    )
+    drops: list[str] = Field(
+        default_factory=list,
+        description="Columns to remove; their data is deleted.",
+    )
+    types: dict[str, ColumnTypeSpec] = Field(
+        default_factory=dict,
+        description="Column name -> new type/label/required/enum values.",
+    )
 
 
 class UpdateAppBody(BaseModel):
@@ -157,6 +232,24 @@ class SharesResponse(BaseModel):
     shares: list[ShareOut]
 
 
+def _audit(
+    server: OctopServer,
+    *,
+    actor: str,
+    action: str,
+    target: str,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    if server.services is None:
+        return
+    server.services.audit_repo.write(
+        actor=actor,
+        action=action,
+        target=target,
+        payload=json.dumps(payload, ensure_ascii=False) if payload else None,
+    )
+
+
 def _service(server: OctopServer) -> AppService:
     if server.services is None or server.app_runtime is None:
         raise OctopError(ErrorCode.INTERNAL_ERROR, "server is not started")
@@ -176,6 +269,7 @@ def _columns(schema: Schema) -> list[AppColumn]:
             type=col.type,
             required=col.required,
             values=list(col.values),
+            pii=col.pii,
         )
         for col in schema.columns
     ]
@@ -283,6 +377,131 @@ async def list_apps(
     )
 
 
+class AppTemplateOut(BaseModel):
+    template: str = Field(description="Template directory name.")
+    label: str = Field(description="Display label (the directory name for now).")
+    has_html: bool = Field(description="Whether the template ships an app.html shell.")
+
+
+class AppTemplatesResponse(BaseModel):
+    templates: list[AppTemplateOut]
+
+
+class CreateFromTemplateBody(BaseModel):
+    agent_id: str = Field(description="Agent whose workspace holds the template.")
+    template: str = Field(description="Template name from the templates endpoint.")
+    name: str | None = Field(default=None, max_length=100, description="New app name.")
+    description: str = Field(default="", max_length=2000, description="New app description.")
+
+
+def _assert_agent_access(service: AppService, user: User, agent_id: str) -> None:
+    if user.is_admin or service.is_agent_accessible(agent_id, user.id):
+        return
+    raise OctopError(ErrorCode.APP_FORBIDDEN, "agent is not accessible to this user")
+
+
+@router.get(
+    "/templates",
+    response_model=AppTemplatesResponse,
+    summary="List app templates",
+    description=(
+        "Lists the app shells an expert seeded into the agent's "
+        "``app_templates/`` directory. Create one with POST /apps/from-template."
+    ),
+)
+async def list_app_templates(
+    agent_id: str = Query(description="Agent whose workspace holds the templates."),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> AppTemplatesResponse:
+    service = _service(server)
+    _assert_agent_access(service, user, agent_id)
+    templates = await service.list_app_templates(agent_id)
+    return AppTemplatesResponse(
+        templates=[AppTemplateOut(**item) for item in templates],
+    )
+
+
+@router.post(
+    "/from-template",
+    response_model=AppDetail,
+    status_code=201,
+    summary="Create an app from an expert template",
+    description=(
+        "Creates an empty app from an expert-provided schema + HTML shell. "
+        "The template never carries user data. Requires access to the agent."
+    ),
+)
+async def create_app_from_template(
+    body: CreateFromTemplateBody,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> AppDetail:
+    service = _service(server)
+    _assert_agent_access(service, user, body.agent_id)
+    row = await service.create_from_template(
+        agent_id=body.agent_id,
+        owner_user_id=user.id,
+        template=body.template,
+        name=body.name,
+        description=body.description,
+    )
+    schema = await service.read_schema(row)
+    base = _summary(service, row, "edit_structure")
+    return AppDetail(
+        **base.model_dump(exclude={"has_html"}),
+        columns=_columns(schema),
+        has_html=await service.has_html(row),
+        tables=await _table_outs(service, row),
+    )
+
+
+@router.post(
+    "/restore",
+    response_model=AppDetail,
+    status_code=201,
+    summary="Restore an app from a backup",
+    description=(
+        "Creates a new app from a zip produced by GET /apps/{app_id}/backup. "
+        "The archive is validated before anything is written; ids are not "
+        "reused. Requires access to the target agent."
+    ),
+)
+async def restore_app(
+    file: UploadFile = File(...),  # noqa: B008
+    agent_id: str = Query(description="Agent whose workspace will host the restored app."),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> AppDetail:
+    service = _service(server)
+    _assert_agent_access(service, user, agent_id)
+    data = await read_upload_capped(
+        file,
+        max_bytes=MAX_BACKUP_BYTES,
+        code=ErrorCode.APP_SOURCE_INVALID,
+    )
+    row = await service.restore_archive(
+        agent_id=agent_id,
+        owner_user_id=user.id,
+        data=data,
+    )
+    _audit(
+        server,
+        actor=f"user:{user.id}",
+        action="light_app.restore",
+        target=row.app_id,
+        payload={"bytes": len(data)},
+    )
+    schema = await service.read_schema(row)
+    base = _summary(service, row, "edit_structure")
+    return AppDetail(
+        **base.model_dump(exclude={"has_html"}),
+        columns=_columns(schema),
+        has_html=await service.has_html(row),
+        tables=await _table_outs(service, row),
+    )
+
+
 @router.get(
     "/{app_id}",
     response_model=AppDetail,
@@ -293,6 +512,9 @@ async def get_app(
     user: User = Depends(current_user),
     server: OctopServer = Depends(get_server),
 ) -> AppDetail:
+    from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+    METRICS.inc("light_app_open_total")
     service, row, permission = _row_access(server, user, app_id, "view")
     schema = await service.read_schema(row)
     base = _summary(service, row, permission)
@@ -377,6 +599,81 @@ async def list_app_files(
     )
 
 
+class AssetOut(BaseModel):
+    name: str = Field(description="Asset file name inside the app's assets directory.")
+    size: int = Field(default=0, description="Asset size in bytes.")
+
+
+class AssetListResponse(BaseModel):
+    assets: list[AssetOut]
+
+
+@router.get(
+    "/{app_id}/assets",
+    response_model=AssetListResponse,
+    summary="List app assets",
+    description="Lists the images stored next to the app (covers, icons).",
+)
+async def list_app_assets(
+    app_id: str,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> AssetListResponse:
+    service, row, _permission = _row_access(server, user, app_id, "view")
+    names = await service.list_assets(row)
+    return AssetListResponse(assets=[AssetOut(name=name) for name in names])
+
+
+@router.post(
+    "/{app_id}/assets",
+    response_model=AssetOut,
+    status_code=201,
+    summary="Upload an app asset",
+    description=(
+        "Stores a PNG, JPEG, WebP or GIF image (at most 5 MB) next to the app. "
+        "The app page cannot load remote images, so covers and icons are "
+        "stored here. Requires edit_data."
+    ),
+)
+async def upload_app_asset(
+    app_id: str,
+    file: UploadFile = File(...),  # noqa: B008
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> AssetOut:
+    service, row, _permission = _row_access(server, user, app_id, "edit_data")
+    data = await read_upload_capped(
+        file,
+        max_bytes=MAX_ASSET_BYTES,
+        code=ErrorCode.APP_SOURCE_INVALID,
+    )
+    name = await service.save_asset(row, file.filename or "asset.png", data)
+    return AssetOut(name=name, size=len(data))
+
+
+@router.get(
+    "/{app_id}/assets/{name}",
+    summary="Fetch an app asset",
+    description=(
+        "Serves one stored image. The app page fetches it through this "
+        "endpoint, so the app ACL applies. Requires view."
+    ),
+)
+async def get_app_asset(
+    app_id: str,
+    name: str,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> Response:
+    service, row, _permission = _row_access(server, user, app_id, "view")
+    mime, data = await service.read_asset(row, name)
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
 @router.get(
     "/{app_id}/rows",
     response_model=AppRowsResponse,
@@ -390,15 +687,24 @@ async def get_app_rows(
     user: User = Depends(current_user),
     server: OctopServer = Depends(get_server),
 ) -> AppRowsResponse:
-    service, row, _permission = _row_access(server, user, app_id, "view")
-    schema, rows, total = await service.read_rows(row, limit=limit, offset=offset, table=table)
+    service, row, permission = _row_access(server, user, app_id, "view")
+    redact_pii = permission == "view"
+    schema, rows, row_meta, total = await service.read_rows_detailed(
+        row,
+        limit=limit,
+        offset=offset,
+        table=table,
+        redact_pii=redact_pii,
+    )
     return AppRowsResponse(
         columns=_columns(schema),
         rows=rows,
+        row_meta=[RowMeta(**meta) for meta in row_meta],
         total=total,
         limit=limit,
         offset=offset,
         table=table,
+        pii_columns=[column.name for column in schema.columns if column.pii] if redact_pii else [],
     )
 
 
@@ -415,8 +721,186 @@ async def append_app_row(
     server: OctopServer = Depends(get_server),
 ) -> AppendRowResponse:
     service, row, _permission = _row_access(server, user, app_id, "edit_data")
-    index, stored = await service.append_row(row, body.row, table=body.table)
-    return AppendRowResponse(row_index=index, row=stored, table=body.table)
+    index, stored = await service.append_row_record(
+        row,
+        body.row,
+        table=body.table,
+        client_request_id=body.client_request_id,
+        created_by=user.id,
+    )
+    from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+    METRICS.inc("light_app_row_write_total")
+    return AppendRowResponse(
+        row_index=index,
+        row=stored.values,
+        table=body.table,
+        row_id=stored.row_id,
+        version=stored.version,
+    )
+
+
+@router.patch(
+    "/{app_id}/rows/{row_id}",
+    response_model=UpdateRowResponse,
+    summary="Update a row",
+    description=(
+        "Replaces one row. Pass expected_version to reject a stale edit with 409. "
+        "Requires edit_data."
+    ),
+)
+async def update_app_row(
+    app_id: str,
+    row_id: str,
+    body: UpdateRowBody,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> UpdateRowResponse:
+    service, row, _permission = _row_access(server, user, app_id, "edit_data")
+    result = await service.update_row(
+        row,
+        row_id,
+        body.row,
+        expected_version=body.expected_version,
+    )
+    from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+    METRICS.inc("light_app_row_write_total")
+    return UpdateRowResponse(
+        row_id=str(result["row_id"]),
+        row=result["values"],
+        version=int(result["version"]),
+    )
+
+
+@router.delete(
+    "/{app_id}/rows/{row_id}",
+    response_model=DeleteRowResponse,
+    summary="Delete a row",
+    description="Deletes one row. Pass expected_version to reject a stale edit. Requires edit_data.",
+)
+async def delete_app_row(
+    app_id: str,
+    row_id: str,
+    expected_version: int | None = Query(default=None, description="Reject when the row changed."),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> DeleteRowResponse:
+    service, row, _permission = _row_access(server, user, app_id, "edit_data")
+    deleted = await service.delete_row(row, row_id, expected_version=expected_version)
+    from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+    METRICS.inc("light_app_row_write_total")
+    return DeleteRowResponse(deleted=deleted)
+
+
+@router.get(
+    "/{app_id}/export",
+    summary="Export a table as CSV",
+    description=(
+        "Renders the current rows of one table as a CSV snapshot. Requires view. "
+        "This is an export, not the live storage."
+    ),
+)
+async def export_app_table(
+    app_id: str,
+    table: str = Query(default=MAIN_TABLE_KEY, description="Table key to export."),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> Response:
+    service, row, permission = _row_access(server, user, app_id, "view")
+    redact_pii = permission == "view"
+    filename, content = await service.export_rows(
+        row,
+        table=table,
+        redact_pii=redact_pii,
+    )
+    from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+    METRICS.inc("light_app_export_total")
+    _audit(
+        server,
+        actor=f"user:{user.id}",
+        action="light_app.export",
+        target=app_id,
+        payload={"table": table, "bytes": len(content), "pii_masked": redact_pii},
+    )
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get(
+    "/{app_id}/backup",
+    summary="Download an app backup",
+    description=(
+        "Bundles app.html, every table's schema and rows, and the assets into "
+        "one zip. Restore it with POST /apps/restore. Requires edit_structure "
+        "because the archive contains unmasked data."
+    ),
+    responses={200: {"content": {"application/zip": {}}}},
+)
+async def backup_app(
+    app_id: str,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> Response:
+    service, row, _permission = _row_access(server, user, app_id, "edit_structure")
+    filename, content = await service.backup_archive(row)
+    from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+    METRICS.inc("light_app_export_total")
+    _audit(
+        server,
+        actor=f"user:{user.id}",
+        action="light_app.backup",
+        target=app_id,
+        payload={"bytes": len(content)},
+    )
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.patch(
+    "/{app_id}/schema",
+    response_model=AppDetail,
+    summary="Rename, drop or retype columns",
+    description=(
+        "Migrates every existing row to the new schema in one transaction. The "
+        "change is rejected when a row cannot be represented (for example a "
+        "non-numeric value when changing a column to integer). Requires "
+        "edit_structure."
+    ),
+)
+async def alter_app_schema(
+    app_id: str,
+    body: AlterSchemaBody,
+    table: str = Query(default=MAIN_TABLE_KEY, description="Table key to alter."),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> AppDetail:
+    service, row, permission = _row_access(server, user, app_id, "edit_structure")
+    await service.alter_schema(
+        row,
+        table=table,
+        renames=body.renames,
+        drops=body.drops,
+        types={name: spec.model_dump(exclude_none=True) for name, spec in body.types.items()},
+    )
+    updated = service.get(app_id)
+    schema = await service.read_schema(updated, table)
+    base = _summary(service, updated, permission)
+    return AppDetail(
+        **base.model_dump(exclude={"has_html"}),
+        columns=_columns(schema),
+        has_html=await service.has_html(updated),
+        tables=await _table_outs(service, updated),
+    )
 
 
 @router.patch(
@@ -490,7 +974,149 @@ async def set_app_shares(
 ) -> SharesResponse:
     service, row, _permission = _row_access(server, user, app_id, "edit_structure")
     views = service.set_shares(row, [(share.username, share.permission) for share in body.shares])
+    _audit(
+        server,
+        actor=f"user:{user.id}",
+        action="light_app.share",
+        target=app_id,
+        payload={"shares": [share.model_dump() for share in body.shares]},
+    )
     return SharesResponse(shares=[ShareOut(**asdict(view)) for view in views])
+
+
+class PublicationOut(BaseModel):
+    active: bool = Field(description="Whether a non-revoked, non-expired link exists.")
+    url: str | None = Field(default=None, description="Public URL when a token was just created.")
+    token: str | None = Field(
+        default=None, description="Plaintext token, returned only on creation."
+    )
+    expires_at: int | None = Field(default=None, description="Unix expiry, or null for no expiry.")
+
+
+class CreatePublicationBody(BaseModel):
+    ttl_days: int = Field(
+        default=0,
+        ge=0,
+        le=3650,
+        description="Link lifetime in days; 0 means no expiry.",
+    )
+
+
+@router.get(
+    "/{app_id}/publication",
+    response_model=PublicationOut,
+    summary="Get the public link status",
+    description="Read-only public link status. Requires view.",
+)
+async def get_app_publication(
+    app_id: str,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> PublicationOut:
+    service, row, _permission = _row_access(server, user, app_id, "view")
+    publication = service.get_publication(row)
+    active = (
+        publication is not None
+        and publication.revoked_at is None
+        and (publication.expires_at is None or publication.expires_at > int(time.time()))
+    )
+    return PublicationOut(
+        active=active,
+        expires_at=publication.expires_at if publication else None,
+    )
+
+
+@router.post(
+    "/{app_id}/publication",
+    response_model=PublicationOut,
+    summary="Create or rotate the public link",
+    description=(
+        "Creates a read-only public link and returns the token once. "
+        "Rotating the link invalidates the previous one. Requires edit_structure."
+    ),
+)
+async def create_app_publication(
+    app_id: str,
+    body: CreatePublicationBody,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> PublicationOut:
+    service, row, _permission = _row_access(server, user, app_id, "edit_structure")
+    token, expires_at = service.create_publication(
+        row,
+        user_id=user.id,
+        ttl_days=body.ttl_days,
+    )
+    _audit(
+        server,
+        actor=f"user:{user.id}",
+        action="light_app.publication.create",
+        target=app_id,
+        payload={"expires_at": expires_at},
+    )
+    return PublicationOut(
+        active=True,
+        url=f"/p/{token}",
+        token=token,
+        expires_at=expires_at,
+    )
+
+
+@router.delete(
+    "/{app_id}/publication",
+    response_model=PublicationOut,
+    summary="Revoke the public link",
+    description="Revokes the current link; an already shared URL returns 404. Requires edit_structure.",
+)
+async def revoke_app_publication(
+    app_id: str,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> PublicationOut:
+    service, row, _permission = _row_access(server, user, app_id, "edit_structure")
+    service.revoke_publication(row)
+    _audit(
+        server,
+        actor=f"user:{user.id}",
+        action="light_app.publication.revoke",
+        target=app_id,
+    )
+    return PublicationOut(active=False)
+
+
+class TransferAppBody(BaseModel):
+    agent_id: str = Field(
+        min_length=1,
+        description="The agent that should host the app from now on.",
+    )
+
+
+@router.post(
+    "/{app_id}/transfer",
+    response_model=AppDetail,
+    summary="Move an app to another agent",
+    description=(
+        "Copies the app files into another agent's workspace and moves the "
+        "app there. Use it to hand an app over to a different expert. "
+        "Requires edit_structure."
+    ),
+)
+async def transfer_app(
+    app_id: str,
+    body: TransferAppBody,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> AppDetail:
+    service, row, _permission = _row_access(server, user, app_id, "edit_structure")
+    moved = await service.transfer(row, target_agent_id=body.agent_id, actor_user_id=user.id)
+    schema = await service.read_schema(moved)
+    base = _summary(service, moved, "edit_structure")
+    return AppDetail(
+        **base.model_dump(exclude={"has_html"}),
+        columns=_columns(schema),
+        has_html=await service.has_html(moved),
+        tables=await _table_outs(service, moved),
+    )
 
 
 class AskAssistantBody(BaseModel):
@@ -551,6 +1177,9 @@ async def ask_app_assistant(
     server: OctopServer = Depends(get_server),
 ) -> StreamingResponse:
     service, row, _permission = _row_access(server, user, app_id, "view")
+    from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+    METRICS.inc("light_app_assistant_total")
     question = body.question.strip()
     if not question:
         raise OctopError(ErrorCode.APP_QUESTION_INVALID, "question must not be empty")
@@ -580,7 +1209,17 @@ class ImportBody(BaseModel):
             "workspace_file: an existing workspace file (owner/admin only)."
         ),
     )
-    path: str = Field(description="Workspace-relative path of the file to import.")
+    path: str = Field(
+        default="",
+        description="Workspace-relative path of the file to import.",
+    )
+    paths: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Import several workspace files into the same table, in order. "
+            "Use either path or paths."
+        ),
+    )
     mode: Literal["append", "replace"] = Field(
         default="append",
         description="append adds rows after the existing ones; replace overwrites the table.",
@@ -592,6 +1231,46 @@ class ImportBody(BaseModel):
             "are ignored, unmapped table columns are left empty."
         ),
     )
+    sheet: str | None = Field(
+        default=None,
+        description=(
+            "Worksheet to import from: a sheet name or a 0-based index. "
+            "Defaults to the first sheet."
+        ),
+    )
+    header_row: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description=(
+            "0-based index of the header line, for files that start with a "
+            "title or a note. Defaults to the first line."
+        ),
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="Validate and count the rows without writing them.",
+    )
+    upsert_key: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns whose combined value identifies an existing row. Rows with "
+            "a matching key are updated instead of duplicated."
+        ),
+    )
+    include_pii: bool = Field(
+        default=False,
+        description=(
+            "Import columns detected as sensitive. When false, their values are "
+            "dropped and only the rest of the row is written."
+        ),
+    )
+
+
+class FailedRowOut(BaseModel):
+    row: int = Field(description="1-based row number in the source file.")
+    values: dict[str, str] = Field(description="Mapped values that failed validation.")
+    error: str = Field(description="Why the row was rejected.")
 
 
 class ImportResponse(BaseModel):
@@ -599,6 +1278,28 @@ class ImportResponse(BaseModel):
     imported: int = Field(description="Rows written into the table.")
     skipped: int = Field(description="Rows dropped because they failed validation.")
     errors: list[str] = Field(description="Up to 5 row-level validation failures.")
+    updated: int = Field(default=0, description="Rows replaced in place by upsert_key.")
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="Non-fatal notes, e.g. columns that look like sensitive data.",
+    )
+    would_import: int = Field(
+        default=0,
+        description="Rows a dry run would have written; 0 for a real import.",
+    )
+    dry_run: bool = Field(default=False, description="True when nothing was written.")
+    pii_columns: list[str] = Field(
+        default_factory=list,
+        description="Columns detected or marked as sensitive during this import.",
+    )
+    blocked_pii: list[str] = Field(
+        default_factory=list,
+        description="Sensitive columns skipped because include_pii was false.",
+    )
+    failed_rows: list[FailedRowOut] = Field(
+        default_factory=list,
+        description="Rejected rows with their errors, for correcting and retrying.",
+    )
 
 
 @router.post(
@@ -651,18 +1352,51 @@ async def import_app_table(
         else "edit_data"
     )
     service, row, _permission = _row_access(server, user, app_id, needed)
-    result: ImportResult = await service.import_from_file(
-        row,
-        path=body.path,
-        table=table_key,
-        mode=body.mode,
-        mapping=body.mapping,
-    )
+    if body.paths and body.path:
+        raise OctopError(ErrorCode.APP_ROW_INVALID, "use either path or paths, not both")
+    if not body.paths and not body.path:
+        raise OctopError(ErrorCode.APP_ROW_INVALID, "an import path is required")
+    if body.paths:
+        result: ImportResult = await service.import_from_files(
+            row,
+            paths=body.paths,
+            table=table_key,
+            mode=body.mode,
+            mapping=body.mapping,
+            sheet=body.sheet,
+            header_row=body.header_row,
+            dry_run=body.dry_run,
+            upsert_key=body.upsert_key,
+            include_pii=body.include_pii,
+        )
+    else:
+        result = await service.import_from_file(
+            row,
+            path=body.path,
+            table=table_key,
+            mode=body.mode,
+            mapping=body.mapping,
+            sheet=body.sheet,
+            header_row=body.header_row,
+            dry_run=body.dry_run,
+            upsert_key=body.upsert_key,
+            include_pii=body.include_pii,
+        )
+    from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+    METRICS.inc("light_app_row_write_total", result.imported + result.updated)
     return ImportResponse(
         table=table_key,
         imported=result.imported,
         skipped=result.skipped,
         errors=result.errors,
+        updated=result.updated,
+        warnings=result.warnings,
+        would_import=result.would_import,
+        dry_run=result.dry_run,
+        pii_columns=result.pii_columns,
+        blocked_pii=result.blocked_pii,
+        failed_rows=[FailedRowOut(**item) for item in result.failed_rows],
     )
 
 
@@ -720,6 +1454,10 @@ class SourceRunResponse(BaseModel):
     imported: int
     skipped: int
     errors: list[str]
+    warnings: list[str] = Field(default_factory=list)
+    pii_columns: list[str] = Field(default_factory=list)
+    blocked_pii: list[str] = Field(default_factory=list)
+    failed_rows: list[FailedRowOut] = Field(default_factory=list)
 
 
 def _source_out(view: SourceView) -> SourceOut:
@@ -841,6 +1579,10 @@ async def run_app_source(
         imported=result.imported,
         skipped=result.skipped,
         errors=result.errors,
+        warnings=result.warnings,
+        pii_columns=result.pii_columns,
+        blocked_pii=result.blocked_pii,
+        failed_rows=[FailedRowOut(**item) for item in result.failed_rows],
     )
 
 

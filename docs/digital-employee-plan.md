@@ -55,7 +55,7 @@
 ### 1.1 D1 的实现落点
 
 ```
-proactive_care_config 表（001_initial.sql:246-256 已发布；022 已含加列 DDL）
+proactive_care_config 表（001_initial.sql:246-256 已发布；025 已含加列 DDL）
   + budget_limit_tokens / budget_window / sla_tasks_per_day
   + escalate_to / responsible_scope / tool_scope_allow / tool_scope_deny
 
@@ -96,7 +96,7 @@ proactive_care_config 表（001_initial.sql:246-256 已发布；022 已含加列
 
 | 组件 | 数字员工 | 理由 |
 |---|---|---|
-| `team_goals` / `team_tasks` | ✅ 复用 | 外键无 kind 约束（`022_light_apps.sql:98-133`） |
+| `team_goals` / `team_tasks` | ✅ 复用 | 外键无 kind 约束（`025_light_apps.sql:98-133`） |
 | `task_state.py` 状态机 | ✅ 复用 | 唯一强校验点，不能分裂 |
 | `TeamGoalRepo` / `TeamTaskRepo` | ✅ 复用 | repo 层零 kind 过滤 |
 | 板工具 `build_team_board_tools` | ✅ 复用 | 同一实现，仅挂载条件与 `self_only` 不同 |
@@ -133,7 +133,7 @@ proactive_care_config 表（001_initial.sql:246-256 已发布；022 已含加列
 
 | 项 | 位置 | 备注 |
 |---|---|---|
-| S1.1 迁移 + 幂等 helper | `022_light_apps.sql:283,287-293`、`.pg.sql:282,286+`、`migrate.py:2012-2032`（post-loop `2517` + v22 分支 `2345`） | ✅ canonical DDL 齐 |
+| S1.1 迁移 + 幂等 helper | `025_light_apps.sql:283,287-293`、`.pg.sql:282,286+`、`migrate.py:2012-2032`（post-loop + v25 分支） | ✅ canonical DDL 齐 |
 | S1.2 `AgentRow.autonomy_enabled` | `repos/agents.py:78,93-97` | ✅ 带 `KeyError` 兜底 |
 | S1.3 挂载放开 + `ask_creator` | `manager.py:3815,3867,3906` | ⚠️ 引入 ① |
 | S1.4 assignee 自我锁 | `board_tools.py:142,214,279` + `manager.py:3887` | ✅ `self_only=autonomous and not team_host` |
@@ -425,7 +425,7 @@ task_id 只存在于调用方（dispatcher 的 wait、self-execute 的单元）�
 
 > **已生效**：`responsible_scope` 注入 system prompt（`teams.employee_scope`）· `tool_scope_allow/deny` 真正裁剪工具（deny 优先；allow 存在时禁用所有未列出的 builtin）。
 >
-> **S3.4 独立验收已落地**：`team_task_reviews` 表（迁移 023 + 幂等 helper）· `task_state` 加 **`review → proposed`** 返工边 · `POST /agents/{id}/tasks/{task_id}/review`（approve → `done`，reject → `proposed`，记录 reviewer/comment）· `GET .../reviews`。**每一条验收现在有 who/why/when**。
+> **S3.4 独立验收已落地**：`team_task_reviews` 表（迁移 026 + 幂等 helper）· `task_state` 加 **`review → proposed`** 返工边 · `POST /agents/{id}/tasks/{task_id}/review`（approve → `done`，reject → `proposed`，记录 reviewer/comment）· `GET .../reviews`。**每一条验收现在有 who/why/when**。
 >
 > **S3.2 KPI** ✅ `GET /agents/{id}/metrics`：任务按状态计数 + `open` · `usage_log` 按窗口聚合 · 预算 used/limit/remaining。
 > **S3.3 异常收件箱** ✅ `GET /agents/{id}/inbox`：待审批 / 失败 / 超期 / 预算耗尽，附 counts。

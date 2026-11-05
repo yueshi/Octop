@@ -260,7 +260,7 @@ resolve_acting_user_id_offline = resolve_cron_user_id
 # ── Agents / experts ─────────────────────────────────────────────────────────
 
 
-def delete_agent_offline(agent_id: str, *, home: Path | None = None) -> None:
+def delete_agent_offline(agent_id: str, *, home: Path | None = None, force: bool = False) -> None:
     from octop.infra.agents.memory.thread_cleanup import (
         agent_config_from_row,
         delete_agent_memory_and_checkpoints,
@@ -271,6 +271,13 @@ def delete_agent_offline(agent_id: str, *, home: Path | None = None) -> None:
         row = svc.agent_repo.get(agent_id)
         if row is None:
             raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
+        apps = svc.light_app_repo.list_by_agent(agent_id)
+        if apps and not force:
+            raise OctopError(
+                ErrorCode.AGENT_HAS_APPS,
+                f"agent {agent_id!r} still owns {len(apps)} light app(s)",
+                details={"count": len(apps), "app_ids": [app.app_id for app in apps]},
+            )
         workspace_dir = workspace_dir_from_config_json(
             row.config_json, paths=svc.paths, agent_id=agent_id
         )

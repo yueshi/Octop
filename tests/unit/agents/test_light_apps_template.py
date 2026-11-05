@@ -34,11 +34,18 @@ def test_manifest_declares_task_examples() -> None:
 def test_prompt_files_cover_the_hard_rules() -> None:
     agents_md = (_DIR / "AGENTS.md").read_text(encoding="utf-8")
     soul_md = (_DIR / "SOUL.md").read_text(encoding="utf-8")
-    for token in ("app_create", "app_write_html", "app_append_row", "app_delete"):
+    for token in (
+        "app_create",
+        "app_write_html",
+        "app_append_row",
+        "app_delete",
+        "app_inspect_file",
+    ):
         assert token in agents_md, token
     assert "octopApp" in agents_md
     assert "listRows" in agents_md
     assert "data:" in agents_md
     assert "blob:" in agents_md
     assert "fetch" in agents_md
+    assert "openExternal" in agents_md
     assert "app_create" in soul_md

@@ -7,6 +7,7 @@ import pytest
 from octop.infra.apps.models import (
     MAX_HTML_BYTES,
     extend_schema,
+    find_external_refs,
     parse_csv,
     parse_schema_payload,
     render_csv,
@@ -171,6 +172,73 @@ def test_validate_html() -> None:
     with pytest.raises(OctopError) as exc:
         validate_html("<p>" + "x" * MAX_HTML_BYTES + "</p>")
     _assert_code(exc, ErrorCode.APP_HTML_INVALID)
+
+
+def test_validate_html_allows_inline_assets() -> None:
+    html = """<!doctype html><html><head><style>
+    body { background: url("data:image/svg+xml;base64,AAA"); }
+    </style></head><body>
+    <img src="data:image/png;base64,AAA" alt="ok">
+    <a href="#top">top</a>
+    <a href="mailto:a@b.c">mail</a>
+    <script>const x = 1; const p = new Promise(r => r());</script>
+    </body></html>"""
+    assert validate_html(html) == html.strip()
+
+
+@pytest.mark.parametrize(
+    ("html", "kind"),
+    [
+        ('<script src="https://cdn.example.com/x.js"></script>', "external script"),
+        ('<link rel="stylesheet" href="https://cdn.example.com/x.css">', "external stylesheet"),
+        ('<img src="https://img.example.com/a.png">', "external image"),
+        ('<img srcset="https://img.example.com/a.png 1x">', "external image"),
+        ('<iframe src="https://example.com"></iframe>', "embedded frame"),
+        ('<video poster="https://img.example.com/p.jpg"></video>', "external media"),
+        ('<object data="https://example.com/x.swf"></object>', "embedded object"),
+        ('<a href="https://example.com">go</a>', "external link"),
+        ('<a href="//example.com">go</a>', "external link"),
+        ('<a href="javascript:alert(1)">go</a>', "javascript URL"),
+        ("<style>@import url('https://cdn.example.com/a.css');</style>", "CSS @import"),
+        ('<div style="background:url(https://img.example.com/a.png)"></div>', "CSS url()"),
+        ("<script>fetch('https://api.example.com/x')</script>", "network call"),
+        ("<script>new XMLHttpRequest()</script>", "network call"),
+        ("<script>new WebSocket('wss://x')</script>", "network call"),
+    ],
+)
+def test_validate_html_rejects_external_references(html: str, kind: str) -> None:
+    with pytest.raises(OctopError) as exc:
+        validate_html(html)
+    _assert_code(exc, ErrorCode.APP_HTML_INVALID)
+    assert kind in str(exc.value)
+    assert exc.value.details["refs"]
+
+
+def test_validate_html_external_error_lists_line_and_fix() -> None:
+    html = '<html>\n<body>\n<script src="https://cdn.example.com/x.js"></script>\n</body></html>'
+    with pytest.raises(OctopError) as exc:
+        validate_html(html)
+    message = str(exc.value)
+    assert "line 3" in message
+    assert "inline all CSS and JS" in message
+    assert exc.value.details["refs"][0]["line"] == 3
+
+
+def test_find_external_refs_dedupes_identical_references() -> None:
+    same_line = '<img src="https://a.example.com/1.png"><img src="https://a.example.com/1.png">'
+    refs = find_external_refs(same_line)
+    assert [(ref.kind, ref.url) for ref in refs] == [
+        ("external image", "https://a.example.com/1.png"),
+    ]
+
+    other_line = '<img src="https://a.example.com/1.png">\n<img src="https://a.example.com/1.png">'
+    refs = find_external_refs(other_line)
+    assert [ref.line for ref in refs] == [1, 2]
+
+
+def test_find_external_refs_ignores_relative_and_anchor_urls() -> None:
+    html = '<a href="page.html">rel</a><img src="./a.png"><script src="/b.js"></script>'
+    assert find_external_refs(html) == []
 
 
 def test_validate_permission() -> None:

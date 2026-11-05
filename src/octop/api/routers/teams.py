@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, cast
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from octop.api.common.agent import assert_agent_owner
@@ -290,12 +290,16 @@ async def patch_team(
 @router.delete("/teams/{team_id}", status_code=204, summary="Delete an expert team")
 async def delete_team(
     team_id: str,
+    force: bool = Query(
+        default=False,
+        description="Delete even when the team still owns light apps (their data is lost).",
+    ),
     user: Any = Depends(current_user),
     server: Any = Depends(get_server),
 ) -> None:
     _require_owned_team(server, user, team_id)
     assert server.app_runtime is not None
-    await server.app_runtime.agent_registry.delete(team_id)
+    await server.app_runtime.agent_registry.delete(team_id, force=force)
 
 
 def _repos(server: Any) -> Any:
