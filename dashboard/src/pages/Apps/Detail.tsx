@@ -63,7 +63,7 @@ import {
   connectorsApi,
   type ConnectorInstance,
 } from "../../api/modules/connectors";
-import PageShell from "../../layouts/PageShell";
+import PageShell, { pageShellStyles } from "../../layouts/PageShell";
 import Markdown from "../../components/Markdown";
 import { apiErrorMessage, isNotFoundApiError } from "../../utils/apiError";
 import { formatBytes } from "../../utils/formatBytes";
@@ -1117,227 +1117,233 @@ export default function AppDetailPage() {
         </Space>
       }
     >
-      <Tabs
-        activeKey={activeView}
-        onChange={(key) => setActiveView(key as "ui" | "data")}
-        items={[
-          {
-            key: "ui",
-            label: t("apps.uiTab"),
-            children: (
-              <div
-                style={{
-                  flex: 1,
-                  minHeight: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                }}
-              >
-                {htmlLoading ? (
-                  <div style={{ padding: 48, textAlign: "center" }}>
-                    <Spin />
-                  </div>
-                ) : detail.has_html && html ? (
-                  <iframe
-                    ref={iframeRef}
-                    title={t("apps.iframeTitle")}
-                    sandbox="allow-scripts"
-                    srcDoc={srcDoc}
-                    style={{
-                      flex: 1,
-                      width: "100%",
-                      minHeight: 0,
-                      border: 0,
-                      borderRadius: 8,
-                      background: "#fff",
-                    }}
-                  />
-                ) : (
-                  <Empty
-                    image={
-                      <MessageSquareText
-                        size={48}
-                        strokeWidth={1.2}
-                        opacity={0.45}
-                      />
-                    }
-                    description={t("apps.noHtml")}
-                    style={{ padding: "64px 0" }}
-                  >
-                    <Button
-                      type="primary"
-                      onClick={() =>
-                        navigate(`/chat/${encodeURIComponent(detail.agent_id)}`)
-                      }
-                    >
-                      {t("apps.openChat")}
-                    </Button>
-                  </Empty>
-                )}
-              </div>
-            ),
-          },
-          {
-            key: "data",
-            label: t("apps.dataTab"),
-            children: (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 12,
-                  minHeight: 0,
-                }}
-              >
-                <Space wrap>
-                  {detail.tables.length > 1 && (
-                    <Space size={4}>
-                      <Text type="secondary">{t("apps.tableLabel")}</Text>
-                      <Select
-                        size="small"
-                        value={dataTable}
-                        onChange={(value) => {
-                          setDataTable(value);
-                          setDataPage(1);
-                        }}
-                        options={detail.tables.map((item) => ({
-                          value: item.table_key,
-                          label: item.label || item.table_key,
-                        }))}
-                      />
-                    </Space>
-                  )}
-                  {canEditRows && (
-                    <Button
-                      type="primary"
-                      size="small"
-                      icon={<Plus size={14} />}
-                      onClick={openAddRow}
-                    >
-                      {t("apps.addRow")}
-                    </Button>
-                  )}
-                  <Button
-                    size="small"
-                    icon={<UploadIcon size={14} />}
-                    onClick={() => void exportData()}
-                  >
-                    {t("apps.exportCsv")}
-                  </Button>
-                  <Button
-                    size="small"
-                    icon={<Download size={14} />}
-                    onClick={() => void backupApp()}
-                  >
-                    {t("apps.backup")}
-                  </Button>
-                  <Input.Search
-                    size="small"
-                    allowClear
-                    value={dataSearch}
-                    placeholder={t("apps.searchRows")}
-                    onChange={(event) => setDataSearch(event.target.value)}
-                    style={{ width: 200 }}
-                  />
-                </Space>
-                {dataColumns.some((column) => column.pii) && (
-                  <Alert
-                    type="warning"
-                    showIcon
-                    message={t("apps.piiNotice")}
-                    style={{ marginBottom: 8 }}
-                  />
-                )}
-                <Table
-                  size="small"
-                  rowKey={(_, index) => `${dataPage}-${index ?? 0}`}
-                  loading={dataLoading}
-                  dataSource={visibleRows.map((item) => item.row)}
-                  locale={{ emptyText: t("apps.emptyRows") }}
-                  scroll={{ x: true }}
-                  pagination={{
-                    current: dataPage,
-                    pageSize: dataPageSize,
-                    total: dataTotal,
-                    showSizeChanger: false,
-                    onChange: (page) => void loadData(page),
+      <div className={pageShellStyles.fillTabs}>
+        <Tabs
+          activeKey={activeView}
+          onChange={(key) => setActiveView(key as "ui" | "data")}
+          items={[
+            {
+              key: "ui",
+              label: t("apps.uiTab"),
+              children: (
+                <div
+                  style={{
+                    height: "100%",
+                    minHeight: 0,
+                    display: "flex",
+                    flexDirection: "column",
                   }}
-                  columns={[
-                    ...dataColumns.map((column) => ({
-                      title: (
-                        <Space size={4}>
-                          {column.label || column.name}
-                          {column.pii ? (
-                            <Tag color="red">{t("apps.piiTag")}</Tag>
-                          ) : null}
-                        </Space>
-                      ),
-                      dataIndex: column.name,
-                      key: column.name,
-                      ellipsis: true,
-                    })),
-                    {
-                      title: t("apps.source"),
-                      key: "__source",
-                      width: 90,
-                      render: (_: unknown, __: unknown, index: number) =>
-                        visibleRows[index]?.meta?.source || "manual",
-                    },
-                    ...(canEditRows
-                      ? [
-                          {
-                            title: t("apps.actions"),
-                            key: "__actions",
-                            width: 150,
-                            render: (
-                              _: unknown,
-                              __: unknown,
-                              index: number,
-                            ) => (
-                              <Space size={4}>
-                                <Button
-                                  size="small"
-                                  type="link"
-                                  disabled={!visibleRows[index]?.meta?.row_id}
-                                  onClick={() =>
-                                    openEditRow(
-                                      visibleRows[index]?.meta,
-                                      visibleRows[index]?.row ?? {},
-                                    )
-                                  }
-                                >
-                                  {t("apps.editRow")}
-                                </Button>
-                                <Popconfirm
-                                  title={t("apps.rowDeleteConfirm")}
-                                  okText={t("apps.delete")}
-                                  cancelText={t("common.cancel")}
-                                  okButtonProps={{ danger: true }}
-                                  onConfirm={() =>
-                                    void removeRow(visibleRows[index]?.meta)
-                                  }
-                                >
+                >
+                  {htmlLoading ? (
+                    <div style={{ padding: 48, textAlign: "center" }}>
+                      <Spin />
+                    </div>
+                  ) : detail.has_html && html ? (
+                    <iframe
+                      ref={iframeRef}
+                      title={t("apps.iframeTitle")}
+                      sandbox="allow-scripts"
+                      srcDoc={srcDoc}
+                      style={{
+                        flex: 1,
+                        width: "100%",
+                        minHeight: 0,
+                        border: 0,
+                        borderRadius: 8,
+                        background: "#fff",
+                      }}
+                    />
+                  ) : (
+                    <Empty
+                      image={
+                        <MessageSquareText
+                          size={48}
+                          strokeWidth={1.2}
+                          opacity={0.45}
+                        />
+                      }
+                      description={t("apps.noHtml")}
+                      style={{ padding: "64px 0" }}
+                    >
+                      <Button
+                        type="primary"
+                        onClick={() =>
+                          navigate(
+                            `/chat/${encodeURIComponent(detail.agent_id)}`,
+                          )
+                        }
+                      >
+                        {t("apps.openChat")}
+                      </Button>
+                    </Empty>
+                  )}
+                </div>
+              ),
+            },
+            {
+              key: "data",
+              label: t("apps.dataTab"),
+              children: (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 12,
+                    minHeight: 0,
+                  }}
+                >
+                  <Space wrap>
+                    {detail.tables.length > 1 && (
+                      <Space size={4}>
+                        <Text type="secondary">{t("apps.tableLabel")}</Text>
+                        <Select
+                          size="small"
+                          value={dataTable}
+                          onChange={(value) => {
+                            setDataTable(value);
+                            setDataPage(1);
+                          }}
+                          options={detail.tables.map((item) => ({
+                            value: item.table_key,
+                            label: item.label || item.table_key,
+                          }))}
+                        />
+                      </Space>
+                    )}
+                    {canEditRows && (
+                      <Button
+                        type="primary"
+                        size="small"
+                        icon={<Plus size={14} />}
+                        onClick={openAddRow}
+                      >
+                        {t("apps.addRow")}
+                      </Button>
+                    )}
+                    <Button
+                      size="small"
+                      icon={<UploadIcon size={14} />}
+                      onClick={() => void exportData()}
+                    >
+                      {t("apps.exportCsv")}
+                    </Button>
+                    <Button
+                      size="small"
+                      icon={<Download size={14} />}
+                      onClick={() => void backupApp()}
+                    >
+                      {t("apps.backup")}
+                    </Button>
+                    <Input.Search
+                      size="small"
+                      allowClear
+                      value={dataSearch}
+                      placeholder={t("apps.searchRows")}
+                      onChange={(event) => setDataSearch(event.target.value)}
+                      style={{ width: 200 }}
+                    />
+                  </Space>
+                  {dataColumns.some((column) => column.pii) && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message={t("apps.piiNotice")}
+                      style={{ marginBottom: 8 }}
+                    />
+                  )}
+                  <Table
+                    size="small"
+                    rowKey={(_, index) => `${dataPage}-${index ?? 0}`}
+                    loading={dataLoading}
+                    dataSource={visibleRows.map((item) => item.row)}
+                    locale={{ emptyText: t("apps.emptyRows") }}
+                    scroll={{ x: true }}
+                    pagination={{
+                      current: dataPage,
+                      pageSize: dataPageSize,
+                      total: dataTotal,
+                      showSizeChanger: false,
+                      onChange: (page) => void loadData(page),
+                    }}
+                    columns={[
+                      ...dataColumns.map((column) => ({
+                        title: (
+                          <Space size={4}>
+                            {column.label || column.name}
+                            {column.pii ? (
+                              <Tag color="red">{t("apps.piiTag")}</Tag>
+                            ) : null}
+                          </Space>
+                        ),
+                        dataIndex: column.name,
+                        key: column.name,
+                        ellipsis: true,
+                      })),
+                      {
+                        title: t("apps.source"),
+                        key: "__source",
+                        width: 90,
+                        render: (_: unknown, __: unknown, index: number) =>
+                          visibleRows[index]?.meta?.source || "manual",
+                      },
+                      ...(canEditRows
+                        ? [
+                            {
+                              title: t("apps.actions"),
+                              key: "__actions",
+                              width: 150,
+                              render: (
+                                _: unknown,
+                                __: unknown,
+                                index: number,
+                              ) => (
+                                <Space size={4}>
                                   <Button
                                     size="small"
                                     type="link"
-                                    danger
                                     disabled={!visibleRows[index]?.meta?.row_id}
+                                    onClick={() =>
+                                      openEditRow(
+                                        visibleRows[index]?.meta,
+                                        visibleRows[index]?.row ?? {},
+                                      )
+                                    }
                                   >
-                                    {t("apps.deleteRow")}
+                                    {t("apps.editRow")}
                                   </Button>
-                                </Popconfirm>
-                              </Space>
-                            ),
-                          },
-                        ]
-                      : []),
-                  ]}
-                />
-              </div>
-            ),
-          },
-        ]}
-      />
+                                  <Popconfirm
+                                    title={t("apps.rowDeleteConfirm")}
+                                    okText={t("apps.delete")}
+                                    cancelText={t("common.cancel")}
+                                    okButtonProps={{ danger: true }}
+                                    onConfirm={() =>
+                                      void removeRow(visibleRows[index]?.meta)
+                                    }
+                                  >
+                                    <Button
+                                      size="small"
+                                      type="link"
+                                      danger
+                                      disabled={
+                                        !visibleRows[index]?.meta?.row_id
+                                      }
+                                    >
+                                      {t("apps.deleteRow")}
+                                    </Button>
+                                  </Popconfirm>
+                                </Space>
+                              ),
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
+                </div>
+              ),
+            },
+          ]}
+        />
+      </div>
 
       <Modal
         title={rowEdit ? t("apps.rowEditTitle") : t("apps.rowAddTitle")}
