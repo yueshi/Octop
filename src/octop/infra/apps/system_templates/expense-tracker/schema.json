@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "columns": [
+    { "name": "date", "label": "日期", "type": "date", "required": true },
+    { "name": "category", "label": "类别", "type": "enum", "values": ["餐饮", "交通", "购物", "居住", "娱乐", "医疗", "其他"] },
+    { "name": "amount", "label": "金额", "type": "number", "required": true },
+    { "name": "payment", "label": "支付方式", "type": "enum", "values": ["微信", "支付宝", "银行卡", "现金"] },
+    { "name": "note", "label": "备注", "type": "string" }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "expense-tracker",
+  "version": 1,
+  "name": { "zh": "月度开支记账", "en": "Monthly Expenses" },
+  "description": {
+    "zh": "按月记录支出，自动汇总类别占比和日均开销。",
+    "en": "Record monthly spending with category totals and daily averages."
+  },
+  "category": "finance",
+  "tags": ["finance", "ledger"],
+  "schema": "schema.json",
+  "html": "app.html"
+}

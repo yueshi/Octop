@@ -100,7 +100,7 @@ class SubscriptionCreateBody(BaseModel):
     mapping: dict[str, Any] | None = Field(
         None,
         description=(
-            'app.refresh: {"source_id": "<light-app source id>"}; app.import: '
+            'app.refresh: {"source_id": "<MiniApp source id>"}; app.import: '
             '{"table": "main", "columns": {...}, "records_path": "data.items"}.'
         ),
     )

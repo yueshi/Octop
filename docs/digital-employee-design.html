@@ -523,7 +523,7 @@
   <b>折进 022 而非 024</b>（实施中修正）：初稿写的是 024，实施时两个事实推翻了它——<br>
   ① <b>SQLite 不支持 <code>ADD COLUMN IF NOT EXISTS</code></b>（实测 3.53.1 报 <code>near "EXISTS": syntax error</code>），裸 ALTER <b>不可重复执行</b>；<br>
   ② <b>只有 <code>version == 22</code> 有专用幂等分支</b>（<code>migrate.py:2336-2348</code>），23/24 直跑原始文件 → 裸 ALTER 放进 023/024 会在「版本回退后重跑」时炸 <code>duplicate column name</code>。<br><br>
-  而 022 三处正好合适：<b>已经承载 team 看板的全部表</b>（数字员工正是为复用它们而加列）、<b>其分支走幂等 helper 而非原始文件</b>（SQLite 侧根本不执行裸 ALTER）、<b>本就是本分支的未发布大杂烩迁移</b>（light apps + team 看板 + <code>usage_log.team_id</code> + <code>cron_jobs.meta</code>）。<br><br>
+  而 022 三处正好合适：<b>已经承载 team 看板的全部表</b>（数字员工正是为复用它们而加列）、<b>其分支走幂等 helper 而非原始文件</b>（SQLite 侧根本不执行裸 ALTER）、<b>本就是本分支的未发布大杂烩迁移</b>（MiniApps + team 看板 + <code>usage_log.team_id</code> + <code>cron_jobs.meta</code>）。<br><br>
   幂等 helper 是真正的保证，挂在<b>两处</b>：<code>version == 22</code> 分支 + <code>run_migrations</code> 的 post-loop 无条件块（覆盖「已记录版本、文件被跳过」的库）。
 </div>
 

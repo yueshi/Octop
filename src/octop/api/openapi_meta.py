@@ -71,7 +71,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     },
     {
         "name": "apps",
-        "description": "Light apps built by agents: single-file HTML UIs backed by a validated CSV table, with owner/collaborator access control.",
+        "description": "MiniApps built by agents: single-file HTML UIs backed by a validated CSV table, with owner/collaborator access control.",
     },
     {
         "name": "chat",
@@ -162,7 +162,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "external-events",
         "description": (
             "External event plane: HMAC webhook ingress, sources/subscriptions, "
-            "and delivery status for team and light-app targets."
+            "and delivery status for team and MiniApp targets."
         ),
     },
     {"name": "workspace", "description": "Agent workspace file tree: list, read, write, upload."},

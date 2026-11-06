@@ -181,10 +181,10 @@ def build_team_board_tools(
     def _app_error(host_id: str, app_id: str) -> str | None:
         """Reject an app artifact outside this team / digital employee."""
         if light_app_repo is None:
-            return "light app ledger is not available"
+            return "MiniApp ledger is not available"
         app = light_app_repo.get(app_id)
         if app is None:
-            return f"light app not found: {app_id}"
+            return f"MiniApp not found: {app_id}"
         if self_only:
             if app.agent_id != host_id:
                 return "autonomous agents may only deliver their own apps"
@@ -196,7 +196,7 @@ def build_team_board_tools(
             except Exception:
                 return "team roster is unavailable; cannot validate app"
         if app.agent_id not in allowed:
-            return "light app is not hosted by this team"
+            return "MiniApp is not hosted by this team"
         return None
 
     async def goal_set(
@@ -359,7 +359,7 @@ def build_team_board_tools(
         status: str = Field("produced", description="pending or produced."),
         artifact_type: str = Field(
             "none",
-            description="none, file (workspace path), link (http/https), text, or app (light app id).",
+            description="none, file (workspace path), link (http/https), text, or app (MiniApp id).",
         ),
         artifact_ref: str = Field("", description="Workspace path, URL, or text body."),
         artifact_name: str = Field("", description="Display name for the artifact."),

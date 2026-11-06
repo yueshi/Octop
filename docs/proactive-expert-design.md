@@ -40,7 +40,7 @@
 | 驱动循环 cron（白名单解禁+隐形 wake+预算闸门+kill switch） | §7.3 | ⬜ P2 未实施 |
 | HITL 持久化 + 定向推送 + `ask_creator` | §7.4 | ⬜ P3 未实施（表已建） |
 | 原生看板 `/teams/:id/board` | §7.6 | ⬜ P4 未实施 |
-| 轻应用投影/模板 | §7.6-P2 | ⬜ P5 未实施 |
+| 小程序投影/模板 | §7.6-P2 | ⬜ P5 未实施 |
 | 已核销结论 | §7.4 callout | C11（write_scope 仅限邮件写）、C12（HITL 拦截为静态 `interrupt_on` 配置，cron 与对话同路径） |
 
 单专家自治的可行性与这些未实施项的**共享度**是本次分析的主线。
@@ -88,7 +88,7 @@
 
 ### 3.5 看板相关能力
 
-- 无任何已实施看板页（团队 P4 未做）；轻应用仍"读+追加"（团队版结论直接适用）。
+- 无任何已实施看板页（团队 P4 未做）；小程序仍"读+追加"（团队版结论直接适用）。
 - 看板底座（表/状态机/CAS/API）即团队 P1 产物，见 §一依据 2。
 
 ### 3.6 system prompt 动态注入钩子（自治指导的注入点）
@@ -116,7 +116,7 @@
 | `ask_agent` 派工 / 负载均衡 | **可选复用，派工调度不适用** | 专家有 sync `ask_agent`（可作执行手段：调同 user 其他 agent/团队）；但无 background/inbox，无调度职能 |
 | 房间 / 上墙 / 成员 HITL 卡 | **不适用** | 单专家 HITL 卡本来就在自己会话（现状闭环） |
 | 主动关怀调度策略（care） | **改造后复用（增强项）** | active_hours/随机频控/去重泛化为自治运行策略 |
-| 看板页 / 轻应用投影（P4/P5） | **必须新建时即按 agent 通用设计** | 尚未实施——避免做出 team-only UI 后返工 |
+| 看板页 / 小程序投影（P4/P5） | **必须新建时即按 agent 通用设计** | 尚未实施——避免做出 team-only UI 后返工 |
 
 ---
 
@@ -160,7 +160,7 @@
 
 - **E4 看板**：团队 P4 页面按 agent 通用渲染（kind 徽标区分 team/expert，路由统一 `/agents/{agent_id}/board`，团队路径做别名）；同一 CAS/PATCH 路径；服务器时区渲染（D19 继承）。
 - **E5 运行策略**：泛化 `proactive_care_config` 为 `autonomy_policy`（active_hours/min_interval/quiet/预算）——care 与 autonomy 共用一套策略存储与求值（`scheduler.py:44-108` 的触发算法直接改造复用）；事件触发器白名单 + 注入防线（外部内容 data-not-instruction，D21 继承）。
-- **E6 长任务与组合**：spawn subagent 执行长任务（`task` 工具 + SubagentCatalog 安装流）+ 子任务 stale 回收；轻应用投影（团队 P5 共用：`team_tasks` 数据源）；`infra/metrics.py` 观测（wake 执行/失败/任务流转/HITL 超时）。
+- **E6 长任务与组合**：spawn subagent 执行长任务（`task` 工具 + SubagentCatalog 安装流）+ 子任务 stale 回收；小程序投影（团队 P5 共用：`team_tasks` 数据源）；`infra/metrics.py` 观测（wake 执行/失败/任务流转/HITL 超时）。
 
 ### 5.3 单专家特有的状态机补充
 
@@ -201,9 +201,9 @@
 | 工具 | `build_team_board_tools()` 同一实现，挂载条件区分；expert 变体仅 prompt |
 | API | agent 通用路由（新）与 `/teams/*`（存量）指向同一 repo；CAS/校验同路径 |
 | P2/P3 基建 | 隐形 wake、delivery HITL 挂起、预算闸门、kill switch、`ask_owner`/`ask_creator` 同一批改造，两类 agent 同时受益 |
-| P4/P5 | 看板与轻应用投影从一开始就按 agent 通用建模，团队/专家只是 kind 渲染差异 |
+| P4/P5 | 看板与小程序投影从一开始就按 agent 通用建模，团队/专家只是 kind 渲染差异 |
 
-不共用会造成的分裂（反面对照）：两套任务表 → 两套状态机 → 看板两页 → 轻应用投影两套 → 预算/HITL 闸门各一份——每一条都是团队版 v2/v3 反思里同类问题的加倍。
+不共用会造成的分裂（反面对照）：两套任务表 → 两套状态机 → 看板两页 → 小程序投影两套 → 预算/HITL 闸门各一份——每一条都是团队版 v2/v3 反思里同类问题的加倍。
 
 **自然统一的加分项**：`team_tasks.assignee REFERENCES agents(agent_id)`——未来"团队派工给一个自治专家"时，团队主持人写 `assignee=该专家`、专家在自己的 wake 里看到并执行/回写，**同一张表天然支持跨模式协作**，无需任何桥接代码。建议团队版 P2 设计 wake prompt 时就把「检查 assignee=自己的外来任务」纳入模板（一行 prompt 的成本，打通两种模式）。
 
@@ -220,7 +220,7 @@
 | **E3 求助闭环** | HITL 持久化 + delivery 挂起 + `ask_owner` + 定向通知 | **= 团队 P3 主体**（单专家可作试点场景） | 无人值守审批→owner 批准→续跑；重启恢复 |
 | **E4 看板** | agent 通用看板页（kind 徽标） | **= 团队 P4**（建模即通用，避免返工） | 拖拽 CAS/409；双 kind 同页渲染 |
 | **E5 运行策略** | care 策略泛化 autonomy_policy；触发器白名单 | 团队版未规划的增量 | 免打扰窗生效；配额暂停 |
-| **E6 长任务/组合** | subagent spawn + stale 回收；轻应用投影 | = 团队 P5 + 增量 | spawn 任务回收；投影回写 |
+| **E6 长任务/组合** | subagent spawn + stale 回收；小程序投影 | = 团队 P5 + 增量 | spawn 任务回收；投影回写 |
 
 顺序约束：E3 的 delivery 挂起改造不晚于 E2 合入（同团队版 P2/P3 前置关系）；E1 可独立先行（只加开关与路由，零风险）；E2/E3 建议与团队版**同一批实施**，避免分叉。
 

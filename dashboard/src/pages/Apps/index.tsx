@@ -5,7 +5,6 @@ import {
   Col,
   Empty,
   Form,
-  Input,
   Modal,
   Row,
   Select,
@@ -31,13 +30,15 @@ import { message } from "../../utils/antdMessage";
 
 import {
   appsApi,
+  appPreviewPath,
   type AppSummary,
-  type AppTemplate,
 } from "../../api/modules/apps";
 import PageShell from "../../layouts/PageShell";
+import CreateMiniAppModal from "./CreateMiniAppModal";
 import { apiErrorMessage } from "../../utils/apiError";
 import { formatServerDateTime } from "../../utils/formatMessageTime";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
+import { usePreviewImage } from "../../hooks/usePreviewImage";
 import { useAgent } from "../../context/AgentContext";
 
 const { Text, Paragraph } = Typography;
@@ -79,6 +80,26 @@ function MetaItem({
   );
 }
 
+function AppPreview({ app }: { app: AppSummary }) {
+  const url = usePreviewImage(
+    app.has_preview ? appPreviewPath(app.app_id) : null,
+  );
+  if (!url) return null;
+  return (
+    <img
+      src={url}
+      alt={app.name}
+      style={{
+        display: "block",
+        width: "100%",
+        height: 140,
+        objectFit: "cover",
+        background: "var(--fn-color-brand-bg)",
+      }}
+    />
+  );
+}
+
 export default function AppsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -86,60 +107,11 @@ export default function AppsPage() {
   const [apps, setApps] = useState<AppSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const { agents } = useAgent();
-  const [templateOpen, setTemplateOpen] = useState(false);
-  const [templateForm] = Form.useForm<{
-    agent_id: string;
-    template: string;
-    name?: string;
-  }>();
-  const [templates, setTemplates] = useState<AppTemplate[]>([]);
-  const [templateLoading, setTemplateLoading] = useState(false);
-  const [templateSaving, setTemplateSaving] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restoreForm] = Form.useForm<{ agent_id: string }>();
   const [restoreFiles, setRestoreFiles] = useState<UploadFile[]>([]);
   const [restoreSaving, setRestoreSaving] = useState(false);
-
-  const loadTemplates = async (agentId: string) => {
-    setTemplateLoading(true);
-    try {
-      const data = await appsApi.listTemplates(agentId);
-      setTemplates(data.templates);
-    } catch (err) {
-      message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
-      setTemplates([]);
-    } finally {
-      setTemplateLoading(false);
-    }
-  };
-
-  const openTemplates = () => {
-    setTemplateOpen(true);
-    const first = agents[0]?.agent_id;
-    templateForm.resetFields();
-    if (first) {
-      templateForm.setFieldsValue({ agent_id: first });
-      void loadTemplates(first);
-    }
-  };
-
-  const submitTemplate = async () => {
-    const values = await templateForm.validateFields();
-    setTemplateSaving(true);
-    try {
-      const detail = await appsApi.createFromTemplate({
-        agent_id: values.agent_id,
-        template: values.template,
-        name: values.name,
-      });
-      setTemplateOpen(false);
-      navigate(`/apps/${detail.app_id}`);
-    } catch (err) {
-      message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
-    } finally {
-      setTemplateSaving(false);
-    }
-  };
 
   const openRestore = () => {
     setRestoreOpen(true);
@@ -193,7 +165,9 @@ export default function AppsPage() {
       subtitle={t("apps.subtitle")}
       actions={
         <Space>
-          <Button onClick={openTemplates}>{t("apps.fromTemplate")}</Button>
+          <Button type="primary" onClick={() => setCreateOpen(true)}>
+            {t("apps.create.button")}
+          </Button>
           <Button onClick={openRestore}>{t("apps.restoreBackup")}</Button>
         </Space>
       }
@@ -213,13 +187,17 @@ export default function AppsPage() {
           }
           style={{ padding: "64px 0" }}
         >
-          <Button
-            type="primary"
-            icon={<MessageSquareText size={16} />}
-            onClick={() => navigate("/chat")}
-          >
-            {t("apps.openChat")}
-          </Button>
+          <Space>
+            <Button type="primary" onClick={() => setCreateOpen(true)}>
+              {t("apps.create.button")}
+            </Button>
+            <Button
+              icon={<MessageSquareText size={16} />}
+              onClick={() => navigate("/chat")}
+            >
+              {t("apps.openChat")}
+            </Button>
+          </Space>
         </Empty>
       ) : (
         <Row gutter={[16, 16]}>
@@ -235,6 +213,7 @@ export default function AppsPage() {
                   borderColor: "var(--fn-color-brand-border)",
                 }}
               >
+                <AppPreview app={app} />
                 <div
                   style={{
                     padding: "14px 16px 10px",
@@ -307,51 +286,14 @@ export default function AppsPage() {
         </Row>
       )}
 
-      <Modal
-        title={t("apps.fromTemplate")}
-        open={templateOpen}
-        onCancel={() => setTemplateOpen(false)}
-        onOk={() => void submitTemplate()}
-        okText={t("apps.fromTemplate")}
-        cancelText={t("common.cancel")}
-        confirmLoading={templateSaving}
-        destroyOnHidden
-      >
-        <Form form={templateForm} layout="vertical">
-          <Form.Item
-            name="agent_id"
-            label={t("apps.agentLabel")}
-            rules={[{ required: true }]}
-          >
-            <Select
-              onChange={(value) => {
-                templateForm.setFieldValue("template", undefined);
-                void loadTemplates(value);
-              }}
-              options={agents.map((agent) => ({
-                value: agent.agent_id,
-                label: agent.name,
-              }))}
-            />
-          </Form.Item>
-          <Form.Item
-            name="template"
-            label={t("apps.templateLabel")}
-            rules={[{ required: true }]}
-          >
-            <Select
-              loading={templateLoading}
-              options={templates.map((item) => ({
-                value: item.template,
-                label: item.label,
-              }))}
-            />
-          </Form.Item>
-          <Form.Item name="name" label={t("apps.name")}>
-            <Input maxLength={100} />
-          </Form.Item>
-        </Form>
-      </Modal>
+      <CreateMiniAppModal
+        open={createOpen}
+        onCancel={() => setCreateOpen(false)}
+        onCreated={(appId) => {
+          setCreateOpen(false);
+          navigate(`/apps/${appId}`);
+        }}
+      />
 
       <Modal
         title={t("apps.restoreBackup")}

@@ -1152,3 +1152,164 @@ async def test_pii_is_masked_for_viewers_and_public_links(
     assert r.status_code == 200, r.text
     assert r.json()["rows"] == [{"title": "A", "phone": "••••"}]
     assert "13800138000" not in r.text
+
+
+async def test_system_templates_are_listed_and_creatable(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, _srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+
+    r = await client.get(f"/api/apps/templates?agent_id={agent_id}&source=all", headers=alice_auth)
+    assert r.status_code == 200
+    templates = {item["template_id"]: item for item in r.json()["templates"]}
+    assert templates["customer-followup"]["source"] == "system"
+    assert templates["customer-followup"]["scope"] == "global"
+    assert templates["customer-followup"]["name"]
+
+    r = await client.post(
+        "/api/apps/from-template",
+        headers=alice_auth,
+        json={
+            "agent_id": agent_id,
+            "template": "customer-followup",
+            "source": "system",
+            "name": "我的客户",
+        },
+    )
+    assert r.status_code == 201
+    detail = r.json()
+    assert detail["name"] == "我的客户"
+    assert "customer" in [column["name"] for column in detail["columns"]]
+    assert detail["has_html"] is True
+
+
+async def test_quick_inspect_and_create_flow(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, _srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    csv = "日期,区域,金额\n2026-01-01,华东,120\n2026-01-02,华南,80\n2026-01-03,华东,50\n".encode()
+
+    r = await client.post(
+        "/api/apps/quick/inspect",
+        headers=alice_auth,
+        data={"agent_id": agent_id},
+        files={"file": ("sales.csv", csv, "text/csv")},
+    )
+    assert r.status_code == 200, r.text
+    inspected = r.json()
+    assert inspected["sheet"]
+    sheet = inspected["report"]["sheets"][0]
+    assert len(sheet["columns"]) == 3
+
+    columns = [
+        {
+            "name": column["name_suggestion"],
+            "label": column["source"],
+            "type": "string" if column["type"] == "enum" else column["type"],
+            "required": False,
+        }
+        for column in sheet["columns"]
+    ]
+    mapping = {column["source"]: column["name_suggestion"] for column in sheet["columns"]}
+
+    r = await client.post(
+        "/api/apps/quick/create",
+        headers=alice_auth,
+        json={
+            "agent_id": agent_id,
+            "path": inspected["upload_path"],
+            "columns": columns,
+            "view": "dashboard",
+            "name": "销售看板",
+            "sheet": inspected["sheet"],
+            "mapping": mapping,
+        },
+    )
+    assert r.status_code == 201, r.text
+    created = r.json()
+    assert created["imported"] == 3
+    assert created["app"]["has_html"] is True
+    app_id = created["app"]["app_id"]
+
+    r = await client.get(f"/api/apps/{app_id}/rows?limit=10&offset=0", headers=alice_auth)
+    assert r.status_code == 200
+    rows = r.json()["rows"]
+    region_key = next(column["name"] for column in columns if column["label"] == "区域")
+    assert {row[region_key] for row in rows} == {"华东", "华南"}
+
+    r = await client.get(f"/api/apps/{app_id}/html", headers=alice_auth)
+    assert r.status_code == 200
+    assert "octopApp.listRows" in r.text
+    assert "销售看板" in r.text
+
+
+async def test_preview_image_is_served_and_acl_protected(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630"><rect/></svg>'
+
+    r = await client.get(f"/api/apps/{app_id}/preview", headers=alice_auth)
+    assert r.status_code == 404
+
+    row = _service(srv).get(app_id)
+    await _service(srv).write_preview(row, svg)
+
+    r = await client.get(f"/api/apps/{app_id}/preview", headers=alice_auth)
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/svg+xml"
+    assert r.text == svg
+    assert "sandbox" in r.headers["content-security-policy"]
+
+    r = await client.get("/api/apps", headers=alice_auth)
+    assert r.json()["apps"][0]["has_preview"] is True
+
+    # A non-collaborator cannot read the preview.
+    r = await client.get(f"/api/apps/{app_id}/preview", headers=bob_auth)
+    assert r.status_code == 403
+
+
+async def test_template_preview_is_served(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, _srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+
+    r = await client.get(
+        f"/api/apps/templates?agent_id={agent_id}&source=system", headers=alice_auth
+    )
+    assert r.status_code == 200
+    templates = {item["template_id"]: item for item in r.json()["templates"]}
+    assert templates["expense-tracker"]["has_preview"] is True
+
+    r = await client.get(
+        f"/api/apps/templates/expense-tracker/preview?source=system&agent_id={agent_id}",
+        headers=alice_auth,
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/svg+xml"
+    assert r.text.startswith("<svg")
+
+    r = await client.get(
+        f"/api/apps/templates/does-not-exist/preview?source=system&agent_id={agent_id}",
+        headers=alice_auth,
+    )
+    assert r.status_code == 404
+
+
+async def test_preview_written_into_the_workspace_is_not_served_when_unsafe(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    """The markup is checked when it is served, not only when it is written."""
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+    assert srv.app_runtime is not None
+    workspace = srv.app_runtime.agent_registry.workspace_for_agent(agent_id)
+    assert workspace is not None
+    await workspace.awrite_text(
+        f"apps/{app_id}/preview.svg",
+        '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+    )
+
+    r = await client.get(f"/api/apps/{app_id}/preview", headers=alice_auth)
+    assert r.status_code == 404

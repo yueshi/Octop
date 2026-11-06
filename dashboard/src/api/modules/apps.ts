@@ -24,6 +24,7 @@ export interface AppSummary {
   html_bytes: number;
   data_bytes: number;
   has_html: boolean;
+  has_preview: boolean;
   created_at: number;
   updated_at: number;
 }
@@ -48,10 +49,81 @@ export interface AppPublication {
   expires_at?: number | null;
 }
 
+export type AppTemplateSource = "system" | "agent";
+
 export interface AppTemplate {
   template: string;
+  template_id: string;
   label: string;
+  name: string;
+  description: string;
+  category: string;
+  version: number;
   has_html: boolean;
+  has_preview: boolean;
+  source: AppTemplateSource;
+  agent_id?: string | null;
+  scope: "global" | "agent";
+}
+
+export interface AppInspectColumn {
+  source: string;
+  name_suggestion: string;
+  type: string;
+  non_empty_ratio: number;
+  distinct: number;
+  samples: string[];
+  max_length: number;
+  pii?: string | null;
+}
+
+export interface AppInspectSheet {
+  name: string;
+  rows: number;
+  rows_scanned: number;
+  header_row: number;
+  header: string[];
+  sample_rows: string[][];
+  columns: AppInspectColumn[];
+  warnings: string[];
+}
+
+export interface AppInspectReport {
+  file: string;
+  size_bytes: number;
+  sheets: AppInspectSheet[];
+  pii_columns: { sheet: string; column: string; kind: string }[];
+}
+
+export type QuickView = "dashboard" | "ledger" | "board";
+
+export interface AppViewSpec {
+  view: QuickView;
+  title: string;
+  kpis: { column: string; agg: string; label: string }[];
+  charts: { type: string; x: string; y: string; agg: string; label: string }[];
+  filters: string[];
+  group_by: string;
+  table: { columns: string[]; page_size: number };
+}
+
+export interface QuickInspectResponse {
+  upload_path: string;
+  sheet: string;
+  report: AppInspectReport;
+  suggested_view: AppViewSpec;
+}
+
+export interface QuickCreateResponse {
+  app: AppDetail;
+  imported: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+  warnings: string[];
+  pii_columns: string[];
+  blocked_pii: string[];
+  failed_rows: { row: number; values: Record<string, string>; error: string }[];
 }
 
 export interface AppFile {
@@ -213,6 +285,36 @@ function encodeId(appId: string): string {
   return encodeURIComponent(appId);
 }
 
+/** Path of the app's preview image (the SVG cover drawn by the agent). */
+export function appPreviewPath(appId: string): string {
+  return `/apps/${encodeId(appId)}/preview`;
+}
+
+/** Path of a template's preview image. */
+export function templatePreviewPath(
+  template: Pick<AppTemplate, "template_id" | "source">,
+  agentId: string,
+): string {
+  return `/apps/templates/${encodeURIComponent(
+    template.template_id,
+  )}/preview?source=${encodeURIComponent(
+    template.source,
+  )}&agent_id=${encodeURIComponent(agentId)}`;
+}
+
+/** Fetch the preview image of an app as a blob (the API needs the JWT). */
+export function fetchAppPreview(appId: string): Promise<Blob> {
+  return requestBlob(appPreviewPath(appId));
+}
+
+/** Fetch the preview image of a template as a blob. */
+export function fetchTemplatePreview(
+  template: Pick<AppTemplate, "template_id" | "source">,
+  agentId: string,
+): Promise<Blob> {
+  return requestBlob(templatePreviewPath(template, agentId));
+}
+
 export const appsApi = {
   list: () => request<{ apps: AppSummary[] }>("/apps"),
 
@@ -232,18 +334,50 @@ export const appsApi = {
       method: "DELETE",
     }),
 
-  listTemplates: (agentId: string) =>
+  listTemplates: (
+    agentId: string,
+    source: "all" | "system" | "agent" = "all",
+  ) =>
     request<{ templates: AppTemplate[] }>(
-      `/apps/templates?agent_id=${encodeURIComponent(agentId)}`,
+      `/apps/templates?agent_id=${encodeURIComponent(
+        agentId,
+      )}&source=${encodeURIComponent(source)}`,
     ),
 
   createFromTemplate: (body: {
     agent_id: string;
     template: string;
+    source?: AppTemplateSource;
     name?: string;
     description?: string;
   }) =>
     request<AppDetail>("/apps/from-template", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  quickInspect: (agentId: string, file: File, sheet?: string) => {
+    const form = new FormData();
+    form.append("agent_id", agentId);
+    form.append("file", file);
+    if (sheet) form.append("sheet", sheet);
+    return requestUpload<QuickInspectResponse>("/apps/quick/inspect", form);
+  },
+
+  quickCreate: (body: {
+    agent_id: string;
+    path: string;
+    columns: AppColumn[];
+    view: QuickView;
+    name: string;
+    description?: string;
+    sheet?: string;
+    header_row?: number;
+    mapping?: Record<string, string>;
+    include_pii?: boolean;
+    upsert_key?: string[];
+  }) =>
+    request<QuickCreateResponse>("/apps/quick/create", {
       method: "POST",
       body: JSON.stringify(body),
     }),

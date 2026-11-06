@@ -1,4 +1,4 @@
-# 轻应用操作手册
+# 小程序操作手册
 
 本文件是技术规范。SOUL.md 讲态度，这里讲做法。
 
@@ -9,7 +9,7 @@
 | `app_inspect_file` | 检查工作区里的表格文件 | 只读；返回 sheet、表头、列统计、样本行；**不要自己读 xlsx** |
 | `app_list` | 列出本 agent 拥有的应用 | 只返回你自己的应用；每项带表清单 |
 | `app_create` | 建应用并定义字段 | 1-50 个字段；名称 ≤100 字；同时创建主表 `main` |
-| `app_create_from_template` | 从专家模板建空应用 | 模板来自 `app_templates/`；只带 schema+界面，不带数据 |
+| `app_create_from_template` | 从模板建空应用 | 模板来自 agent 的 `app_templates/` 或系统模板（`source="system"`）；只带 schema+界面，不带数据 |
 | `app_add_table` | 给应用新增一张附加表 | key 应用内唯一；每个应用最多 12 张表；建了不能删 |
 | `app_update_schema` | 追加字段 | 只能加不能改；已有数据时不能加必填字段；可传 `table` |
 | `app_alter_schema` | 改名/删除/改类型 | 会迁移所有已有行；有行不符合新结构时整次拒绝；可传 `table` |
@@ -20,6 +20,7 @@
 | `app_delete_row` | 删除一行 | 用 `row_id`；传 `expected_version` 防覆盖 |
 | `app_import_rows` | 从工作区文件批量导入 | 支持 CSV/TSV/JSON/xlsx；可传 `table` 和列映射；先 `dry_run` |
 | `app_save_asset` | 把图片存到应用目录 | PNG/JPEG/WebP/GIF，≤5MB；来源可以是 URL 或工作区路径 |
+| `app_set_preview` | 画小程序的预览图（封面） | 自己写一段 SVG；工作台和模板画廊用它当缩略图 |
 | `app_delete` | 删除应用 | 需要用户批准 |
 
 工具都返回 JSON 字符串：成功是结果对象，失败是 `{"error": "..."}`。出错先读 error 再改参数，别瞎试。
@@ -151,6 +152,29 @@ document.querySelector("#cover").src = asset.data_url;  // data: URL，CSP 允�
 ### 第 5 步 · `app_read_data` 核对
 
 交付前读一遍数据，确认条数、字段、取值都对。
+
+### 第 6 步 · `app_set_preview` 画封面
+
+工作台（应用列表）和模板画廊用预览图当缩略图，所以每个小程序都要有一张自己画的封面：
+
+```json
+{
+  "app_id": "app_xxxxxx",
+  "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1200 630\">…</svg>"
+}
+```
+
+写法要求：
+
+- 一份完整的 `<svg>…</svg>` 文档，`viewBox="0 0 1200 630"`（宽幅卡片），≤256KB。
+- 自包含：颜色、渐变、图形都用 SVG 自己画，**不引外部图片、字体、样式**，不写 `<script>`、事件属性、`foreignObject`、动画元素。
+- 内容跟这个应用对上：标题用应用名，主视觉用这个应用真正关心的东西（账本就是分类占比，跟进就是阶段漏斗），别画通用装饰。
+- 文字用 `font-family="system-ui, -apple-system, 'PingFang SC', sans-serif"`，颜色对比度够高。
+
+写坏了工具会告诉你哪一条不合法（比如 "SVG must not contain <script> elements"），照着改完再调一次。
+
+自己提供应用模板时（`app_templates/<模板名>/`），同样放一份 `preview.svg`（同名同规则），
+模板画廊就会用它当缩略图；用模板建出来的应用会自动继承这张封面，直到 agent 给自己画新的。
 
 ### 修改已有数据
 

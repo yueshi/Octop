@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>客户跟进台账</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --line: #e5e7eb;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --primary: #2563eb;
+    --primary-dark: #1d4ed8;
+    --danger: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 20px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+  }
+  .page { max-width: 1080px; margin: 0 auto; }
+  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: .5px; }
+  .sub { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+  .badge {
+    flex: none; padding: 4px 10px; border-radius: 999px;
+    background: #eef2ff; color: #4338ca; font-size: 12px;
+  }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; display: flex; flex-direction: column; gap: 6px;
+  }
+  .stat-label { color: var(--muted); font-size: 12px; }
+  .stat strong { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  input, select, textarea {
+    font: inherit; color: inherit; background: var(--card);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; outline: none;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--primary); }
+  .toolbar input { flex: 1 1 220px; }
+  .toolbar select { flex: 0 0 130px; }
+  button {
+    font: inherit; cursor: pointer; border: 1px solid var(--line);
+    background: var(--card); color: var(--text); border-radius: 8px; padding: 8px 14px;
+  }
+  button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  button.primary:hover { background: var(--primary-dark); }
+  .panel {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; margin-bottom: 14px;
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;
+  }
+  .panel label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
+  .panel label.wide { grid-column: 1 / -1; }
+  .panel input, .panel select { width: 100%; }
+  .actions { grid-column: 1 / -1; display: flex; gap: 8px; }
+  .table-wrap {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto;
+  }
+  table { width: 100%; border-collapse: collapse; min-width: 720px; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #fafafa; color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: #fafcff; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .stage { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
+  .s-lead { background: #f3f4f6; color: #374151; }
+  .s-contact { background: #e0f2fe; color: #0369a1; }
+  .s-quote { background: #fef3c7; color: #92400e; }
+  .s-won { background: #dcfce7; color: #166534; }
+  .s-lost { background: #fee2e2; color: #991b1b; }
+  .overdue { color: var(--danger); font-weight: 600; }
+  .muted { color: var(--muted); }
+  .note-cell { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty { text-align: center; color: var(--muted); padding: 32px 0; }
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    margin: 0; padding: 9px 18px; border-radius: 999px;
+    background: #111827; color: #fff; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.18);
+  }
+  .toast.error { background: var(--danger); }
+  @media (max-width: 720px) {
+    .stats, .panel { grid-template-columns: 1fr; }
+    body { padding: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="head">
+    <div>
+      <h1>客户跟进台账</h1>
+      <p class="sub">按阶段管理客户，按日期提醒下一次跟进。</p>
+    </div>
+    <span class="badge" id="readonly" hidden>只读</span>
+  </header>
+
+  <section class="stats">
+    <div class="stat"><span class="stat-label">客户总数</span><strong id="stat-total">0</strong></div>
+    <div class="stat"><span class="stat-label">待跟进</span><strong id="stat-todo">0</strong></div>
+    <div class="stat"><span class="stat-label">已成交金额</span><strong id="stat-won">¥0</strong></div>
+  </section>
+
+  <section class="toolbar">
+    <input id="search" placeholder="搜索客户、联系人或备注">
+    <select id="filter-stage" aria-label="按阶段筛选"></select>
+    <button id="toggle-add" class="primary" type="button">新增客户</button>
+  </section>
+
+  <form id="add-form" class="panel" hidden>
+    <label>客户名称 *<input name="customer" maxlength="100" required></label>
+    <label>联系人<input name="contact" maxlength="50"></label>
+    <label>阶段<select name="stage"></select></label>
+    <label>下次跟进<input type="date" name="next_follow_up"></label>
+    <label>预计金额<input type="number" name="amount" min="0" step="0.01" placeholder="0.00"></label>
+    <label class="wide">备注<input name="note" maxlength="200" placeholder="需求、报价、下一步动作"></label>
+    <div class="actions">
+      <button type="submit" class="primary">保存</button>
+      <button type="button" id="cancel-add">取消</button>
+    </div>
+  </form>
+
+  <p id="empty" class="empty" hidden>还没有客户，点击「新增客户」开始记录。</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>客户</th><th>联系人</th><th>阶段</th><th>下次跟进</th>
+          <th class="num">预计金额</th><th>备注</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</div>
+<p id="toast" class="toast" hidden></p>
+<script>
+(function () {
+  "use strict";
+
+  var DEFAULT_STAGES = ["线索", "已联系", "报价", "成交", "流失"];
+  var CLOSED = { "成交": true, "流失": true };
+  var STAGE_CLASS = {
+    "线索": "s-lead", "已联系": "s-contact", "报价": "s-quote",
+    "成交": "s-won", "流失": "s-lost"
+  };
+  var stages = DEFAULT_STAGES.slice();
+  var rows = [];
+  var canEdit = true;
+
+  function $(selector) { return document.querySelector(selector); }
+  function pad(value) { return (value < 10 ? "0" : "") + value; }
+  function today() {
+    var now = new Date();
+    return now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
+  }
+  function escapeHtml(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function number(value) {
+    var parsed = Number(value);
+    return isFinite(parsed) ? parsed : 0;
+  }
+  function money(value) {
+    return "¥" + number(value).toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+  }
+  function toast(message, isError) {
+    var el = $("#toast");
+    el.textContent = message;
+    el.classList.toggle("error", Boolean(isError));
+    el.hidden = false;
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(function () { el.hidden = true; }, 2600);
+  }
+
+  function fillStages() {
+    var formSelect = $("#add-form select[name=stage]");
+    var filter = $("#filter-stage");
+    filter.innerHTML = ['<option value="">全部阶段</option>']
+      .concat(stages.map(function (stage) {
+        return '<option value="' + escapeHtml(stage) + '">' + escapeHtml(stage) + "</option>";
+      })).join("");
+    formSelect.innerHTML = stages.map(function (stage) {
+      return '<option value="' + escapeHtml(stage) + '">' + escapeHtml(stage) + "</option>";
+    }).join("");
+  }
+
+  function render() {
+    var query = $("#search").value.trim().toLowerCase();
+    var stageFilter = $("#filter-stage").value;
+    var todayText = today();
+
+    $("#stat-total").textContent = String(rows.length);
+    var todo = 0;
+    var won = 0;
+    rows.forEach(function (row) {
+      if (!CLOSED[row.stage] && row.next_follow_up && row.next_follow_up <= todayText) {
+        todo += 1;
+      }
+      if (row.stage === "成交") won += number(row.amount);
+    });
+    $("#stat-todo").textContent = String(todo);
+    $("#stat-won").textContent = money(won);
+
+    var list = rows.filter(function (row) {
+      if (stageFilter && row.stage !== stageFilter) return false;
+      if (!query) return true;
+      return [row.customer, row.contact, row.note]
+        .join(" ").toLowerCase().indexOf(query) >= 0;
+    });
+    list.sort(function (left, right) {
+      var a = left.next_follow_up || "9999-12-31";
+      var b = right.next_follow_up || "9999-12-31";
+      if (a < b) return -1;
+      if (a > b) return 1;
+      return 0;
+    });
+
+    $("#empty").hidden = list.length > 0;
+    $("#empty").textContent = rows.length
+      ? "没有符合筛选条件的客户。"
+      : "还没有客户，点击「新增客户」开始记录。";
+
+    $("#rows").innerHTML = list.map(function (row) {
+      var overdue = !CLOSED[row.stage] && row.next_follow_up && row.next_follow_up < todayText;
+      var stageClass = STAGE_CLASS[row.stage] || "s-lead";
+      return "<tr>" +
+        "<td><strong>" + escapeHtml(row.customer) + "</strong></td>" +
+        "<td>" + escapeHtml(row.contact) + "</td>" +
+        '<td><span class="stage ' + stageClass + '">' + escapeHtml(row.stage || "线索") + "</span></td>" +
+        '<td class="' + (overdue ? "overdue" : "muted") + '">' + escapeHtml(row.next_follow_up) + "</td>" +
+        '<td class="num">' + (row.amount === "" || row.amount == null ? "—" : money(row.amount)) + "</td>" +
+        '<td class="note-cell" title="' + escapeHtml(row.note) + '">' + escapeHtml(row.note) + "</td>" +
+        "</tr>";
+    }).join("");
+  }
+
+  async function refresh() {
+    try {
+      var result = await octopApp.listRows({ limit: 500 });
+      rows = (result && result.rows) || [];
+      render();
+    } catch (error) {
+      toast("加载失败：" + (error && error.message ? error.message : "未知错误"), true);
+    }
+  }
+
+  async function detectReadonly() {
+    if (typeof octopApp.me !== "function") return false;
+    try {
+      var me = await octopApp.me();
+      return Boolean(me) && me.permission === "view";
+    } catch (error) {
+      return false;
+    }
+  }
+
+  async function loadSchemaStages() {
+    try {
+      var schema = await octopApp.schema();
+      var columns = (schema && schema.columns) || [];
+      for (var i = 0; i < columns.length; i += 1) {
+        if (columns[i].name === "stage" && columns[i].values && columns[i].values.length) {
+          stages = columns[i].values.slice();
+          break;
+        }
+      }
+    } catch (error) {
+      /* keep the default stage list */
+    }
+  }
+
+  function openForm(open) {
+    $("#add-form").hidden = !open;
+    $("#toggle-add").textContent = open ? "收起" : "新增客户";
+    if (open) $("#add-form input[name=customer]").focus();
+  }
+
+  $("#toggle-add").addEventListener("click", function () {
+    openForm($("#add-form").hidden);
+  });
+  $("#cancel-add").addEventListener("click", function () {
+    $("#add-form").reset();
+    openForm(false);
+  });
+  $("#search").addEventListener("input", render);
+  $("#filter-stage").addEventListener("change", render);
+
+  $("#add-form").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var form = event.target;
+    var data = new FormData(form);
+    var customer = String(data.get("customer") || "").trim();
+    if (!customer) {
+      toast("请填写客户名称", true);
+      return;
+    }
+    var amountText = String(data.get("amount") || "").trim();
+    var payload = {
+      customer: customer,
+      contact: String(data.get("contact") || "").trim(),
+      stage: String(data.get("stage") || stages[0]),
+      next_follow_up: String(data.get("next_follow_up") || ""),
+      amount: amountText === "" ? "" : Number(amountText),
+      note: String(data.get("note") || "").trim()
+    };
+    try {
+      await octopApp.appendRow(payload);
+      form.reset();
+      openForm(false);
+      await refresh();
+      toast("已添加客户");
+    } catch (error) {
+      toast("保存失败：" + (error && error.message ? error.message : "未知错误"), true);
+    }
+  });
+
+  async function boot() {
+    canEdit = !(await detectReadonly());
+    if (!canEdit) {
+      $("#readonly").hidden = false;
+      $("#toggle-add").hidden = true;
+      openForm(false);
+    }
+    await loadSchemaStages();
+    fillStages();
+    await refresh();
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

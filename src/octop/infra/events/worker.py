@@ -588,7 +588,7 @@ class ExternalEventWorker:
         service = self._app_service
         source = self._repos.external_source_repo.get(event.source_id)
         if service is None or source is None:
-            raise DeliveryError("light-app service is unavailable", retryable=True)
+            raise DeliveryError("MiniApp service is unavailable", retryable=True)
         owner = self._repos.user_repo.get(source.owner_user_id)
         is_admin = bool(owner is not None and owner.role == "admin")
         try:

@@ -106,6 +106,7 @@ def test_build_app_tools_names(world: World) -> None:
         "app_delete_row",
         "app_import_rows",
         "app_save_asset",
+        "app_set_preview",
         APP_DELETE_TOOL_NAME,
     }
     # The manager decides whether to inject the light-app prompt from this
@@ -472,6 +473,35 @@ async def test_tool_save_asset_rejects_hidden_paths(world: World) -> None:
         out = json.loads(
             await save_asset.ainvoke(
                 {"app_id": app_id, "source": ".octop/auth/x.png", "name": "x.png"}
+            )
+        )
+    assert "error" in out
+
+
+async def test_tool_set_preview_stores_the_cover(world: World) -> None:
+    tools = build_app_tools(world.service)
+    create = _tool_by_name(tools, "app_create")
+    set_preview = _tool_by_name(tools, "app_set_preview")
+
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630"></svg>'
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        app_id = json.loads(await create.ainvoke({"name": "Tracker", "columns": COLUMNS}))["app_id"]
+        out = json.loads(await set_preview.ainvoke({"app_id": app_id, "svg": svg}))
+    assert out["app_id"] == app_id
+    assert out["preview"] == "preview.svg"
+    assert out["size"] == len(svg.encode("utf-8"))
+
+
+async def test_tool_set_preview_rejects_active_content(world: World) -> None:
+    tools = build_app_tools(world.service)
+    create = _tool_by_name(tools, "app_create")
+    set_preview = _tool_by_name(tools, "app_set_preview")
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        app_id = json.loads(await create.ainvoke({"name": "Tracker", "columns": COLUMNS}))["app_id"]
+        out = json.loads(
+            await set_preview.ainvoke(
+                {"app_id": app_id, "svg": '<svg xmlns="x"><script>alert(1)</script></svg>'}
             )
         )
     assert "error" in out

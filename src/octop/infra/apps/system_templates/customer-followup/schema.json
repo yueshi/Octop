@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "columns": [
+    { "name": "customer", "label": "客户名称", "type": "string", "required": true },
+    { "name": "contact", "label": "联系人", "type": "string" },
+    { "name": "stage", "label": "阶段", "type": "enum", "values": ["线索", "已联系", "报价", "成交", "流失"] },
+    { "name": "next_follow_up", "label": "下次跟进", "type": "date" },
+    { "name": "amount", "label": "预计金额", "type": "number" },
+    { "name": "note", "label": "备注", "type": "text" }
+  ]
+}

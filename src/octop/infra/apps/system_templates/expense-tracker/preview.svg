@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-label="月度开支记账">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f766e"/>
+      <stop offset="100%" stop-color="#115e59"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="1040" cy="120" r="220" fill="#ffffff" opacity="0.06"/>
+  <circle cx="1120" cy="560" r="150" fill="#ffffff" opacity="0.05"/>
+
+  <text x="72" y="118" font-family="system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="46" font-weight="700" fill="#ffffff">月度开支记账</text>
+  <text x="72" y="164" font-family="system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="22" fill="#ccfbf1">按月记录支出 · 自动汇总类别占比与日均开销</text>
+
+  <rect x="72" y="212" width="248" height="104" rx="14" fill="#ffffff" opacity="0.95"/>
+  <text x="96" y="252" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#6b7280">本月支出</text>
+  <text x="96" y="296" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="34" font-weight="700" fill="#0f766e">¥ 12,480</text>
+
+  <rect x="348" y="212" width="248" height="104" rx="14" fill="#ffffff" opacity="0.95"/>
+  <text x="372" y="252" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#6b7280">日均开销</text>
+  <text x="372" y="296" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="34" font-weight="700" fill="#0f766e">¥ 402</text>
+
+  <rect x="624" y="212" width="248" height="104" rx="14" fill="#ffffff" opacity="0.95"/>
+  <text x="648" y="252" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#6b7280">记账笔数</text>
+  <text x="648" y="296" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="34" font-weight="700" fill="#0f766e">96</text>
+
+  <rect x="900" y="212" width="228" height="104" rx="14" fill="#ffffff" opacity="0.95"/>
+  <text x="924" y="252" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#6b7280">最大类别</text>
+  <text x="924" y="296" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="30" font-weight="700" fill="#0f766e">餐饮</text>
+
+  <rect x="72" y="356" width="1056" height="214" rx="16" fill="#ffffff" opacity="0.95"/>
+  <text x="104" y="400" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="19" fill="#1f2937">近 6 个月支出</text>
+  <rect x="120" y="470" width="88" height="66" rx="8" fill="#5eead4"/>
+  <rect x="252" y="432" width="88" height="104" rx="8" fill="#2dd4bf"/>
+  <rect x="384" y="452" width="88" height="84" rx="8" fill="#5eead4"/>
+  <rect x="516" y="416" width="88" height="120" rx="8" fill="#0f766e"/>
+  <rect x="648" y="444" width="88" height="92" rx="8" fill="#2dd4bf"/>
+  <rect x="780" y="424" width="88" height="112" rx="8" fill="#5eead4"/>
+  <rect x="912" y="404" width="88" height="132" rx="8" fill="#0f766e"/>
+  <text x="120" y="556" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="16" fill="#6b7280">1 月</text>
+  <text x="252" y="556" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="16" fill="#6b7280">2 月</text>
+  <text x="384" y="556" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="16" fill="#6b7280">3 月</text>
+  <text x="516" y="556" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="16" fill="#6b7280">4 月</text>
+  <text x="648" y="556" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="16" fill="#6b7280">5 月</text>
+  <text x="780" y="556" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="16" fill="#6b7280">6 月</text>
+  <text x="912" y="556" font-family="system-ui, -apple-system, 'PingFang SC', sans-serif" font-size="16" fill="#6b7280">7 月</text>
+</svg>

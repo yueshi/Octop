@@ -217,7 +217,7 @@ def reload(agent_id: str, as_user: str | None) -> None:
     "--force",
     is_flag=True,
     default=False,
-    help="Delete even when the agent still owns light apps (their data is lost).",
+    help="Delete even when the agent still owns MiniApps (their data is lost).",
 )
 def delete(agent_id: str, as_user: str | None, yes: bool, force: bool) -> None:
     if not yes:

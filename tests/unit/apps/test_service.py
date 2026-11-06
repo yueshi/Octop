@@ -310,6 +310,35 @@ async def test_list_views_backfills_the_cached_interface_size(world: World) -> N
     assert stored.data_bytes == views[0].data_bytes
 
 
+async def test_preview_is_stored_read_and_reported(world: World) -> None:
+    """The agent's cover image lives next to the app and is reported as such."""
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+
+    assert await world.service.has_preview(row) is False
+    assert await world.service.read_preview(row) is None
+
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630"></svg>'
+    size = await world.service.write_preview(row, svg)
+    assert size == len(svg.encode("utf-8"))
+    assert await world.service.read_preview(row) == svg
+    assert await world.service.has_preview(row) is True
+    assert await world.workspace.aread_text(app_path(app_id, "preview.svg")) == svg
+
+    views = await world.service.list_views_with_stats(world.alice_id, is_admin=False)
+    assert views[0].has_preview is True
+
+
+async def test_preview_rejects_active_content(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+
+    with pytest.raises(OctopError) as exc:
+        await world.service.write_preview(row, '<svg xmlns="x"><script>alert(1)</script></svg>')
+    _assert_code(exc, ErrorCode.APP_SOURCE_INVALID)
+    assert await world.service.has_preview(row) is False
+
+
 async def test_permissions_and_collaborators(world: World) -> None:
     app_id = await _create(world)
     row = world.service.get(app_id)
@@ -1688,9 +1717,11 @@ async def test_backup_and_restore_round_trip(world: World) -> None:
     await world.service.write_html(row, html)
     png = b"\x89PNG\r\n\x1a\n" + b"0" * 32
     await world.service.save_asset(row, "cover.png", png)
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630"></svg>'
+    await world.service.write_preview(row, svg)
 
     filename, archive = await world.service.backup_archive(world.service.get(app_id))
-    assert filename == f"light-app-{app_id}.zip"
+    assert filename == f"miniapp-{app_id}.zip"
     assert archive.startswith(b"PK")
 
     restored = await world.service.restore_archive(
@@ -1716,6 +1747,7 @@ async def test_backup_and_restore_round_trip(world: World) -> None:
     assert notes_rows == [{"note": "hello"}]
 
     assert await world.service.read_html(restored) == html
+    assert await world.service.read_preview(restored) == svg
     assert await world.service.list_assets(restored) == ["cover.png"]
     assert (await world.service.read_asset(restored, "cover.png"))[1] == png
 
@@ -1831,3 +1863,117 @@ async def test_import_rejects_a_required_sensitive_column_by_default(world: Worl
     assert "include_pii=true" in exc.value.message
     _schema, rows, _total = await world.service.read_rows(world.service.get(row.app_id))
     assert rows == []
+
+
+async def test_system_templates_are_global_and_create_apps(world: World) -> None:
+    templates = await world.service.list_templates(world.agent_id, source="all", locale="zh")
+    by_id = {item["template_id"]: item for item in templates}
+    assert "customer-followup" in by_id
+    assert by_id["customer-followup"]["source"] == "system"
+    assert by_id["customer-followup"]["scope"] == "global"
+
+    row = await world.service.create_from_template(
+        agent_id=world.agent_id,
+        owner_user_id=world.alice_id,
+        template="customer-followup",
+        source="system",
+        name="我的客户",
+    )
+    schema = await world.service.read_schema(row)
+    assert "customer" in schema.names
+    html = await world.service.read_html(row)
+    assert html and "octopApp" in html
+
+
+async def test_agent_templates_keep_their_manifest_name(world: World) -> None:
+    await world.workspace.awrite_text(
+        "app_templates/reading/schema.json",
+        json.dumps(
+            {"columns": [{"name": "title", "label": "书名", "type": "text", "required": True}]},
+            ensure_ascii=False,
+        ),
+    )
+    await world.workspace.awrite_text(
+        "app_templates/reading/manifest.json",
+        json.dumps(
+            {"name": {"zh": "读书清单", "en": "Reading list"}, "version": 3},
+            ensure_ascii=False,
+        ),
+    )
+
+    templates = await world.service.list_templates(world.agent_id, source="agent", locale="zh")
+    assert templates == [
+        {
+            "template": "reading",
+            "template_id": "reading",
+            "label": "读书清单",
+            "name": "读书清单",
+            "description": "",
+            "category": "",
+            "version": 3,
+            "has_html": False,
+            "has_preview": False,
+            "source": "agent",
+            "agent_id": world.agent_id,
+            "scope": "agent",
+        }
+    ]
+
+
+async def test_quick_inspect_and_create_renders_a_dashboard(world: World) -> None:
+    data = _xlsx_bytes(
+        {
+            "sales": [
+                ["日期", "区域", "金额"],
+                ["2026-01-01", "华东", 120],
+                ["2026-01-02", "华南", 80],
+                ["2026-01-03", "华东", 50],
+            ]
+        }
+    )
+    inspected = await world.service.quick_inspect(world.agent_id, filename="sales.xlsx", data=data)
+    sheet = inspected["report"]["sheets"][0]
+    assert inspected["sheet"] == "sales"
+    assert inspected["upload_path"].startswith("inbound/imports/")
+    assert inspected["suggested_view"]["view"] == "dashboard"
+
+    columns = [
+        {
+            "name": column["name_suggestion"],
+            "label": column["source"],
+            "type": "string" if column["type"] == "enum" else column["type"],
+            "required": False,
+        }
+        for column in sheet["columns"]
+    ]
+    row, result = await world.service.quick_create(
+        agent_id=world.agent_id,
+        owner_user_id=world.alice_id,
+        path=inspected["upload_path"],
+        columns=columns,
+        view="dashboard",
+        name="销售看板",
+        sheet="sales",
+        mapping={column["source"]: column["name_suggestion"] for column in sheet["columns"]},
+    )
+    assert result.imported == 3
+    _schema, rows, total = await world.service.read_rows(row)
+    assert total == 3
+    region_key = next(column["name"] for column in columns if column["label"] == "区域")
+    assert {item[region_key] for item in rows} == {"华东", "华南"}
+    html = await world.service.read_html(row)
+    assert html and "octopApp.listRows" in html
+    assert "销售看板" in html
+
+
+async def test_quick_create_rejects_paths_outside_imports(world: World) -> None:
+    with pytest.raises(OctopError) as exc:
+        await world.service.quick_create(
+            agent_id=world.agent_id,
+            owner_user_id=world.alice_id,
+            path="SOUL.md",
+            columns=COLUMNS,
+            view="dashboard",
+            name="Nope",
+        )
+    _assert_code(exc, ErrorCode.APP_ROW_INVALID)

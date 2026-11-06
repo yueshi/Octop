@@ -1,4 +1,4 @@
-"""HTTP API for agent-built light apps.
+"""HTTP API for agent-built MiniApps.
 
 Apps are created and edited by agents through built-in tools; this router only
 exposes them so the dashboard and collaborators can render the UI and append
@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from dataclasses import asdict
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -23,6 +23,7 @@ from octop.api.routers.chat.sse import format_sse
 from octop.config import DEFAULT_MAX_UPLOAD_MB, upload_mb_to_bytes
 from octop.infra.apps.assistant import AppAssistant
 from octop.infra.apps.models import MAIN_TABLE_KEY, Schema
+from octop.infra.apps.preview import validate_preview_svg
 from octop.infra.apps.service import (
     IMPORT_MODE_REPLACE,
     MAX_ASSET_BYTES,
@@ -72,6 +73,9 @@ class AppSummary(BaseModel):
         description="Size of the app's CSV files in bytes, summed over every table.",
     )
     has_html: bool = Field(default=False, description="Whether the agent has written the UI yet.")
+    has_preview: bool = Field(
+        default=False, description="Whether the agent drew a preview image for the app."
+    )
     created_at: int
     updated_at: int
 
@@ -114,6 +118,24 @@ class AppDetail(AppSummary):
         default_factory=list,
         description="Tables of the app; the first one is the main table.",
     )
+
+
+class FailedRowOut(BaseModel):
+    row: int = Field(description="1-based row number in the source file.")
+    values: dict[str, str] = Field(description="Mapped values that failed validation.")
+    error: str = Field(description="Why the row was rejected.")
+
+
+class QuickCreateResponse(BaseModel):
+    app: AppDetail
+    imported: int = 0
+    updated: int = 0
+    skipped: int = 0
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    pii_columns: list[str] = Field(default_factory=list)
+    blocked_pii: list[str] = Field(default_factory=list)
+    failed_rows: list[FailedRowOut] = Field(default_factory=list)
 
 
 class RowMeta(BaseModel):
@@ -306,6 +328,18 @@ async def _table_outs(service: AppService, row: AppRecord) -> list[AppTableOut]:
     return [await _table_out(service, row, table) for table in service.list_tables(row)]
 
 
+async def _app_detail(service: AppService, row: AppRecord) -> AppDetail:
+    schema = await service.read_schema(row)
+    base = _summary(service, row, "edit_structure")
+    return AppDetail(
+        **base.model_dump(exclude={"has_html", "has_preview"}),
+        columns=_columns(schema),
+        has_html=await service.has_html(row),
+        has_preview=await service.has_preview(row),
+        tables=await _table_outs(service, row),
+    )
+
+
 def _row_access(
     server: OctopServer,
     user: User,
@@ -361,7 +395,7 @@ def _service_with_runner(server: OctopServer) -> AppService:
 @router.get(
     "",
     response_model=AppListResponse,
-    summary="List light apps",
+    summary="List MiniApps",
     description="Apps owned by the caller plus apps shared with them. Admins see every app.",
 )
 async def list_apps(
@@ -378,9 +412,20 @@ async def list_apps(
 
 
 class AppTemplateOut(BaseModel):
-    template: str = Field(description="Template directory name.")
-    label: str = Field(description="Display label (the directory name for now).")
+    template: str = Field(description="Template id (legacy field).")
+    template_id: str = Field(default="", description="Template id within its source.")
+    label: str = Field(description="Display label.")
+    name: str = Field(default="", description="Localized display name.")
+    description: str = Field(default="", description="Localized one-line description.")
+    category: str = Field(default="", description="Optional category (sales, finance, …).")
+    version: int = Field(default=0, description="Template version.")
     has_html: bool = Field(description="Whether the template ships an app.html shell.")
+    has_preview: bool = Field(
+        default=False, description="Whether the template ships a preview image."
+    )
+    source: str = Field(default="agent", description="system or agent.")
+    agent_id: str | None = Field(default=None, description="Owning agent for agent templates.")
+    scope: str = Field(default="agent", description="global or agent.")
 
 
 class AppTemplatesResponse(BaseModel):
@@ -388,10 +433,42 @@ class AppTemplatesResponse(BaseModel):
 
 
 class CreateFromTemplateBody(BaseModel):
-    agent_id: str = Field(description="Agent whose workspace holds the template.")
-    template: str = Field(description="Template name from the templates endpoint.")
+    agent_id: str = Field(description="Agent whose workspace hosts the new app.")
+    template: str = Field(description="Template id from the templates endpoint.")
+    source: Literal["system", "agent"] = Field(
+        default="agent", description="Template source: system (global) or agent (workspace)."
+    )
     name: str | None = Field(default=None, max_length=100, description="New app name.")
     description: str = Field(default="", max_length=2000, description="New app description.")
+
+
+class QuickInspectResponse(BaseModel):
+    upload_path: str = Field(description="Workspace path to pass to quick/create.")
+    sheet: str = Field(description="Sheet name inspected by default.")
+    report: dict[str, Any] = Field(description="Deterministic inspection report.")
+    suggested_view: dict[str, Any] = Field(description="Suggested dashboard view spec.")
+
+
+class QuickCreateBody(BaseModel):
+    agent_id: str = Field(description="Agent that will host the new app.")
+    path: str = Field(description="Workspace path returned by quick/inspect.")
+    columns: list[AppColumn] = Field(description="Confirmed fields for the new app.")
+    view: Literal["dashboard", "ledger", "board"] = Field(
+        default="dashboard", description="Generated view style."
+    )
+    name: str = Field(description="New app name.")
+    description: str = Field(default="", max_length=2000, description="New app description.")
+    sheet: str | None = Field(default=None, description="Sheet to import; defaults to first.")
+    header_row: int | None = Field(
+        default=None, ge=0, le=100, description="0-based header row, when overriding detection."
+    )
+    mapping: dict[str, str] | None = Field(
+        default=None, description="Source header -> schema column map for quick imports."
+    )
+    include_pii: bool = Field(default=False, description="Import columns detected as sensitive.")
+    upsert_key: list[str] | None = Field(
+        default=None, description="Columns whose combined value identifies an existing row."
+    )
 
 
 def _assert_agent_access(service: AppService, user: User, agent_id: str) -> None:
@@ -405,21 +482,57 @@ def _assert_agent_access(service: AppService, user: User, agent_id: str) -> None
     response_model=AppTemplatesResponse,
     summary="List app templates",
     description=(
-        "Lists the app shells an expert seeded into the agent's "
+        "Lists system-wide templates plus the shells seeded into the agent's "
         "``app_templates/`` directory. Create one with POST /apps/from-template."
     ),
 )
 async def list_app_templates(
-    agent_id: str = Query(description="Agent whose workspace holds the templates."),
+    request: Request,
+    agent_id: str = Query(description="Agent whose workspace holds agent templates."),
+    source: Literal["all", "system", "agent"] = Query(
+        "agent", description="all: system + agent; system: bundled only; agent: workspace only."
+    ),
     user: User = Depends(current_user),
     server: OctopServer = Depends(get_server),
 ) -> AppTemplatesResponse:
     service = _service(server)
     _assert_agent_access(service, user, agent_id)
-    templates = await service.list_app_templates(agent_id)
+    templates = await service.list_templates(
+        agent_id, source=source, locale=str(resolve_request_locale(request))
+    )
     return AppTemplatesResponse(
         templates=[AppTemplateOut(**item) for item in templates],
     )
+
+
+@router.get(
+    "/templates/{template_id}/preview",
+    summary="Fetch a template preview image",
+    description=(
+        "Serves the preview image (the SVG cover) of a system or agent "
+        "template, so the creation gallery can show what the template looks "
+        "like."
+    ),
+)
+async def get_app_template_preview(
+    template_id: str,
+    agent_id: str = Query(description="Agent whose workspace holds agent templates."),
+    source: Literal["system", "agent"] = Query(
+        "agent", description="Template source: system (global) or agent (workspace)."
+    ),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> Response:
+    service = _service(server)
+    _assert_agent_access(service, user, agent_id)
+    svg = await service.template_preview(agent_id, template_id, source)
+    if svg is None:
+        raise OctopError(ErrorCode.APP_NOT_FOUND, "template has no preview image")
+    try:
+        clean = validate_preview_svg(svg)
+    except ValueError:
+        raise OctopError(ErrorCode.APP_NOT_FOUND, "template has no preview image") from None
+    return _svg_response(clean)
 
 
 @router.post(
@@ -443,16 +556,94 @@ async def create_app_from_template(
         agent_id=body.agent_id,
         owner_user_id=user.id,
         template=body.template,
+        source=body.source,
         name=body.name,
         description=body.description,
     )
-    schema = await service.read_schema(row)
-    base = _summary(service, row, "edit_structure")
-    return AppDetail(
-        **base.model_dump(exclude={"has_html"}),
-        columns=_columns(schema),
-        has_html=await service.has_html(row),
-        tables=await _table_outs(service, row),
+    return await _app_detail(service, row)
+
+
+@router.post(
+    "/quick/inspect",
+    response_model=QuickInspectResponse,
+    summary="Inspect a ledger for quick creation",
+    description=(
+        "Parses an uploaded spreadsheet, stores it under the agent's "
+        "``inbound/imports/`` and returns inferred fields plus a dashboard "
+        "preview. No app is created yet."
+    ),
+)
+async def quick_inspect_app(
+    file: UploadFile = File(...),  # noqa: B008
+    agent_id: str = Form(description="Agent whose workspace stores the upload."),
+    sheet: str | None = Form(default=None, description="Sheet name or 0-based index."),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> QuickInspectResponse:
+    service = _service(server)
+    _assert_agent_access(service, user, agent_id)
+    max_bytes = (
+        int(server.services.config.max_upload_bytes) if server.services is not None else None
+    )
+    fallback = upload_mb_to_bytes(DEFAULT_MAX_UPLOAD_MB)
+    data = await read_upload_capped(file, max_bytes=max_bytes or fallback)
+    result = await service.quick_inspect(
+        agent_id,
+        filename=file.filename or "upload.xlsx",
+        data=data,
+        sheet=sheet,
+    )
+    return QuickInspectResponse(**result)
+
+
+@router.post(
+    "/quick/create",
+    response_model=QuickCreateResponse,
+    status_code=201,
+    summary="Create a MiniApp from an inspected ledger",
+    description=(
+        "Creates the app, imports the uploaded rows and renders a deterministic "
+        "dashboard, ledger or board. The app is deleted if rendering fails."
+    ),
+)
+async def quick_create_app(
+    body: QuickCreateBody,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> QuickCreateResponse:
+    service = _service(server)
+    _assert_agent_access(service, user, body.agent_id)
+    row, result = await service.quick_create(
+        agent_id=body.agent_id,
+        owner_user_id=user.id,
+        path=body.path,
+        columns=[column.model_dump(exclude_none=True) for column in body.columns],
+        view=body.view,
+        name=body.name,
+        description=body.description,
+        sheet=body.sheet,
+        header_row=body.header_row,
+        mapping=body.mapping,
+        include_pii=body.include_pii,
+        upsert_key=body.upsert_key,
+    )
+    _audit(
+        server,
+        actor=f"user:{user.id}",
+        action="miniapp.quick_create",
+        target=row.app_id,
+        payload={"path": body.path, "view": body.view},
+    )
+    return QuickCreateResponse(
+        app=await _app_detail(service, row),
+        imported=result.imported,
+        updated=result.updated,
+        skipped=result.skipped,
+        errors=result.errors,
+        warnings=result.warnings,
+        pii_columns=result.pii_columns,
+        blocked_pii=result.blocked_pii,
+        failed_rows=[FailedRowOut(**item) for item in result.failed_rows],
     )
 
 
@@ -495,9 +686,10 @@ async def restore_app(
     schema = await service.read_schema(row)
     base = _summary(service, row, "edit_structure")
     return AppDetail(
-        **base.model_dump(exclude={"has_html"}),
+        **base.model_dump(exclude={"has_html", "has_preview"}),
         columns=_columns(schema),
         has_html=await service.has_html(row),
+        has_preview=await service.has_preview(row),
         tables=await _table_outs(service, row),
     )
 
@@ -505,7 +697,7 @@ async def restore_app(
 @router.get(
     "/{app_id}",
     response_model=AppDetail,
-    summary="Get light app details",
+    summary="Get MiniApp details",
 )
 async def get_app(
     app_id: str,
@@ -521,9 +713,10 @@ async def get_app(
     return AppDetail(
         # The detail view checks the workspace directly: the cached size is a
         # hint for list views, the file itself is the truth.
-        **base.model_dump(exclude={"has_html"}),
+        **base.model_dump(exclude={"has_html", "has_preview"}),
         columns=_columns(schema),
         has_html=await service.has_html(row),
+        has_preview=await service.has_preview(row),
         tables=await _table_outs(service, row),
     )
 
@@ -672,6 +865,51 @@ async def get_app_asset(
         media_type=mime,
         headers={"Cache-Control": "private, max-age=300"},
     )
+
+
+def _svg_response(svg: str) -> Response:
+    """Serve agent-drawn SVG markup as an image.
+
+    The markup is validated on write; the sandboxing CSP is the second layer
+    that keeps a preview inert when it is opened directly.
+    """
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={
+            "Content-Security-Policy": (
+                "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+            ),
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, max-age=300",
+        },
+    )
+
+
+@router.get(
+    "/{app_id}/preview",
+    summary="Fetch an app preview image",
+    description=(
+        "Serves the app's preview image: the SVG cover the agent draws for "
+        "the app list. Requires view."
+    ),
+)
+async def get_app_preview(
+    app_id: str,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> Response:
+    service, row, _permission = _row_access(server, user, app_id, "view")
+    svg = await service.read_preview(row)
+    if svg is None:
+        raise OctopError(ErrorCode.APP_NOT_FOUND, "app has no preview image")
+    try:
+        clean = validate_preview_svg(svg)
+    except ValueError:
+        # The file may have been written straight into the workspace, so the
+        # markup is checked again before it is served.
+        raise OctopError(ErrorCode.APP_NOT_FOUND, "app has no preview image") from None
+    return _svg_response(clean)
 
 
 @router.get(
@@ -896,9 +1134,10 @@ async def alter_app_schema(
     schema = await service.read_schema(updated, table)
     base = _summary(service, updated, permission)
     return AppDetail(
-        **base.model_dump(exclude={"has_html"}),
+        **base.model_dump(exclude={"has_html", "has_preview"}),
         columns=_columns(schema),
         has_html=await service.has_html(updated),
+        has_preview=await service.has_preview(updated),
         tables=await _table_outs(service, updated),
     )
 
@@ -920,9 +1159,10 @@ async def update_app(
     schema = await service.read_schema(row)
     base = _summary(service, row, permission)
     return AppDetail(
-        **base.model_dump(exclude={"has_html"}),
+        **base.model_dump(exclude={"has_html", "has_preview"}),
         columns=_columns(schema),
         has_html=await service.has_html(row),
+        has_preview=await service.has_preview(row),
         tables=await _table_outs(service, row),
     )
 
@@ -930,7 +1170,7 @@ async def update_app(
 @router.delete(
     "/{app_id}",
     response_model=DeleteAppResponse,
-    summary="Delete a light app",
+    summary="Delete a MiniApp",
     description="Deletes the app files and metadata. Requires edit_structure.",
 )
 async def delete_app(
@@ -1112,9 +1352,10 @@ async def transfer_app(
     schema = await service.read_schema(moved)
     base = _summary(service, moved, "edit_structure")
     return AppDetail(
-        **base.model_dump(exclude={"has_html"}),
+        **base.model_dump(exclude={"has_html", "has_preview"}),
         columns=_columns(schema),
         has_html=await service.has_html(moved),
+        has_preview=await service.has_preview(moved),
         tables=await _table_outs(service, moved),
     )
 
@@ -1265,12 +1506,6 @@ class ImportBody(BaseModel):
             "dropped and only the rest of the row is written."
         ),
     )
-
-
-class FailedRowOut(BaseModel):
-    row: int = Field(description="1-based row number in the source file.")
-    values: dict[str, str] = Field(description="Mapped values that failed validation.")
-    error: str = Field(description="Why the row was rejected.")
 
 
 class ImportResponse(BaseModel):

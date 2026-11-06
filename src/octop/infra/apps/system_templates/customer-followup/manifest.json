@@ -1,0 +1,13 @@
+{
+  "id": "customer-followup",
+  "version": 1,
+  "name": { "zh": "客户跟进台账", "en": "Customer Follow-up" },
+  "description": {
+    "zh": "按阶段管理客户，按日期提醒下一次跟进。",
+    "en": "Track customers by stage and the next follow-up date."
+  },
+  "category": "sales",
+  "tags": ["sales", "crm"],
+  "schema": "schema.json",
+  "html": "app.html"
+}

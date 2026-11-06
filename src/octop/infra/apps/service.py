@@ -6,6 +6,7 @@ Workspace layout (workspace-relative, resolved through ``BackendWorkspace``)::
     apps/<app_id>/data.csv      rows; header == schema column names
     apps/<app_id>/schema.json   column definitions
     apps/<app_id>/manifest.json human-readable snapshot
+    apps/<app_id>/preview.svg   cover image drawn by the agent
 
 Schema and data updates are staged to ``*.new`` files and committed through
 ``.pending.json`` so an interrupted write is finished by the next read instead
@@ -57,6 +58,19 @@ from octop.infra.apps.models import (
     validate_row,
     validate_table_key,
 )
+from octop.infra.apps.preview import PREVIEW_FILENAME, validate_preview_svg
+from octop.infra.apps.templates import (
+    AGENT_SOURCE,
+    SYSTEM_SOURCE,
+    SYSTEM_TEMPLATE_ROOT,
+    TemplateInfo,
+    agent_template_info,
+    clean_template_id,
+    list_system_templates,
+    read_system_template,
+)
+from octop.infra.apps.viewgen import render_html as render_view_html
+from octop.infra.apps.viewgen import suggest_view
 from octop.infra.db.repos.agents import AgentRepo
 from octop.infra.db.repos.apps import (
     PERMISSION_RANK,
@@ -79,6 +93,8 @@ FILE_DATA = "data.csv"
 FILE_SCHEMA = "schema.json"
 FILE_MANIFEST = "manifest.json"
 FILE_PENDING = ".pending.json"
+FILE_PREVIEW = PREVIEW_FILENAME
+"""Cover image of an app, drawn by the agent as SVG."""
 TABLES_DIR = "tables"
 STAGED_SUFFIX = ".new"
 ASSETS_DIR = "assets"
@@ -223,6 +239,7 @@ class AppView:
     data_bytes: int
     created_at: int
     updated_at: int
+    has_preview: bool = False
 
     @property
     def has_html(self) -> bool:
@@ -345,6 +362,67 @@ def _safe_import_filename(filename: str) -> str:
     return name[:100]
 
 
+def _file_stem(filename: str) -> str:
+    name = _safe_import_filename(filename)
+    return name.rsplit(".", 1)[0].strip()[:100] or "工作表"
+
+
+def _select_sheet_report(report: Mapping[str, Any], sheet: str | None) -> dict[str, Any]:
+    sheets = list(report.get("sheets") or [])
+    if not sheets:
+        raise _invalid(ErrorCode.APP_ROW_INVALID, "file has no sheets")
+    if sheet is None or not str(sheet).strip():
+        return dict(sheets[0])
+    wanted = str(sheet).strip()
+    for item in sheets:
+        if str(item.get("name") or "") == wanted:
+            return dict(item)
+    try:
+        index = int(wanted)
+    except ValueError:
+        index = -1
+    if 0 <= index < len(sheets):
+        return dict(sheets[index])
+    raise _invalid(ErrorCode.APP_ROW_INVALID, f"sheet not found: {sheet!r}")
+
+
+_QUICK_COLUMN_TYPES = {"string", "text", "integer", "number", "boolean", "date", "datetime"}
+
+
+def _quick_columns(report: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Turn inspection suggestions into a valid, editable schema."""
+    columns: list[dict[str, Any]] = []
+    used: set[str] = set()
+    for index, item in enumerate(report.get("columns") or []):
+        if not isinstance(item, Mapping):
+            continue
+        base = str(item.get("name_suggestion") or f"column_{index + 1}").strip()
+        name = re.sub(r"[^a-z0-9_]+", "_", base.lower()).strip("_") or f"column_{index + 1}"
+        candidate = name
+        suffix = 2
+        while candidate in used:
+            candidate = f"{name}_{suffix}"
+            suffix += 1
+        used.add(candidate)
+        column_type = str(item.get("type") or "string")
+        if column_type not in _QUICK_COLUMN_TYPES:
+            column_type = "string"
+        label = (str(item.get("source") or candidate).strip() or candidate)[:100]
+        column: dict[str, Any] = {
+            "name": candidate,
+            "label": label,
+            "type": column_type,
+            "required": False,
+        }
+        pii = item.get("pii")
+        if isinstance(pii, str) and pii:
+            column["pii"] = pii
+        columns.append(column)
+    if not columns:
+        raise _invalid(ErrorCode.APP_SCHEMA_INVALID, "file has no usable columns")
+    return columns
+
+
 def _json_path(payload: Any, path: str) -> Any:
     node = payload
     for part in path.split("."):
@@ -419,7 +497,11 @@ def _zip_entries(entries: list[tuple[str, bytes]]) -> bytes:
 def _read_backup_zip(
     data: bytes,
 ) -> tuple[
-    dict[str, Any], dict[str, tuple[str, bytes, bytes]], str | None, list[tuple[str, bytes]]
+    dict[str, Any],
+    dict[str, tuple[str, bytes, bytes]],
+    str | None,
+    str | None,
+    list[tuple[str, bytes]],
 ]:
     """Read and validate a backup archive without touching the workspace."""
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
@@ -447,7 +529,7 @@ def _read_backup_zip(
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise ValueError("manifest.json is not valid JSON") from None
         if not isinstance(manifest, dict) or manifest.get("format") != BACKUP_FORMAT:
-            raise ValueError("not an Octop light-app backup")
+            raise ValueError("not an Octop MiniApp backup")
         version = manifest.get("version")
         if not isinstance(version, int) or version > BACKUP_VERSION:
             raise ValueError("backup was made by a newer version")
@@ -487,7 +569,13 @@ def _read_backup_zip(
             if not asset_name or "/" in asset_name or "\\" in asset_name:
                 continue
             assets.append((asset_name, read_entry(name)))
-    return manifest, tables, html, assets
+        preview: str | None = None
+        if FILE_PREVIEW in names:
+            try:
+                preview = read_entry(FILE_PREVIEW).decode("utf-8")
+            except UnicodeDecodeError:
+                raise ValueError("preview.svg is not valid UTF-8") from None
+    return manifest, tables, html, preview, assets
 
 
 def _normalize_rows(schema: Schema, rows: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -627,32 +715,24 @@ class AppService:
             updated_at=row.updated_at,
         )
 
-    def list_views(self, user_id: int, *, is_admin: bool) -> list[AppView]:
-        owners: dict[int, str] = {}
-        return [
-            self.view(row, permission, owners=owners)
-            for row, permission in self.list_for_user(user_id, is_admin=is_admin)
-        ]
-
     async def list_views_with_stats(self, user_id: int, *, is_admin: bool) -> list[AppView]:
         """List views, backfilling the cached file sizes for apps that predate them.
 
         Apps written before the file-size columns existed carry cached sizes of
         zero even though their files are on disk; listing the app directory
         once repairs the cache instead of showing them as "no interface yet".
+        The preview flag is read from the workspace as well: the cover is an
+        optional file, not a column.
         """
+        owners: dict[int, str] = {}
         out: list[AppView] = []
-        for view in self.list_views(user_id, is_admin=is_admin):
-            if view.html_bytes and view.data_bytes:
-                out.append(view)
-                continue
-            row = self.get(view.app_id)
-            html_bytes, data_bytes = await self._file_stats(row)
-            out.append(
-                replace(view, html_bytes=html_bytes, data_bytes=data_bytes)
-                if (html_bytes, data_bytes) != (view.html_bytes, view.data_bytes)
-                else view,
-            )
+        for row, permission in self.list_for_user(user_id, is_admin=is_admin):
+            view = self.view(row, permission, owners=owners)
+            if not (view.html_bytes and view.data_bytes):
+                html_bytes, data_bytes = await self._file_stats(row)
+                if (html_bytes, data_bytes) != (view.html_bytes, view.data_bytes):
+                    view = replace(view, html_bytes=html_bytes, data_bytes=data_bytes)
+            out.append(replace(view, has_preview=await self.has_preview(row)))
         return out
 
     async def _file_stats(self, row: AppRecord) -> tuple[int, int]:
@@ -1038,10 +1118,24 @@ class AppService:
         except Exception:
             logger.warning("failed to refresh app manifest: %s", app_id, exc_info=True)
 
-    # ----- app templates (expert-provided shells) -----
+    # ----- app templates (system and expert-provided shells) -----
 
-    async def list_app_templates(self, agent_id: str) -> list[dict[str, Any]]:
-        """List the app shells seeded from an expert's ``app_templates/``."""
+    async def list_templates(
+        self, agent_id: str, *, source: str = "all", locale: str = "zh"
+    ) -> list[dict[str, Any]]:
+        """List system and workspace templates for the creation gallery."""
+        if source not in ("all", SYSTEM_SOURCE, AGENT_SOURCE):
+            raise _invalid(ErrorCode.APP_NOT_FOUND, f"unknown template source: {source!r}")
+        templates: list[dict[str, Any]] = []
+        if source in ("all", SYSTEM_SOURCE):
+            templates.extend(info.to_dict() for info in list_system_templates(locale))
+        if source in ("all", AGENT_SOURCE):
+            templates.extend(
+                info.to_dict() for info in await self._agent_templates(agent_id, locale)
+            )
+        return templates
+
+    async def _agent_templates(self, agent_id: str, locale: str) -> list[TemplateInfo]:
         ws = await self._workspace(agent_id)
         result = await ws.aglob("app_templates/*/schema.json")
         matches = list(getattr(result, "matches", None) or []) if result is not None else []
@@ -1051,18 +1145,37 @@ class AppService:
             parts = [part for part in path.split("/") if part]
             if len(parts) >= 2 and parts[-1] == "schema.json":
                 names.add(parts[-2])
-        templates: list[dict[str, Any]] = []
+        templates = []
         for name in sorted(names):
             if not name or name.startswith("."):
                 continue
+            manifest: dict[str, Any] = {}
+            manifest_text = await ws.aread_text(f"app_templates/{name}/manifest.json")
+            if manifest_text:
+                try:
+                    payload = json.loads(manifest_text)
+                except json.JSONDecodeError:
+                    payload = None
+                if isinstance(payload, dict):
+                    manifest = payload
             templates.append(
-                {
-                    "template": name,
-                    "label": name,
-                    "has_html": await ws.aexists(f"app_templates/{name}/app.html"),
-                }
+                agent_template_info(
+                    agent_id=agent_id,
+                    template_id=name,
+                    manifest=manifest,
+                    has_html=await ws.aexists(f"app_templates/{name}/app.html"),
+                    locale=locale,
+                    has_preview=await ws.aexists(f"app_templates/{name}/{FILE_PREVIEW}"),
+                )
             )
         return templates
+
+    async def list_app_templates(self, agent_id: str) -> list[dict[str, Any]]:
+        """Legacy shape: the agent's workspace templates only."""
+        return [
+            {"template": info.template_id, "label": info.name, "has_html": info.has_html}
+            for info in await self._agent_templates(agent_id, "zh")
+        ]
 
     async def create_from_template(
         self,
@@ -1070,17 +1183,25 @@ class AppService:
         agent_id: str,
         owner_user_id: int,
         template: str,
+        source: str = AGENT_SOURCE,
         name: str | None = None,
         description: str = "",
     ) -> LightAppRow:
-        """Create an empty app from an expert-provided shell (schema + HTML)."""
-        clean = template.strip()
-        if not clean or "/" in clean or clean.startswith("."):
-            raise _invalid(ErrorCode.APP_NOT_FOUND, f"unknown app template: {template!r}")
-        ws = await self._workspace(agent_id)
-        schema_text = await ws.aread_text(f"app_templates/{clean}/schema.json")
-        if schema_text is None:
-            raise _invalid(ErrorCode.APP_NOT_FOUND, f"unknown app template: {clean}")
+        """Create an empty app from a system or workspace shell (schema + HTML)."""
+        clean = clean_template_id(template)
+        schema_text: str
+        html: str | None
+        if source == SYSTEM_SOURCE:
+            schema_text, html = read_system_template(clean)
+        elif source == AGENT_SOURCE:
+            ws = await self._workspace(agent_id)
+            stored_schema = await ws.aread_text(f"app_templates/{clean}/schema.json")
+            if stored_schema is None:
+                raise _invalid(ErrorCode.APP_NOT_FOUND, f"unknown app template: {clean}")
+            schema_text = stored_schema
+            html = await ws.aread_text(f"app_templates/{clean}/app.html")
+        else:
+            raise _invalid(ErrorCode.APP_NOT_FOUND, f"unknown template source: {source!r}")
         row = await self.create(
             agent_id=agent_id,
             owner_user_id=owner_user_id,
@@ -1088,7 +1209,6 @@ class AppService:
             description=description,
             columns=schema_text,
         )
-        html = await ws.aread_text(f"app_templates/{clean}/app.html")
         if html:
             try:
                 await self.write_html(row, html)
@@ -1097,6 +1217,17 @@ class AppService:
                 # rejected by the HTML sandbox rules.
                 await self.delete(row)
                 raise
+        preview = await self.template_preview(agent_id, clean, source)
+        if preview:
+            try:
+                await self.write_preview(row, preview)
+            except Exception:
+                # A template without a usable cover still yields a usable app.
+                logger.warning(
+                    "failed to copy template preview for %s: %s",
+                    clean,
+                    exc_info=True,
+                )
         return row
 
     # ----- create / metadata -----
@@ -1355,6 +1486,8 @@ class AppService:
             schema_file, data_file = table_file_names(table.table_key)
             names.extend((schema_file, data_file))
         names.extend(f"{ASSETS_DIR}/{asset}" for asset in await self.list_assets(row))
+        if await ws.aexists(app_path(row.app_id, FILE_PREVIEW)):
+            names.append(FILE_PREVIEW)
         return [
             AppFile(
                 name=name,
@@ -1363,6 +1496,57 @@ class AppService:
             )
             for name in names
         ]
+
+    # ----- preview -----
+
+    async def write_preview(self, row: AppRecord, svg: str) -> int:
+        """Store the app's cover image and return its size in bytes.
+
+        The agent draws the preview as SVG, so the markup is validated before
+        it reaches the workspace: no scripts, no inline handlers, no remote
+        references.
+        """
+        try:
+            content = validate_preview_svg(svg)
+        except ValueError as exc:
+            raise _invalid(ErrorCode.APP_SOURCE_INVALID, str(exc)) from exc
+        ws = await self._workspace(row.agent_id)
+        async with _lock_for(row.app_id):
+            self._require_live(row.app_id)
+            await ws.awrite_text(app_path(row.app_id, FILE_PREVIEW), content)
+            self._app_repo.touch(row.app_id)
+        return len(content.encode("utf-8"))
+
+    async def read_preview(self, row: AppRecord) -> str | None:
+        """Return the app's cover markup, or ``None`` when it has none."""
+        try:
+            ws = await self._workspace(row.agent_id)
+        except OctopError:
+            # The owning agent is gone: the app has no cover any more.
+            return None
+        return await ws.aread_text(app_path(row.app_id, FILE_PREVIEW))
+
+    async def has_preview(self, row: AppRecord) -> bool:
+        """Whether the app has a cover image."""
+        try:
+            ws = await self._workspace(row.agent_id)
+        except OctopError:
+            return False
+        return await ws.aexists(app_path(row.app_id, FILE_PREVIEW))
+
+    async def template_preview(self, agent_id: str, template_id: str, source: str) -> str | None:
+        """Return a template's cover markup, or ``None`` when it has none."""
+        clean = clean_template_id(template_id)
+        if source == SYSTEM_SOURCE:
+            path = SYSTEM_TEMPLATE_ROOT / clean / FILE_PREVIEW
+            try:
+                return path.read_text(encoding="utf-8") if path.is_file() else None
+            except OSError:
+                return None
+        if source == AGENT_SOURCE:
+            ws = await self._workspace(agent_id)
+            return await ws.aread_text(f"app_templates/{clean}/{FILE_PREVIEW}")
+        raise _invalid(ErrorCode.APP_NOT_FOUND, f"unknown template source: {source!r}")
 
     # ----- assets -----
 
@@ -1745,10 +1929,95 @@ class AppService:
 
     async def save_import_file(self, row: AppRecord, *, filename: str, data: bytes) -> str:
         """Store an uploaded import file under ``inbound/imports/`` in the workspace."""
-        ws = await self._workspace(row.agent_id)
+        return await self.save_quick_import_file(row.agent_id, filename=filename, data=data)
+
+    async def save_quick_import_file(self, agent_id: str, *, filename: str, data: bytes) -> str:
+        """Store a file before an app exists (the quick-create upload step)."""
+        ws = await self._workspace(agent_id)
         path = f"{IMPORT_DIR}/{new_short_id(8)}-{_safe_import_filename(filename)}"
         await ws.aupload_bytes(path, data)
         return path
+
+    async def quick_inspect(
+        self,
+        agent_id: str,
+        *,
+        filename: str,
+        data: bytes,
+        sheet: str | None = None,
+    ) -> dict[str, Any]:
+        """Inspect an uploaded ledger and suggest a dashboard view."""
+        report = inspect_file(filename, data)
+        selected = _select_sheet_report(report, sheet)
+        columns = _quick_columns(selected)
+        schema = parse_schema_payload({"columns": columns})
+        title = _file_stem(filename)
+        upload_path = await self.save_quick_import_file(agent_id, filename=filename, data=data)
+        return {
+            "upload_path": upload_path,
+            "sheet": selected.get("name", ""),
+            "report": report,
+            "suggested_view": suggest_view(selected, schema, title=title),
+        }
+
+    async def quick_create(
+        self,
+        *,
+        agent_id: str,
+        owner_user_id: int,
+        path: str,
+        columns: Sequence[Mapping[str, Any]],
+        view: str,
+        name: str,
+        description: str = "",
+        sheet: str | None = None,
+        header_row: int | None = None,
+        mapping: Mapping[str, str] | None = None,
+        include_pii: bool = False,
+        upsert_key: list[str] | None = None,
+    ) -> tuple[LightAppRow, ImportResult]:
+        """Create, import and render a dashboard in one transaction-like step."""
+        clean_path = _safe_import_path(path)
+        if not clean_path.startswith(f"{IMPORT_DIR}/"):
+            raise _invalid(
+                ErrorCode.APP_ROW_INVALID,
+                f"quick import path must live under {IMPORT_DIR}/",
+            )
+        schema = parse_schema_payload({"columns": list(columns)})
+        clean_name = validate_name(name)
+        clean_description = validate_description(description)
+        row = await self.create(
+            agent_id=agent_id,
+            owner_user_id=owner_user_id,
+            name=clean_name,
+            description=clean_description,
+            columns={"columns": list(columns)},
+        )
+        try:
+            result = await self.import_from_file(
+                row,
+                path=clean_path,
+                sheet=sheet,
+                header_row=header_row,
+                mapping=mapping,
+                include_pii=include_pii,
+                upsert_key=upsert_key,
+            )
+            if result.imported == 0 and result.updated == 0 and result.errors:
+                raise _invalid(ErrorCode.APP_ROW_INVALID, result.errors[0])
+            data = await self.read_workspace_file(agent_id, clean_path)
+            report = inspect_file(clean_path, data)
+            selected = _select_sheet_report(report, sheet)
+            spec = suggest_view(selected, schema, view=view, title=clean_name)
+            html = render_view_html(schema, spec, title=clean_name, description=clean_description)
+            await self.write_html(row, html)
+        except Exception:
+            try:
+                await self.delete(row)
+            except Exception:
+                logger.warning("failed to roll back quick-create app %s", row.app_id, exc_info=True)
+            raise
+        return row, result
 
     async def read_workspace_file(self, agent_id: str, path: str) -> bytes:
         """Read a workspace file (a path outside the app's own directory)."""
@@ -2293,6 +2562,9 @@ class AppService:
         html = await self.read_html(current)
         if html:
             entries.append((FILE_HTML, html.encode("utf-8")))
+        preview = await self.read_preview(current)
+        if preview:
+            entries.append((FILE_PREVIEW, preview.encode("utf-8")))
         for asset_name in await self.list_assets(current):
             _mime, asset_data = await self.read_asset(current, asset_name)
             entries.append((f"{ASSETS_DIR}/{asset_name}", asset_data))
@@ -2311,7 +2583,7 @@ class AppService:
             ),
         )
         archive = await asyncio.to_thread(_zip_entries, entries)
-        return f"light-app-{current.app_id}.zip", archive
+        return f"miniapp-{current.app_id}.zip", archive
 
     async def restore_archive(
         self,
@@ -2327,7 +2599,9 @@ class AppService:
                 f"backup exceeds the {MAX_BACKUP_BYTES // (1024 * 1024)} MB limit",
             )
         try:
-            manifest, tables, html, assets = await asyncio.to_thread(_read_backup_zip, data)
+            manifest, tables, html, preview, assets = await asyncio.to_thread(
+                _read_backup_zip, data
+            )
         except zipfile.BadZipFile:
             raise _invalid(
                 ErrorCode.APP_SOURCE_INVALID, "backup is not a valid zip archive"
@@ -2380,6 +2654,8 @@ class AppService:
                     )
             if html:
                 await self.write_html(row, html)
+            if preview:
+                await self.write_preview(row, preview)
             for asset_name, asset_data in assets:
                 await self.save_asset(row, asset_name, asset_data)
         except Exception:

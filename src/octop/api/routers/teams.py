@@ -292,7 +292,7 @@ async def delete_team(
     team_id: str,
     force: bool = Query(
         default=False,
-        description="Delete even when the team still owns light apps (their data is lost).",
+        description="Delete even when the team still owns MiniApps (their data is lost).",
     ),
     user: Any = Depends(current_user),
     server: Any = Depends(get_server),

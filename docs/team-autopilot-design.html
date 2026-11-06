@@ -155,7 +155,7 @@
   <span class="chip">2026-10-25 · v3（两轮反思修订）</span>
   <span class="chip">状态：草案 · 决策 1 已拍板（原生表），余 4 项待定</span>
   <span class="chip">分支背景：<code>feature/light-apps</code></span>
-  <span class="chip">依据：团队机制 / cron+HITL / 轻应用 / 前端集成 四路代码调研</span>
+  <span class="chip">依据：团队机制 / cron+HITL / 小程序 / 前端集成 四路代码调研</span>
 </div>
 
 <h2 id="toc">目录</h2>
@@ -176,19 +176,19 @@
 <h2 id="conclusion">一、结论先行</h2>
 <div class="lead">
   Octop 已具备实现「主动工作团队」约 <b>60%</b> 的地基：主持人调度角色、异步派工/回叫、房间上墙、
-  HITL 审批闭环、cron 无人值守运行、轻应用与通知 WS 均已存在。<b>核心缺口是五个</b>：
+  HITL 审批闭环、cron 无人值守运行、小程序与通知 WS 均已存在。<b>核心缺口是五个</b>：
   任务无实体、主持人不能主动开工、无人值守遇审批即失败、无显式求助通道、看板缺基础设施。
 </div>
 <p>
   方案 = 给团队加「<b>目标/任务实体 + 驱动循环 + 持久化 HITL + 原生看板</b>」，四个能力各自独立可交付；
-  轻应用作为 P2 阶段的看板自建/组合路径。
+  小程序作为 P2 阶段的看板自建/组合路径。
 </p>
 
 <h2 id="goal">二、目标需求</h2>
 <blockquote>
   需要一个<b>能主动工作的团队</b>：设置整体目标后，任务由主持人驱动产生、选择、分配、执行；
   必要时向团队创建人提出帮助或操作要求；根据任务执行状态提供必要的进度汇报和方向调整决策；
-  团队对外提供一个<b>看板</b>（可基于轻应用功能自主搭建或组合）；
+  团队对外提供一个<b>看板</b>（可基于小程序功能自主搭建或组合）；
   创建人可通过<b>对话</b>和<b>看板</b>随时关注。
 </blockquote>
 
@@ -229,7 +229,7 @@
           <code>gateway/hitl/coordinator.py:223-347,481-609</code></td>
     </tr>
     <tr>
-      <td><b>轻应用</b></td>
+      <td><b>小程序</b></td>
       <td>定义即文件（schema.json / data.csv / app.html），8 种列类型（含 enum/date）、多表、
           9 个 agent 工具、内置问数助手、connector 数据源定时同步；iframe sandbox +
           <code>octopApp</code> SDK。但定位为「读 + 追加」：无行 id、无行级更新、无视图层。</td>
@@ -267,7 +267,7 @@
       （<code>infra/gateway/hitl/store.py:13</code>），长任务等不起。</li>
   <li><b>无「向创建人求助」显式通道</b> —— HITL 只覆盖工具审批；主动推送只有文本 + toast
       （<code>infra/gateway/gateway.py:507-522</code>），不会把待决策卡片定向推给创建人并等待其决定。</li>
-  <li><b>看板缺基础设施</b> —— 轻应用只有「读 + 追加」（无行 id、无行级更新、无视图层）；dashboard 无拖拽依赖。</li>
+  <li><b>看板缺基础设施</b> —— 小程序只有「读 + 追加」（无行 id、无行级更新、无视图层）；dashboard 无拖拽依赖。</li>
 </ol>
 
 <h2 id="mapping">五、目标 → 能力映射</h2>
@@ -287,9 +287,9 @@
             cron/团队遇 HITL 转挂起 + 定向通知</td></tr>
     <tr><td>进度汇报与方向调整</td><td><span class="tag ok"><code>compose_followup</code> 有总结能力</span></td>
         <td>任务状态事件推房间（看板实时刷新）；里程碑/定时汇报到创建人 DM；创建人评论 = 方向输入</td></tr>
-    <tr><td>对外看板（可基于轻应用搭建/组合）</td><td><span class="tag warn">轻应用缺行级更新/视图</span>
+    <tr><td>对外看板（可基于小程序搭建/组合）</td><td><span class="tag warn">小程序缺行级更新/视图</span>
         <span class="tag bad">dashboard 无看板</span></td>
-        <td><b>P1</b> 原生 <code>/teams/:id/board</code> 页面；<b>P2</b> 轻应用补行 id/行更新后出
+        <td><b>P1</b> 原生 <code>/teams/:id/board</code> 页面；<b>P2</b> 小程序补行 id/行更新后出
             官方看板模板 + 数据投影，支持自建组合</td></tr>
   </tbody>
 </table>
@@ -315,8 +315,8 @@
     <div class="dbox dashed" style="flex:2"><b>hitl_pending（持久化）</b>
       <small>遇审批挂起 → 定向通知创建人 → 批准后自动续跑</small></div>
     <div class="arrow">→</div>
-    <div class="dbox neutral"><b>看板页 / 轻应用模板</b>
-      <small>原生看板（P1）+ 轻应用模板（P2）</small></div>
+    <div class="dbox neutral"><b>看板页 / 小程序模板</b>
+      <small>原生看板（P1）+ 小程序模板（P2）</small></div>
   </div>
 </div>
 <p><b>关键原则</b>：任务状态变更由<b>主持人</b>统一回写（成员从回叫中提炼），成员侧不新增工具；
@@ -354,7 +354,7 @@
       写入时同步落库，重启时 boot 恢复未过期条目、将过期未决行置 <code>expired</code>，
       TTL 可按 job 配置（无人值守长任务需要 &gt;30min）；持久化状态四态与内存 store
       （<code>store.py:11</code>）对齐，不压缩成两态。</li>
-  <li>任务子表<b>不进</b>轻应用 CSV——需要行级并发更新与乐观锁，这正是轻应用当前明确缺的
+  <li>任务子表<b>不进</b>小程序 CSV——需要行级并发更新与乐观锁，这正是小程序当前明确缺的
       （<code>service.py:1039-1090</code> 整文件重写）。</li>
   <li><span class="tag warn">v3</span> <b>并发控制</b>：<code>team_tasks</code> 有两个写方——主持人工具（驱动循环/回叫）
       与创建人看板拖拽（<code>PATCH</code>）。加 <code>version</code> 列做 compare-and-swap，
@@ -510,20 +510,20 @@
       （<code>useServerTimezone()</code> / <code>formatServerDateTime</code>，AGENTS.md §7 硬规则）。
       API 扩展 <code>api/routers/teams.py</code>（goals / tasks / board 三个资源组，
       沿用 <code>_require_owned_team</code>）。</li>
-  <li><b>P2（轻应用化，支撑「自主搭建或组合」）</b>：
+  <li><b>P2（小程序化，支撑「自主搭建或组合」）</b>：
     <ol>
-      <li>轻应用先补齐地基（其架构稿已规划：<code>light_app_rows</code> 行表 + 版本号 CAS +
+      <li>小程序先补齐地基（其架构稿已规划：<code>light_app_rows</code> 行表 + 版本号 CAS +
           行更新 API/工具 + 在线表格视图，<code>docs/light-apps-architecture.md:69-79,95-103</code>）；</li>
-      <li>新增轻应用数据源类型 <code>team_tasks</code> 投影（复用 <code>infra/apps/sources.py</code>
+      <li>新增小程序数据源类型 <code>team_tasks</code> 投影（复用 <code>infra/apps/sources.py</code>
           绑定机制）；</li>
       <li>官方「团队看板」模板 app（app.html 看板 UI + <code>octopApp</code> SDK）——
           创建人可复制模板改造成自己的组合视图（按成员分组、按里程碑分组等），
-          这正是「基于轻应用功能自主搭建或组合」的落点。模板的拖拽改状态须经轻应用行更新
+          这正是「基于小程序功能自主搭建或组合」的落点。模板的拖拽改状态须经小程序行更新
           API 回写 <code>team_tasks</code> 服务端状态机（与 P1 PATCH 同一校验/CAS 路径），
           P5「经投影回写」的验证标准以此为前提。</li>
     </ol></li>
-  <li><b>顺序理由</b>：任务状态机需要可靠行更新与并发控制，轻应用当前「追加-only + 整文件重写」
-      （<code>service.py:1039-1090</code>）承载不了；先原生后轻应用，两条都不浪费。</li>
+  <li><b>顺序理由</b>：任务状态机需要可靠行更新与并发控制，小程序当前「追加-only + 整文件重写」
+      （<code>service.py:1039-1090</code>）承载不了；先原生后小程序，两条都不浪费。</li>
 </ul>
 
 <h2 id="roadmap">八、实施路径（P1–P5）</h2>
@@ -666,8 +666,8 @@
       </td>
     </tr>
     <tr>
-      <td><b>P5 轻应用组合</b><br><span class="tag warn">可选</span></td>
-      <td>轻应用行 id/行更新/视图；<code>team_tasks</code> 数据源；官方看板模板</td>
+      <td><b>P5 小程序组合</b><br><span class="tag warn">可选</span></td>
+      <td>小程序行 id/行更新/视图；<code>team_tasks</code> 数据源；官方看板模板</td>
       <td><code>infra/apps/</code>、<code>dashboard/src/pages/Apps/</code></td>
       <td>模板 app 拖拽改状态经投影回写</td>
     </tr>
@@ -679,7 +679,7 @@ P4 依赖 P1 的 API；P5 依赖 P1+P4 且改动面最大，建议单独立项�
 
 <h2 id="decisions">九、需要拍板的决策</h2>
 <ol>
-  <li><b>【已拍板 2026-10-25】任务实体落原生表</b>——按推荐采用原生表，轻应用只做投影展示层（P5）。</li>
+  <li><b>【已拍板 2026-10-25】任务实体落原生表</b>——按推荐采用原生表，小程序只做投影展示层（P5）。</li>
   <li><b>驱动循环的唤醒方式</b>：推荐 cron 白名单解禁（实现小、可控）；
       备选是「成员回叫 + 目标变更事件驱动」纯事件模型（无周期成本，但空闲任务不会自动推进）。</li>
   <li><b><code>ask_creator</code> 的推送强度</b>：仅 toast + 看板红点（安静），还是同时经创建人绑定的
@@ -831,7 +831,7 @@ P4 依赖 P1 的 API；P5 依赖 P1+P4 且改动面最大，建议单独立项�
 </table>
 
 <p class="meta" style="margin-top:48px; border-top:1px solid var(--line); padding-top:16px;">
-  本文档由四路并行代码调研（团队机制 / cron+HITL / 轻应用 / 前端集成）汇总而成，引用均核实到具体文件行号。
+  本文档由四路并行代码调研（团队机制 / cron+HITL / 小程序 / 前端集成）汇总而成，引用均核实到具体文件行号。
   v2：合并反思修订——设计补强（A）、流程补全（B）、前置验证门（C），修订点已同步进正文。
   v3：第二轮反思——并发控制（乐观锁）、存量团队兼容、通知去重、host 生命周期、
   注入防线、成本配额、观测性、文档同步（D14–D23），修订点已同步进正文。

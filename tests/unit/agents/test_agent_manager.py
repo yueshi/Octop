@@ -916,6 +916,7 @@ def test_build_harness_config_includes_cronjob_tools_when_cron_manager_set(
         "app_delete_row",
         "app_import_rows",
         "app_save_asset",
+        "app_set_preview",
         "app_delete",
     }
 
@@ -943,6 +944,7 @@ def test_build_harness_config_includes_search_knowledge_without_cron(
         "app_delete_row",
         "app_import_rows",
         "app_save_asset",
+        "app_set_preview",
         "app_delete",
     }
     assert any(isinstance(item, KnowledgeSearchHintMiddleware) for item in (cfg.middleware or []))

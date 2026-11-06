@@ -1,12 +1,12 @@
 {
   "id": "light-apps",
   "label": {
-    "zh": "小应 · 轻应用专家",
-    "en": "App · Light App Builder"
+    "zh": "小应 · 小程序专家",
+    "en": "App · MiniApp Builder"
   },
   "description": {
-    "zh": "轻应用专家「小应」— 把一句话需求变成能直接用的单页小应用：待办清单、记账表、打卡板、投票页、小看板。负责定字段、写自包含的 HTML 界面、灌入数据；数据存在应用自己的 CSV 里，随时能改、能分享、能继续长大。",
-    "en": "Light app expert 'App' — turns a one-line request into a working single-page tool: todo lists, expense trackers, habit boards, voting pages, mini dashboards. It defines the fields, writes the self-contained HTML and seeds the rows; the data lives in the app's own CSV and stays editable, shareable and growable."
+    "zh": "小程序专家「小应」— 把一句话需求变成能直接用的单页小应用：待办清单、记账表、打卡板、投票页、小看板。负责定字段、写自包含的 HTML 界面、灌入数据；数据存在应用自己的 CSV 里，随时能改、能分享、能继续长大。",
+    "en": "MiniApp expert 'App' — turns a one-line request into a working single-page tool: todo lists, expense trackers, habit boards, voting pages, mini dashboards. It defines the fields, writes the self-contained HTML and seeds the rows; the data lives in the app's own CSV and stays editable, shareable and growable."
   },
   "welcome_message": {
     "zh": "说说你想要的小工具，我把它做成能用的应用",

@@ -275,7 +275,7 @@ def delete_agent_offline(agent_id: str, *, home: Path | None = None, force: bool
         if apps and not force:
             raise OctopError(
                 ErrorCode.AGENT_HAS_APPS,
-                f"agent {agent_id!r} still owns {len(apps)} light app(s)",
+                f"agent {agent_id!r} still owns {len(apps)} MiniApp(s)",
                 details={"count": len(apps), "app_ids": [app.app_id for app in apps]},
             )
         workspace_dir = workspace_dir_from_config_json(

@@ -1,4 +1,4 @@
-"""Built-in LangChain tools for agent-managed light apps."""
+"""Built-in LangChain tools for agent-managed MiniApps."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ APP_TOOL_NAMES: tuple[str, ...] = (
     "app_delete_row",
     "app_import_rows",
     "app_save_asset",
+    "app_set_preview",
     APP_DELETE_TOOL_NAME,
 )
 """Names of the built-in light-app tools, in the order they are registered."""
@@ -104,11 +105,11 @@ def _get_for_actor(
         raise ValueError("agent is not accessible to this user")
     row = service.get(app_id)
     if row is None:
-        raise ValueError(f"light app not found: {app_id}")
+        raise ValueError(f"MiniApp not found: {app_id}")
     granted = service.permission_for(row, user_id, is_admin=False)
     if granted is None or PERMISSION_RANK.get(granted, 0) < PERMISSION_RANK[needed]:
         raise ValueError(
-            f"this user has no '{needed}' permission on light app {app_id} "
+            f"this user has no '{needed}' permission on MiniApp {app_id} "
             f"(granted: {granted or 'none'})"
         )
     return row
@@ -350,8 +351,12 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
     async def app_create_from_template(
         template: Annotated[
             str,
-            Field(description="Template name from the agent's app_templates directory."),
+            Field(description="Template id from the agent workspace or the system catalog."),
         ],
+        source: Annotated[
+            str,
+            Field(description="'agent' (workspace template, default) or 'system' (built-in)."),
+        ] = "agent",
         name: Annotated[
             str | None,
             Field(description="Optional app name; defaults to the template name."),
@@ -366,6 +371,7 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                 agent_id=agent_id,
                 owner_user_id=user_id,
                 template=template,
+                source=source,
                 name=name,
                 description=description,
             )
@@ -722,6 +728,33 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
         except Exception as exc:
             return _err(exc)
 
+    async def app_set_preview(
+        app_id: Annotated[str, Field(description="App id returned by app_create/app_list.")],
+        svg: Annotated[
+            str,
+            Field(
+                description=(
+                    "The preview image of the app as one self-contained SVG "
+                    "document. Use a 1200x630 viewBox, inline styles only, and "
+                    "no scripts, no event handlers and no remote references."
+                )
+            ),
+        ],
+    ) -> str:
+        try:
+            agent_id, user_id = _tool_ctx()
+            app = _get_for_actor(service, app_id, agent_id, user_id, "edit_data")
+            size = await service.write_preview(app, svg)
+            return _ok(
+                {
+                    "app_id": app.app_id,
+                    "preview": "preview.svg",
+                    "size": size,
+                }
+            )
+        except Exception as exc:
+            return _err(exc)
+
     async def app_delete(
         app_id: Annotated[str, Field(description="App id returned by app_create/app_list.")],
     ) -> str:
@@ -855,6 +888,17 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                 "page cannot load remote images, so covers have to be saved "
                 "here and shown through octopApp.asset(name). PNG, JPEG, WebP "
                 "or GIF, at most 5 MB."
+            ),
+        ),
+        StructuredTool.from_function(
+            coroutine=app_set_preview,
+            name="app_set_preview",
+            description=(
+                "Set the preview image (cover) of a lightweight app. The preview "
+                "is one self-contained SVG document that the app list shows as "
+                "the app's thumbnail. Draw it yourself with a 1200x630 viewBox, "
+                "inline styles only, no scripts, no event handlers and no "
+                "remote references. Call it once the app's look is settled."
             ),
         ),
         StructuredTool.from_function(

@@ -484,7 +484,7 @@ Subscription modes:
 - `team.judge` — appends `team_events(external.event)` for an autopilot team;
   the decision snapshot includes the event summary.
 - `team.notify` — dashboard toast only; no decision.
-- `app.refresh` — requires `mapping.source_id` (a light-app data source).
+- `app.refresh` — requires `mapping.source_id` (a MiniApp data source).
 - `app.import` — replaces rows from `payload.records` (or
   `mapping.records_path`); `mapping.columns` maps source → destination. An
   empty/missing record list is rejected so an event cannot wipe the table.

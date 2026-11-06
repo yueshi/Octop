@@ -1096,7 +1096,7 @@ class AgentManager:
         of ``agents``. They are deleted before the agent row. If that purge
         fails, the row stays so the delete can be retried.
 
-        Light apps live in the agent's workspace, so deleting the agent would
+        MiniApps live in the agent's workspace, so deleting the agent would
         destroy their data. The delete is refused unless the caller forces it.
         """
         row = self._repos.agent_repo.get(agent_id)
@@ -1108,7 +1108,7 @@ class AgentManager:
             if apps:
                 raise OctopError(
                     ErrorCode.AGENT_HAS_APPS,
-                    f"agent {agent_id!r} still owns {len(apps)} light app(s)",
+                    f"agent {agent_id!r} still owns {len(apps)} MiniApp(s)",
                     details={"count": len(apps), "app_ids": [app.app_id for app in apps]},
                 )
         from octop.infra.agents.memory.thread_cleanup import (  # noqa: PLC0415

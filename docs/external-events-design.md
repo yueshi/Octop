@@ -1,7 +1,7 @@
 # 外部事件驱动：统一事件平面设计
 
 > 状态：Phase 0–3 已实现（2026-10-27）：webhook + connector poll、expert/team/app target、
-> 管理 API + 最小 UI、30 天保留。Phase 4 可选增强未做。适用轻应用、团队、专家三端。
+> 管理 API + 最小 UI、30 天保留。Phase 4 可选增强未做。适用小程序、团队、专家三端。
 > 前置阅读：`docs/team-drive-v2.md`、`docs/light-apps-assistant-and-import-design.md`、`docs/connectors.md`。
 
 > 目标：用一套外部事件入口、订阅和投递机制，替代三端各自做 webhook/poller 的方案。
@@ -28,7 +28,7 @@ external_deliveries（DB outbox：lease / retry / dead-letter）
         └─ app adapter：app source run / import rows
 ```
 
-**做**：webhook push、connector 只读工具轮询；专家/团队/轻应用三个 target；DB outbox + in-process worker；HMAC、去重、重试、限流、审计。Agent Mail watch 泛化后置 Phase 4。
+**做**：webhook push、connector 只读工具轮询；专家/团队/小程序三个 target；DB outbox + in-process worker；HMAC、去重、重试、限流、审计。Agent Mail watch 泛化后置 Phase 4。
 **不做**：外部队列/Temporal、每个事件一条 cron、三端各自 webhook、通用工作流 DSL、任意 URL 抓取、外部 payload 直接执行工具。
 
 ---
@@ -37,7 +37,7 @@ external_deliveries（DB outbox：lease / retry / dead-letter）
 
 | 端 | 现有实现 | 能力/缺口 |
 |---|---|---|
-| 轻应用 | `light_app_sources` 绑定外部只读工具；`AppSourceScheduler` 30s 扫描，`claim_source` 条件 UPDATE 即租约，失败指数退避（`infra/apps/scheduler.py`、`infra/apps/service.py:1294-1405`） | 只有 pull；没有外部 push；`append` 模式无去重键（`docs/light-apps-assistant-and-import-design.md:234`）；`GatewayToolRunner` 只支持进程内 gateway connector（`infra/apps/sources.py`） |
+| 小程序 | `light_app_sources` 绑定外部只读工具；`AppSourceScheduler` 30s 扫描，`claim_source` 条件 UPDATE 即租约，失败指数退避（`infra/apps/scheduler.py`、`infra/apps/service.py:1294-1405`） | 只有 pull；没有外部 push；`append` 模式无去重键（`docs/light-apps-assistant-and-import-design.md:234`）；`GatewayToolRunner` 只支持进程内 gateway connector（`infra/apps/sources.py`） |
 | 团队 | `team_events` 追加账本、`TeamCoordinator.record`、decision/dispatcher/wait 完整（`infra/agents/teams/coordinator.py:145`） | 无外部事件 ingest；`is_judgment_event` 只识别内部事件（`decision.py:43-78`）；决策快照只收 judgment 事件；线上已有 `decision 5KN5JB` 因 usage `int(dict)` 失败（`decision.py:563-564`） |
 | 专家 | cron `interval/cron/date/agently`；Agent Mail watch（`infra/cron/trigger.py:27`、`connectors/gateway/agently_watch.py`）；`CronDeliveryService` 已有 session 锁、usage、HITL（`infra/cron/delivery.py:36-90`、`:136+`） | `agently` 是单点特例；无通用 webhook；cron 每事件建 job 会放大调度与重试 |
 
@@ -74,7 +74,7 @@ external_deliveries（DB outbox：lease / retry / dead-letter）
 | `webhook` | 外部系统 POST 到 `/api/hooks/{source_id}`，HMAC 验签 | 订单、CRM、告警、GitHub 等支持 webhook 的系统 | ✅ |
 | `connector_poll` | 定时调用 connector 的只读工具，cursor 增量 | 没有 webhook 的系统；复用 `GatewayToolRunner` | ✅ |
 | `connector_watch` | 长连接/订阅（Agent Mail 已有） | 邮箱、支持流式事件的 connector | 后续 |
-| `app_sync` | 轻应用已有 `light_app_sources` 成功同步后产生事件 | 让存量数据源变成事件源 | 可选快速项 |
+| `app_sync` | 小程序已有 `light_app_sources` 成功同步后产生事件 | 让存量数据源变成事件源 | 可选快速项 |
 
 **现有限制**：`GatewayToolRunner` 只支持进程内 gateway connector；HTTP MCP 不在 MVP；轮询工具必须通过 `readOnlyHint is not False` 校验。
 
@@ -216,7 +216,7 @@ Webhook 验签/解析后，在一个事务里：
 - `coalesce_seconds`：`expert.turn` 的 delivery 先等窗口，把同一 subscription 在同一窗口内的 N 条 summary 合并为一次 turn（summary 总长 2000 字以内）；`team.judge` 复用 decision cooldown。
 - `max_per_minute`：每 subscription 的 token bucket；超出延迟或拒绝（`dead`/`failed` 可观测）。
 - 团队已有 `active_decision`/cooldown/事件聚合，外部事件不应绕过；`external.event` 仍走 `_run_authoritative` 的聚合窗口。
-- 轻应用 target 不跑 LLM，可直接批量导入。
+- 小程序 target 不跑 LLM，可直接批量导入。
 
 ---
 
@@ -298,7 +298,7 @@ POST       /api/external/deliveries/{delivery_id}/retry
 
 ### 7.3 UI（可后置）
 
-- 设置 → “外部事件”（`/external-events`）：来源列表（webhook URL/secret 一次性、连接器轮询配置）、订阅列表（目标专家/团队/轻应用、模式、过滤、合并/限流）、事件与投递日志、重试。
+- 设置 → “外部事件”（`/external-events`）：来源列表（webhook URL/secret 一次性、连接器轮询配置）、订阅列表（目标专家/团队/小程序、模式、过滤、合并/限流）、事件与投递日志、重试。
 - 已实现最小页面；后续可补配置编辑、图表和批量操作。
 
 ---
@@ -332,7 +332,7 @@ POST       /api/external/deliveries/{delivery_id}/retry
 | **P0** | webhook 路径被 JWT/setup 中间件拦截 | `api/deps.py:61`、`api/middleware/setup_lockdown.py` | 公共入口固定 `/api/hooks/` 并加入 JWT exempt prefix；管理接口留在 JWT 下；加中间件测试 |
 | **P1** | expert delivery 需要已有 session/运行中 agent | `CronDeliveryService.deliver`→`require_session`；`AgentManager.stream` | 新建独立 `dashboard:external` session；stopped 时排队/通知，默认不自动启动；delivery 可重试 |
 | **P1** | expert usage 来源会记成 cron | `delivery.py:212` 硬编码 `source="cron"` | command 增加 `usage_source`/meta，外部事件记 `external_event` |
-| **P1** | 轻应用 append 重复插行 | `docs/light-apps-assistant-and-import-design.md:234` | MVP 默认 `replace`；补 `source_key` 唯一键后再开放 append |
+| **P1** | 小程序 append 重复插行 | `docs/light-apps-assistant-and-import-design.md:234` | MVP 默认 `replace`；补 `source_key` 唯一键后再开放 append |
 | **P1** | worker/热切换未接会指向旧 DB | `AppRuntime.replace_services` | 增加 worker rebind；stop 顺序；测试 setup 换库 |
 | **P1** | 外部事件风暴触发大量 LLM | 每 event 一次 expert/team turn | subscription 合并/限流；team 使用既有 cooldown/聚合；expert batch |
 | **P1** | webhook 安全性 | 公共接口、无统一 rate limit | HMAC/timestamp/replay、body cap、per-source rate、ACL、审计 |

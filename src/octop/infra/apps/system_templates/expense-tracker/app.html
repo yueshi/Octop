@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>月度开支记账</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --line: #e5e7eb;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --primary: #0f766e;
+    --primary-dark: #115e59;
+    --danger: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 20px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+  }
+  .page { max-width: 1080px; margin: 0 auto; }
+  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: .5px; }
+  .sub { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+  .badge {
+    flex: none; padding: 4px 10px; border-radius: 999px;
+    background: #ccfbf1; color: #115e59; font-size: 12px;
+  }
+  .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; display: flex; flex-direction: column; gap: 6px;
+  }
+  .stat-label { color: var(--muted); font-size: 12px; }
+  .stat strong { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 14px; align-items: start; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  input, select {
+    font: inherit; color: inherit; background: var(--card);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--primary); }
+  .toolbar input[type=month] { flex: 0 0 160px; }
+  .toolbar select { flex: 0 0 130px; }
+  button {
+    font: inherit; cursor: pointer; border: 1px solid var(--line);
+    background: var(--card); color: var(--text); border-radius: 8px; padding: 8px 14px;
+  }
+  button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  button.primary:hover { background: var(--primary-dark); }
+  .panel {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; margin-bottom: 14px;
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;
+  }
+  .panel label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
+  .panel label.wide { grid-column: 1 / -1; }
+  .panel input, .panel select { width: 100%; }
+  .actions { grid-column: 1 / -1; display: flex; gap: 8px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .bars { display: flex; flex-direction: column; gap: 10px; }
+  .bar-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) 76px; gap: 8px; align-items: center; }
+  .bar-name { color: var(--muted); font-size: 12px; }
+  .bar-track { height: 8px; border-radius: 999px; background: #f1f5f9; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 999px; background: var(--primary); }
+  .bar-value { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .table-wrap {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto;
+  }
+  table { width: 100%; border-collapse: collapse; min-width: 620px; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #fafafa; color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: #f7fdfc; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #f1f5f9; font-size: 12px; white-space: nowrap; }
+  .muted { color: var(--muted); }
+  .empty { text-align: center; color: var(--muted); padding: 32px 0; }
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    margin: 0; padding: 9px 18px; border-radius: 999px;
+    background: #111827; color: #fff; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.18);
+  }
+  .toast.error { background: var(--danger); }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 720px) {
+    .panel { grid-template-columns: 1fr; }
+    body { padding: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="head">
+    <div>
+      <h1>月度开支记账</h1>
+      <p class="sub">按月记录支出，自动汇总类别占比和日均开销。</p>
+    </div>
+    <span class="badge" id="readonly" hidden>只读</span>
+  </header>
+
+  <section class="stats">
+    <div class="stat"><span class="stat-label">本月支出</span><strong id="stat-total">¥0</strong></div>
+    <div class="stat"><span class="stat-label">记账笔数</span><strong id="stat-count">0</strong></div>
+    <div class="stat"><span class="stat-label">日均支出</span><strong id="stat-avg">¥0</strong></div>
+    <div class="stat"><span class="stat-label">最大类别</span><strong id="stat-top">—</strong></div>
+  </section>
+
+  <div class="layout">
+    <div>
+      <section class="toolbar">
+        <input type="month" id="month" aria-label="选择月份">
+        <select id="filter-category" aria-label="按类别筛选"></select>
+        <button id="toggle-add" class="primary" type="button">记一笔</button>
+      </section>
+
+      <form id="add-form" class="panel" hidden>
+        <label>日期 *<input type="date" name="date" required></label>
+        <label>类别<select name="category"></select></label>
+        <label>金额 *<input type="number" name="amount" min="0" step="0.01" placeholder="0.00" required></label>
+        <label>支付方式<select name="payment"></select></label>
+        <label class="wide">备注<input name="note" maxlength="100" placeholder="例如：午餐、地铁、房租"></label>
+        <div class="actions">
+          <button type="submit" class="primary">保存</button>
+          <button type="button" id="cancel-add">取消</button>
+        </div>
+      </form>
+
+      <p id="empty" class="empty" hidden>这个月还没有记账，点击「记一笔」开始。</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>日期</th><th>类别</th><th class="num">金额</th><th>支付方式</th><th>备注</th></tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <aside class="card">
+      <h2>类别占比</h2>
+      <div id="bars" class="bars"><p class="muted">暂无数据</p></div>
+    </aside>
+  </div>
+</div>
+<p id="toast" class="toast" hidden></p>
+<script>
+(function () {
+  "use strict";
+
+  var DEFAULT_CATEGORIES = ["餐饮", "交通", "购物", "居住", "娱乐", "医疗", "其他"];
+  var DEFAULT_PAYMENTS = ["微信", "支付宝", "银行卡", "现金"];
+  var categories = DEFAULT_CATEGORIES.slice();
+  var payments = DEFAULT_PAYMENTS.slice();
+  var rows = [];
+  var canEdit = true;
+
+  function $(selector) { return document.querySelector(selector); }
+  function pad(value) { return (value < 10 ? "0" : "") + value; }
+  function today() {
+    var now = new Date();
+    return now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
+  }
+  function currentMonth() { return today().slice(0, 7); }
+  function escapeHtml(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function number(value) {
+    var parsed = Number(value);
+    return isFinite(parsed) ? parsed : 0;
+  }
+  function money(value) {
+    return "¥" + number(value).toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+  }
+  function toast(message, isError) {
+    var el = $("#toast");
+    el.textContent = message;
+    el.classList.toggle("error", Boolean(isError));
+    el.hidden = false;
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(function () { el.hidden = true; }, 2600);
+  }
+  function optionsHtml(values) {
+    return values.map(function (value) {
+      return '<option value="' + escapeHtml(value) + '">' + escapeHtml(value) + "</option>";
+    }).join("");
+  }
+
+  function fillSelects() {
+    $("#add-form select[name=category]").innerHTML = optionsHtml(categories);
+    $("#add-form select[name=payment]").innerHTML = optionsHtml(payments);
+    $("#filter-category").innerHTML = '<option value="">全部类别</option>' + optionsHtml(categories);
+  }
+
+  function monthRows() {
+    var month = $("#month").value || currentMonth();
+    return rows.filter(function (row) {
+      return row.date && row.date.indexOf(month) === 0;
+    });
+  }
+
+  function render() {
+    var scoped = monthRows();
+    var categoryFilter = $("#filter-category").value;
+    var list = scoped.filter(function (row) {
+      return !categoryFilter || row.category === categoryFilter;
+    });
+    list.sort(function (left, right) {
+      if (left.date === right.date) return 0;
+      return left.date < right.date ? 1 : -1;
+    });
+
+    var total = 0;
+    var byCategory = {};
+    scoped.forEach(function (row) {
+      var amount = number(row.amount);
+      total += amount;
+      var category = row.category || "其他";
+      byCategory[category] = (byCategory[category] || 0) + amount;
+    });
+    var days = scoped.reduce(function (max, row) {
+      var day = Number((row.date || "").slice(8, 10));
+      return day > max ? day : max;
+    }, 0) || 1;
+    var ranked = Object.keys(byCategory).map(function (name) {
+      return { name: name, amount: byCategory[name] };
+    }).sort(function (left, right) { return right.amount - left.amount; });
+
+    $("#stat-total").textContent = money(total);
+    $("#stat-count").textContent = String(scoped.length);
+    $("#stat-avg").textContent = money(total / days);
+    $("#stat-top").textContent = ranked.length && ranked[0].amount > 0
+      ? ranked[0].name + " " + money(ranked[0].amount)
+      : "—";
+
+    var max = ranked.length ? ranked[0].amount : 0;
+    $("#bars").innerHTML = ranked.length
+      ? ranked.map(function (entry) {
+          var width = max > 0 ? Math.max(2, Math.round((entry.amount / max) * 100)) : 0;
+          return '<div class="bar-row">' +
+            '<span class="bar-name">' + escapeHtml(entry.name) + "</span>" +
+            '<div class="bar-track"><div class="bar-fill" style="width:' + width + '%"></div></div>' +
+            '<span class="bar-value">' + money(entry.amount) + "</span>" +
+            "</div>";
+        }).join("")
+      : '<p class="muted">暂无数据</p>';
+
+    $("#empty").hidden = list.length > 0;
+    $("#empty").textContent = scoped.length
+      ? "没有符合筛选条件的记录。"
+      : "这个月还没有记账，点击「记一笔」开始。";
+
+    $("#rows").innerHTML = list.map(function (row) {
+      return "<tr>" +
+        '<td class="muted">' + escapeHtml(row.date) + "</td>" +
+        '<td><span class="pill">' + escapeHtml(row.category || "其他") + "</span></td>" +
+        '<td class="num">' + money(row.amount) + "</td>" +
+        "<td>" + escapeHtml(row.payment) + "</td>" +
+        '<td class="muted">' + escapeHtml(row.note) + "</td>" +
+        "</tr>";
+    }).join("");
+  }
+
+  async function refresh() {
+    try {
+      var result = await octopApp.listRows({ limit: 500 });
+      rows = (result && result.rows) || [];
+      render();
+    } catch (error) {
+      toast("加载失败：" + (error && error.message ? error.message : "未知错误"), true);
+    }
+  }
+
+  async function detectReadonly() {
+    if (typeof octopApp.me !== "function") return false;
+    try {
+      var me = await octopApp.me();
+      return Boolean(me) && me.permission === "view";
+    } catch (error) {
+      return false;
+    }
+  }
+
+  async function loadSchemaOptions() {
+    try {
+      var schema = await octopApp.schema();
+      var columns = (schema && schema.columns) || [];
+      for (var i = 0; i < columns.length; i += 1) {
+        if (columns[i].name === "category" && columns[i].values && columns[i].values.length) {
+          categories = columns[i].values.slice();
+        }
+        if (columns[i].name === "payment" && columns[i].values && columns[i].values.length) {
+          payments = columns[i].values.slice();
+        }
+      }
+    } catch (error) {
+      /* keep the default option lists */
+    }
+  }
+
+  function openForm(open) {
+    $("#add-form").hidden = !open;
+    $("#toggle-add").textContent = open ? "收起" : "记一笔";
+    if (open) $("#add-form input[name=amount]").focus();
+  }
+
+  $("#toggle-add").addEventListener("click", function () {
+    openForm($("#add-form").hidden);
+  });
+  $("#cancel-add").addEventListener("click", function () {
+    $("#add-form").reset();
+    $("#add-form input[name=date]").value = today();
+    openForm(false);
+  });
+  $("#month").addEventListener("change", render);
+  $("#filter-category").addEventListener("change", render);
+
+  $("#add-form").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var form = event.target;
+    var data = new FormData(form);
+    var date = String(data.get("date") || "");
+    var amountText = String(data.get("amount") || "").trim();
+    if (!date) {
+      toast("请选择日期", true);
+      return;
+    }
+    if (amountText === "") {
+      toast("请填写金额", true);
+      return;
+    }
+    var payload = {
+      date: date,
+      category: String(data.get("category") || categories[0]),
+      amount: Number(amountText),
+      payment: String(data.get("payment") || payments[0]),
+      note: String(data.get("note") || "").trim()
+    };
+    try {
+      await octopApp.appendRow(payload);
+      form.reset();
+      $("#add-form input[name=date]").value = today();
+      $("#month").value = date.slice(0, 7);
+      openForm(false);
+      await refresh();
+      toast("已记账");
+    } catch (error) {
+      toast("保存失败：" + (error && error.message ? error.message : "未知错误"), true);
+    }
+  });
+
+  async function boot() {
+    $("#month").value = currentMonth();
+    $("#add-form input[name=date]").value = today();
+    canEdit = !(await detectReadonly());
+    if (!canEdit) {
+      $("#readonly").hidden = false;
+      $("#toggle-add").hidden = true;
+      openForm(false);
+    }
+    await loadSchemaOptions();
+    fillSelects();
+    await refresh();
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
