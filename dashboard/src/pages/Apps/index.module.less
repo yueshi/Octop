@@ -179,6 +179,13 @@
   object-fit: cover;
 }
 
+/* Tall/large cards crop the screenshot from the top-left: the useful part of
+   a MiniApp page is its header/content, not the centered middle strip. */
+.sizeTall .previewImage,
+.sizeLarge .previewImage {
+  object-position: left top;
+}
+
 .previewEmpty {
   display: grid;
   place-items: center;
