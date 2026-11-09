@@ -78,6 +78,79 @@ async def test_im_call_merges_default_open_mcp_servers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_im_call_honours_web_turn_metadata() -> None:
+    """A Web bridge turn keeps its model/connector/skills picks over IM."""
+    captured: dict[str, object] = {}
+
+    async def fake_project_stream(_mgr, _aid, request, **_kwargs):
+        captured["request"] = request
+        yield MagicMock()
+
+    agent_manager = MagicMock()
+    agent_manager.merge_turn_mcp_servers = MagicMock(return_value=None)
+    agent_manager.default_mcp_servers = MagicMock(return_value=[])
+    agent_manager.default_knowledge_base_ids = MagicMock(return_value=[])
+    agent_manager.prepare_chat_mcp = AsyncMock(return_value=[])
+    agent_manager.get_row = MagicMock(return_value=None)
+    agent_manager.providers = MagicMock()
+    agent_manager.providers.is_model_ref_usable = MagicMock(return_value=True)
+    agent_manager.providers.get_model_reasoning_capability = MagicMock(return_value=None)
+    agent_manager.providers.resolve_explicit_default_model = MagicMock(return_value=None)
+    agent_manager.providers.resolve_model_for_multimodal_turn = MagicMock(
+        side_effect=lambda ref, **_k: ref
+    )
+    agent_manager.get_thread_model = MagicMock(return_value=None)
+
+    thread_registry = MagicMock()
+    thread_registry.get_or_create_by_key = AsyncMock(return_value="thr-im")
+    thread_registry.get_thread = MagicMock(return_value=None)
+    thread_registry.touch_last_active = MagicMock()
+    thread_registry.set_title_if_null = MagicMock()
+
+    processor = GlobalProcessor(
+        agent_manager=agent_manager,
+        thread_registry=thread_registry,
+        audit_repo=MagicMock(),
+        agent_repo=MagicMock(get=MagicMock(return_value=MagicMock(user_id=7, default_model=None))),
+        user_repo=MagicMock(),
+        connector_repo=MagicMock(),
+        dispatcher=SlashDispatcher(),
+        usage_repo=None,
+        gateway=None,
+    )
+
+    msg = InboundMessage(
+        channel_id="feishu",
+        channel_type="feishu",
+        tenant_id="agent-1",
+        channel_subject=ChannelSubject(subject_id="u1"),
+        content=[TextContent(text="hello")],
+        metadata={
+            "origin": "web",
+            "model": "provider/model",
+            "mcp_servers": [],
+            "skills": ["demo"],
+            "composer": {"connectors": []},
+        },
+    )
+
+    with patch(
+        "octop.infra.gateway.process.processor.project_stream",
+        new=fake_project_stream,
+    ):
+        events = [ev async for ev in processor(msg)]
+
+    assert events
+    agent_manager.merge_turn_mcp_servers.assert_called_once_with(
+        7, [], apply_defaults=False, extra_defaults=[]
+    )
+    request = captured["request"]
+    assert request["model"] == "provider/model"
+    assert request["skills"] == ["demo"]
+    assert "mcp_servers" not in request
+
+
+@pytest.mark.asyncio
 async def test_im_call_skips_default_open_mcp_for_team_host() -> None:
     captured: dict[str, object] = {}
 

@@ -10,7 +10,7 @@ from octop.infra.apps.templates import (
     list_system_templates,
     read_system_template,
 )
-from octop.infra.apps.viewgen import render_html, suggest_view
+from octop.infra.apps.viewgen import render_html, render_multi_html, suggest_view
 from octop.infra.errors import ErrorCode, OctopError
 
 SCHEMA = parse_schema_payload(
@@ -47,6 +47,34 @@ def test_suggest_view_drops_pii_and_builds_kpis_and_charts() -> None:
     assert "phone" not in spec["table"]["columns"]
 
 
+def test_suggest_view_honors_metric_and_group() -> None:
+    schema = parse_schema_payload(
+        {
+            "columns": [
+                {"name": "date", "label": "日期", "type": "date"},
+                {"name": "region", "label": "区域", "type": "string"},
+                {"name": "category", "label": "类别", "type": "string"},
+                {"name": "amount", "label": "金额", "type": "number"},
+                {"name": "qty", "label": "数量", "type": "integer"},
+            ]
+        }
+    )
+    report = {
+        "columns": [
+            {"name_suggestion": "date", "type": "date", "distinct": 30},
+            {"name_suggestion": "region", "type": "string", "distinct": 5},
+            {"name_suggestion": "category", "type": "string", "distinct": 4},
+            {"name_suggestion": "amount", "type": "number", "distinct": 100},
+            {"name_suggestion": "qty", "type": "integer", "distinct": 50},
+        ]
+    }
+    spec = suggest_view(report, schema, view="dashboard", metric="qty", group="region")
+    assert spec["kpis"][1]["column"] == "qty"
+    assert spec["group_by"] == "region"
+    assert spec["charts"][0]["y"] == "qty"
+    assert spec["charts"][1]["x"] == "region"
+
+
 def test_ledger_and_board_skip_charts() -> None:
     ledger = suggest_view(REPORT, SCHEMA, view="ledger")
     board = suggest_view(REPORT, SCHEMA, view="board")
@@ -66,11 +94,35 @@ def test_render_html_is_self_contained_and_valid(view: str) -> None:
     assert "https://" not in html
 
 
+def test_render_multi_html_adds_table_tabs() -> None:
+    first = suggest_view(REPORT, SCHEMA, title="主表")
+    second = suggest_view(REPORT, SCHEMA, title="明细")
+    html = render_multi_html(
+        [
+            {"key": "main", "label": "订单", "schema": SCHEMA, "spec": first},
+            {"key": "table_2", "label": "明细", "schema": SCHEMA, "spec": second},
+        ],
+        title="多表",
+    )
+    validate_html(html)
+    assert '"key": "main"' in html
+    assert '"key": "table_2"' in html
+    assert '"label": "订单"' in html
+    assert 'id="tabs"' in html
+
+
 def test_system_templates_are_shipped_and_valid() -> None:
     templates = {item.template_id: item for item in list_system_templates("zh")}
-    assert {"customer-followup", "expense-tracker"} <= set(templates)
+    assert {
+        "customer-followup",
+        "expense-tracker",
+        "project-tasks",
+        "inventory-count",
+        "reimbursement",
+    } <= set(templates)
     assert templates["customer-followup"].name == "客户跟进台账"
     assert templates["customer-followup"].scope == "global"
+    assert all(item.has_preview for item in templates.values())
 
     schema_text, html_text = read_system_template("customer-followup")
     parse_schema_payload(schema_text)

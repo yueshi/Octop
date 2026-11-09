@@ -110,7 +110,7 @@ def test_run_migrations_idempotent(db: SqlitePool):
         delivery_cols = {
             r["name"] for r in conn.execute("PRAGMA table_info(external_deliveries)").fetchall()
         }
-    assert v == 29
+    assert v == 30
     assert {
         "external_sources",
         "external_subscriptions",
@@ -244,7 +244,7 @@ def test_migration_002_idempotent_when_column_already_present(tmp_path: Path) ->
     with pool.connect() as conn:
         v = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
         cron_cols = {r["name"] for r in conn.execute("PRAGMA table_info(cron_jobs)").fetchall()}
-    assert v == 29
+    assert v == 30
     assert "mcp_servers" in cron_cols
     assert "skill_packages" in {
         r["name"]
@@ -383,7 +383,7 @@ def test_stuck_version_6_without_permissions_column_is_repaired(tmp_path: Path) 
     with pool.connect() as conn:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
         version = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
-    assert version == 29
+    assert version == 30
     assert "permissions" in cols
 
 
@@ -408,7 +408,7 @@ def test_schema_v10_without_projection_tables_is_repaired(tmp_path: Path) -> Non
         }
         kb_cols = {r["name"] for r in conn.execute("PRAGMA table_info(knowledge_bases)").fetchall()}
         cron_cols = {r["name"] for r in conn.execute("PRAGMA table_info(cron_jobs)").fetchall()}
-    assert version == 29
+    assert version == 30
     assert {"thread_messages", "thread_history_projection", "trajectory_events"}.issubset(
         table_names
     )
@@ -443,7 +443,7 @@ def test_ahead_of_max_schema_version_clamps_to_max(tmp_path: Path) -> None:
             r["name"]
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
-    assert version == 29
+    assert version == 30
     assert "skill_package_id" in pkg_cols
     assert "published_expert_id" in pub_cols
     assert "user_invites" in invite_tables
@@ -526,7 +526,7 @@ def test_pre_squash_schema_version_clamped_and_knowledge_tables_filled(
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         user_cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
-    assert version == 29
+    assert version == 30
     assert "permissions" in user_cols
     assert {
         "published_experts",
@@ -732,7 +732,7 @@ def test_v14_to_v15_adds_sso_provider_kind_without_rebuilding(tmp_path: Path) ->
         bound = conn.execute(
             "SELECT sso_provider_id FROM users WHERE username = 'sso-admin'"
         ).fetchone()[0]
-    assert version == 29
+    assert version == 30
     assert int(row["id"]) == int(provider_id)
     assert row["kind"] == "oidc"
     assert row["extra"] == "{}"
@@ -835,7 +835,7 @@ def test_renumbered_migrations_upgrade_a_feature_branch_db(tmp_path: Path) -> No
         bridge_cols = {
             str(row["name"]) for row in conn.execute("PRAGMA table_info(bridge_connections)")
         }
-    assert version == 29
+    assert version == 30
     assert {"user_group", "user_group_member", "resource_group_grant"} <= names
     assert {"enabled", "avatar_icon"} <= group_cols
     assert "shared" in skill_cols
@@ -858,5 +858,5 @@ def test_bridge_adds_user_group_columns_to_an_upstream_v23_table(tmp_path: Path)
     with pool.connect() as conn:
         version = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
         cols = {str(row["name"]) for row in conn.execute("PRAGMA table_info(user_group)")}
-    assert version == 29
+    assert version == 30
     assert {"enabled", "avatar_icon"} <= cols

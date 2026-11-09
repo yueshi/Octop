@@ -163,4 +163,4 @@ def test_inspect_file_without_header_keeps_every_row() -> None:
 def test_suggest_column_name() -> None:
     assert suggest_column_name("base_salary", 0) == "base_salary"
     assert suggest_column_name("Base Salary", 1) == "base_salary"
-    assert suggest_column_name("姓名", 2) == "col_3"
+    assert suggest_column_name("姓名", 2) == "xing_ming"

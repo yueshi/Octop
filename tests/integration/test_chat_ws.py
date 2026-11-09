@@ -532,3 +532,157 @@ async def test_fork_thread_from_assistant_message(env: Any) -> None:
         json={"message_id": "a1", "assistant_turns_from_end": 2},
     )
     assert denied.status_code in {403, 404}
+
+
+@pytest.mark.asyncio
+async def test_ws_reply_via_im_enqueues_to_im_channel(
+    env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Design B: a Web turn on a DM IM thread is routed through that channel."""
+    c, srv, _fake, alice_auth, _bob_auth, aid = env
+    alice = srv.services.user_repo.get_by_username("alice")
+    assert alice is not None
+    registry = srv.app_runtime.gateway.thread_registry
+    tid = await registry.get_or_create(
+        agent_id=aid,
+        user_id=alice.id,
+        channel_type="feishu",
+        channel_subject_id="ou_alice",
+        channel_chat_type="dm",
+        channel_id="ch-fake",
+    )
+    manager = srv.app_runtime.gateway.channel_manager
+    enqueued: list[tuple[str, Any]] = []
+    monkeypatch.setattr(
+        manager,
+        "get_channel",
+        lambda cid: object() if cid == "ch-fake" else None,
+    )
+    monkeypatch.setattr(manager, "enqueue", lambda cid, msg: enqueued.append((cid, msg)))
+
+    async with _chat_ws(c, aid, alice_auth) as ws:
+        await ws.send_json(
+            {
+                "type": "user_turn",
+                "text": "from the web",
+                "thread_id": tid,
+                "reply_via": "im",
+            }
+        )
+        for _ in range(100):
+            if enqueued:
+                break
+            await asyncio.sleep(0.02)
+
+    assert len(enqueued) == 1
+    channel_id, inbound = enqueued[0]
+    assert channel_id == "ch-fake"
+    assert inbound.channel_type == "feishu"
+    assert inbound.channel_id == "ch-fake"
+    assert inbound.tenant_id == aid
+    assert inbound.channel_session_id == registry.get_thread(tid).session_key
+    assert inbound.text == "from the web"
+    assert inbound.metadata["origin"] == "web"
+    assert inbound.metadata["thread_id"] == tid
+    assert inbound.metadata["session_key"] == inbound.channel_session_id
+
+
+@pytest.mark.asyncio
+async def test_ws_reply_via_im_announces_queue_when_session_busy(
+    env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, srv, _fake, alice_auth, _bob_auth, aid = env
+    alice = srv.services.user_repo.get_by_username("alice")
+    assert alice is not None
+    registry = srv.app_runtime.gateway.thread_registry
+    tid = await registry.get_or_create(
+        agent_id=aid,
+        user_id=alice.id,
+        channel_type="feishu",
+        channel_subject_id="ou_alice",
+        channel_chat_type="dm",
+        channel_id="ch-fake",
+    )
+    manager = srv.app_runtime.gateway.channel_manager
+    enqueued: list[tuple[str, Any]] = []
+    monkeypatch.setattr(manager, "get_channel", lambda _cid: object())
+    monkeypatch.setattr(manager, "enqueue", lambda cid, msg: enqueued.append((cid, msg)))
+    lock = asyncio.Lock()
+    await lock.acquire()
+    manager._session_locks["ch-fake:ou_alice"] = lock
+
+    try:
+        async with _chat_ws(c, aid, alice_auth) as ws:
+            await ws.send_json(
+                {
+                    "type": "user_turn",
+                    "text": "from the web",
+                    "thread_id": tid,
+                    "reply_via": "im",
+                }
+            )
+            queued = await ws.receive_json()
+    finally:
+        lock.release()
+
+    assert queued["type"] == "turn.queued"
+    assert queued["thread_id"] == tid
+    assert queued["channel_type"] == "feishu"
+    assert str(queued["turn_id"]).startswith("bridge_")
+    assert len(enqueued) == 1
+    assert enqueued[0][0] == "ch-fake"
+
+    # Stopping while the turn is still queued marks it for cancellation; the
+    # processor consumes the marker when it eventually starts.
+    async with _chat_ws(c, aid, alice_auth) as ws:
+        await ws.send_json(
+            {
+                "type": "cancel",
+                "thread_id": tid,
+                "turn_id": queued["turn_id"],
+            }
+        )
+        for _ in range(100):
+            if queued["turn_id"] in srv.app_runtime.gateway._cancelled_bridge_turns:
+                break
+            await asyncio.sleep(0.02)
+    assert queued["turn_id"] in srv.app_runtime.gateway._cancelled_bridge_turns
+
+
+@pytest.mark.asyncio
+async def test_ws_reply_via_im_rejects_group_thread(
+    env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, srv, _fake, alice_auth, _bob_auth, aid = env
+    alice = srv.services.user_repo.get_by_username("alice")
+    assert alice is not None
+    registry = srv.app_runtime.gateway.thread_registry
+    tid = await registry.get_or_create(
+        agent_id=aid,
+        user_id=alice.id,
+        channel_type="feishu",
+        channel_subject_id="oc_group",
+        channel_chat_type="group",
+        channel_id="ch-fake",
+    )
+    manager = srv.app_runtime.gateway.channel_manager
+    enqueued: list[tuple[str, Any]] = []
+    monkeypatch.setattr(manager, "get_channel", lambda _cid: object())
+    monkeypatch.setattr(manager, "enqueue", lambda cid, msg: enqueued.append((cid, msg)))
+
+    async with _chat_ws(c, aid, alice_auth) as ws:
+        await ws.send_json(
+            {
+                "type": "user_turn",
+                "text": "from the web",
+                "thread_id": tid,
+                "reply_via": "im",
+            }
+        )
+        error = await ws.receive_json()
+        done = await ws.receive_json()
+
+    assert error["type"] == "error"
+    assert error["message"]
+    assert done == {"type": "done"}
+    assert enqueued == []

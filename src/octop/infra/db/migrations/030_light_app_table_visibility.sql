@@ -1,0 +1,11 @@
+-- Schema v30: per-table visibility for public MiniApp links.
+-- Only tables explicitly marked public are exposed by /p/{token}. Existing
+-- apps keep the main table public and treat add-on tables (members, loans,
+-- etc.) as private unless the owner opts in.
+
+ALTER TABLE light_app_tables ADD COLUMN public_visible INTEGER NOT NULL DEFAULT 0;
+
+UPDATE light_app_tables
+SET public_visible = CASE WHEN table_key = 'main' THEN 1 ELSE 0 END;
+
+UPDATE _schema_version SET version = 30;

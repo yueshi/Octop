@@ -1646,6 +1646,10 @@ def _ensure_bridge_connections_schema(db: DatabasePool) -> None:
 
 def _ensure_light_apps_schema(db: DatabasePool) -> None:
     """Create the v25 light-app tables when a DB recorded the version without them."""
+    _ensure_light_app_table_visibility(db)
+    has_visibility = _table_exists(db, "light_app_tables") and (
+        "public_visible" in _table_columns(db, "light_app_tables")
+    )
     pk = _integer_pk_sql(db)
     with db.connect() as conn:
         conn.execute(
@@ -1710,19 +1714,38 @@ def _ensure_light_apps_schema(db: DatabasePool) -> None:
         )
         # Apps created before the registry existed only have the implicit main
         # table; register it so per-table counts and totals keep working.
-        conn.execute(
-            """
-            INSERT INTO light_app_tables(
-              app_id, table_key, label, row_count, data_bytes, created_at, updated_at
+        if has_visibility:
+            conn.execute(
+                """
+                INSERT INTO light_app_tables(
+                  app_id, table_key, label, row_count, data_bytes, public_visible,
+                  created_at, updated_at
+                )
+                SELECT a.app_id, 'main', '', a.row_count, a.data_bytes, 1,
+                       a.created_at, a.updated_at
+                FROM light_apps a
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM light_app_tables t
+                  WHERE t.app_id = a.app_id AND t.table_key = 'main'
+                )
+                """
             )
-            SELECT a.app_id, 'main', '', a.row_count, a.data_bytes, a.created_at, a.updated_at
-            FROM light_apps a
-            WHERE NOT EXISTS (
-              SELECT 1 FROM light_app_tables t
-              WHERE t.app_id = a.app_id AND t.table_key = 'main'
+        else:
+            conn.execute(
+                """
+                INSERT INTO light_app_tables(
+                  app_id, table_key, label, row_count, data_bytes,
+                  created_at, updated_at
+                )
+                SELECT a.app_id, 'main', '', a.row_count, a.data_bytes,
+                       a.created_at, a.updated_at
+                FROM light_apps a
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM light_app_tables t
+                  WHERE t.app_id = a.app_id AND t.table_key = 'main'
+                )
+                """
             )
-            """
-        )
         # v25 is still unreleased: the assistant history folds into it too.
         conn.execute(
             f"""
@@ -1890,6 +1913,25 @@ def _ensure_light_app_rows_schema(db: DatabasePool) -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_light_app_rows_source "
             "ON light_app_rows(app_id, table_key, source_id, source_key) "
             "WHERE source_id IS NOT NULL AND source_key IS NOT NULL"
+        )
+
+
+def _ensure_light_app_table_visibility(db: DatabasePool) -> None:
+    """Add v30 table visibility when a DB recorded the version without the migration."""
+    if not _table_exists(db, "light_app_tables"):
+        return
+    if "public_visible" in _table_columns(db, "light_app_tables"):
+        return
+    _ensure_column(
+        db,
+        "light_app_tables",
+        "public_visible",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE light_app_tables SET public_visible = "
+            "CASE WHEN table_key = 'main' THEN 1 ELSE 0 END"
         )
 
 
@@ -2689,6 +2731,18 @@ def run_migrations(db: DatabasePool) -> None:
                 else:
                     conn.execute("UPDATE _schema_version SET version = ?", (version,))
             continue
+        if version == 30:
+            # The visibility DDL is a plain ADD COLUMN plus a backfill. The
+            # helper is idempotent, which matters for version rewinds; it also
+            # avoids resetting an owner's table toggles on PostgreSQL re-runs.
+            _ensure_light_apps_schema(db)
+            _ensure_light_app_table_visibility(db)
+            with db.connect() as conn:
+                if db.dialect == "postgresql":
+                    conn.execute("UPDATE _schema_version SET version = %s", (version,))
+                else:
+                    conn.execute("UPDATE _schema_version SET version = ?", (version,))
+            continue
         if db.dialect == "postgresql":
             sql = path.read_text(encoding="utf-8")
             with db.connect() as conn, conn.transaction():
@@ -2729,6 +2783,7 @@ def run_migrations(db: DatabasePool) -> None:
     _ensure_user_groups_schema(db)
     _ensure_light_apps_schema(db)
     _ensure_light_app_rows_schema(db)
+    _ensure_light_app_table_visibility(db)
     _ensure_light_app_publications_schema(db)
     _ensure_team_board_schema(db)
     _ensure_goal_deliverables_schema(db)

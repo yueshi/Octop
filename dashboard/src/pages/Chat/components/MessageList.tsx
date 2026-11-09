@@ -127,6 +127,7 @@ interface GroupRenderContext {
   composerLookups?: ComposerTagLookups;
   isStreaming?: boolean;
   liveSpeakers?: ReadonlyArray<string>;
+  thinkingStartedAt?: number | null;
   lastBrowserGroupIndex: number;
   lastAssistantGroupIndex: number;
   lastUserGroupIndex: number;
@@ -178,6 +179,7 @@ function renderMessageGroup(
           <AssistantTurnView
             messages={[msg]}
             agentId={ctx.agentId}
+            startedAt={ctx.thinkingStartedAt}
             isTurnInProgress={isTurnInProgress}
             liveSpeakers={ctx.liveSpeakers}
             onRegenerate={ctx.onRegenerate}
@@ -234,6 +236,7 @@ function renderMessageGroup(
       <AssistantTurnView
         messages={group.messages}
         agentId={ctx.agentId}
+        startedAt={ctx.thinkingStartedAt}
         isTurnInProgress={isTurnInProgress}
         liveSpeakers={ctx.liveSpeakers}
         onRegenerate={ctx.onRegenerate}
@@ -745,6 +748,7 @@ export default function MessageList(props: MessageListProps) {
       composerLookups,
       isStreaming,
       liveSpeakers,
+      thinkingStartedAt,
       lastBrowserGroupIndex,
       lastAssistantGroupIndex,
       lastUserGroupIndex,
@@ -770,6 +774,7 @@ export default function MessageList(props: MessageListProps) {
       composerLookups,
       isStreaming,
       liveSpeakers,
+      thinkingStartedAt,
       lastBrowserGroupIndex,
       lastAssistantGroupIndex,
       lastUserGroupIndex,

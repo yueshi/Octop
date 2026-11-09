@@ -70,6 +70,8 @@ async def get_public_app(token: str, server: Any = Depends(get_server)) -> JSONR
     _audit_public(server, row.app_id, "light_app.public.view")
     tables: list[dict[str, Any]] = []
     for table in service.list_tables(row):
+        if not table.public_visible:
+            continue
         schema = await service.read_schema(row, table.table_key)
         tables.append(
             {
@@ -106,6 +108,8 @@ async def get_public_rows(
 
     METRICS.inc("light_app_public_view_total")
     service, row = _public_app(server, token)
+    if not service.is_table_public(row, table):
+        raise OctopError(ErrorCode.APP_NOT_FOUND, "public app table not found")
     schema, rows, _meta, total = await service.read_rows_detailed(
         row,
         limit=limit,
@@ -154,6 +158,12 @@ _SDK = """
     listRows: function (options) { return call("rows", options || {}); },
     me: function () { return Promise.resolve({ permission: "view" }); },
     appendRow: function () {
+      return Promise.reject(new Error("This is a read-only public link"));
+    },
+    generate: function () {
+      return Promise.reject(new Error("This is a read-only public link"));
+    },
+    launchGame: function () {
       return Promise.reject(new Error("This is a read-only public link"));
     }
   };
@@ -234,6 +244,8 @@ async def public_app_page(token: str, server: Any = Depends(get_server)) -> HTML
     service, row = _public_app(server, token)
     tables: list[dict[str, Any]] = []
     for table in service.list_tables(row):
+        if not table.public_visible:
+            continue
         schema = await service.read_schema(row, table.table_key)
         tables.append(
             {

@@ -28,6 +28,13 @@ from octop.infra.db.repos.threads import ThreadRow
 from octop.infra.gateway.threads import thread_row_has_messages
 
 
+def test_thread_channel_chat_type() -> None:
+    assert history_mod._thread_channel_chat_type("a1:feishu:ou_x:dm") == "dm"
+    assert history_mod._thread_channel_chat_type("a1:feishu:oc_x:group") == "group"
+    assert history_mod._thread_channel_chat_type("a1:dashboard:7:team:thr_room") == "team:thr_room"
+    assert history_mod._thread_channel_chat_type("") == "dm"
+
+
 def test_clamp_history_limit() -> None:
     assert _clamp_history_limit(0) == 1
     assert _clamp_history_limit(25) == 25

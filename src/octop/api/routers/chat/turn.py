@@ -38,9 +38,11 @@ __all__ = [
     "INBOUND_ATTACHMENTS_KEY",
     "build_composer_context",
     "build_dashboard_inbound",
+    "build_im_bridge_inbound",
     "content_parts_from_dashboard_turn",
     "extract_usage_from_chunk",
     "prepare_dashboard_turn",
+    "resolve_im_bridge_session",
     "turn_has_content",
 ]
 
@@ -300,6 +302,114 @@ async def prepare_dashboard_turn(
         inbound_content=inbound_content,
         composer_context=composer_ctx,
         inbound_attachments=inbound_attachments,
+    )
+
+
+def resolve_im_bridge_session(
+    server: Any,
+    *,
+    agent_id: str,
+    user_id: int,
+    thread_id: str,
+) -> Any:
+    """Return the DM IM session a Web turn should reply through.
+
+    Web is a second client of the conversation, so the reply must leave through
+    the same IM session the thread belongs to. Group/shared sessions are not
+    bridged silently: they fall back to Web-only until an explicit permission
+    model exists.
+    """
+    gateway = server.app_runtime.gateway
+    row = gateway.thread_registry.get_thread(thread_id)
+    if row is None or row.agent_id != agent_id or row.user_id != user_id:
+        raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"thread {thread_id!r} not found")
+    if ThreadRegistry.is_virtual_channel(row.channel_type):
+        raise OctopError(ErrorCode.CHAT_IM_UNAVAILABLE, "this thread has no IM channel")
+    candidate = None
+    for session in gateway.thread_registry.im_sessions_for_thread(thread_id):
+        if (
+            session.user_id == user_id
+            and session.channel_id
+            and session.channel_type == row.channel_type
+            and session.chat_type in {"dm", "direct", "p2p", "single"}
+        ):
+            if session.session_key == row.session_key:
+                candidate = session
+                break
+            if candidate is None:
+                candidate = session
+    if candidate is None:
+        raise OctopError(
+            ErrorCode.CHAT_IM_UNAVAILABLE,
+            "the IM channel for this conversation is not available",
+        )
+    manager = getattr(gateway, "channel_manager", None)
+    if manager is None or manager.get_channel(candidate.channel_id) is None:
+        raise OctopError(
+            ErrorCode.CHAT_IM_UNAVAILABLE,
+            "the IM channel for this conversation is not connected",
+        )
+    return candidate
+
+
+def build_im_bridge_inbound(
+    *,
+    agent_id: str,
+    user_id: int,
+    prepared: PreparedDashboardTurn,
+    turn: ChatTurnBody,
+    session: Any,
+    ws_connection_id: str,
+    user_is_admin: bool = False,
+) -> InboundMessage:
+    """Build an IM-channel inbound frame for a Web-originated turn."""
+    # Carry the session's durable routing metadata (chat_id, to_handle,
+    # context_token, …). ``BaseChannel._track_subject`` refreshes the cached
+    # ChannelSubject from ``msg.metadata``; omitting these fields would erase
+    # the routing info the next outbound send needs.
+    metadata: dict[str, Any] = dict(session.channel_metadata or {})
+    metadata.setdefault("channel_type", session.channel_type)
+    metadata.setdefault("chat_type", session.chat_type)
+    metadata.setdefault("user_id", user_id)
+    metadata.update(
+        {
+            "ws_connection_id": ws_connection_id,
+            "session_key": session.session_key,
+            "thread_id": prepared.thread_id,
+            "origin": "web",
+            "user_is_admin": user_is_admin,
+        }
+    )
+    if prepared.mcp_servers is not None:
+        metadata["mcp_servers"] = list(prepared.mcp_servers)
+    if turn.knowledge_base_ids is not None:
+        metadata["knowledge_base_ids"] = list(turn.knowledge_base_ids)
+    if prepared.skills is not None:
+        metadata["skills"] = prepared.skills
+    if prepared.model_ref:
+        metadata["model"] = prepared.model_ref
+    if turn.reasoning_mode is not None:
+        metadata["reasoning_mode"] = turn.reasoning_mode
+    if turn.reasoning_effort:
+        metadata["reasoning_effort"] = turn.reasoning_effort
+    if turn.conversation_mode:
+        metadata["conversation_mode"] = turn.conversation_mode
+    if turn.hitl_policy is not None:
+        metadata["hitl_policy"] = turn.hitl_policy.model_dump()
+    if prepared.composer_context:
+        metadata[COMPOSER_CTX_KEY] = prepared.composer_context
+    if prepared.inbound_attachments:
+        metadata[INBOUND_ATTACHMENTS_KEY] = prepared.inbound_attachments
+    merge_turn_target_agents(turn, metadata)
+
+    return InboundMessage(
+        channel_id=str(session.channel_id),
+        channel_type=session.channel_type,
+        tenant_id=agent_id,
+        channel_subject=session.to_channel_subject(),
+        channel_session_id=session.session_key,
+        content=list(prepared.inbound_content),
+        metadata=metadata,
     )
 
 

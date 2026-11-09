@@ -22,6 +22,8 @@ from octop.api.deps import current_user, get_server
 from octop.api.routers.chat.sse import format_sse
 from octop.config import DEFAULT_MAX_UPLOAD_MB, upload_mb_to_bytes
 from octop.infra.apps.assistant import AppAssistant
+from octop.infra.apps.game_sessions import create_game_token
+from octop.infra.apps.generation import AppGenerator
 from octop.infra.apps.models import MAIN_TABLE_KEY, Schema
 from octop.infra.apps.preview import validate_preview_svg
 from octop.infra.apps.service import (
@@ -39,6 +41,7 @@ from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.server import OctopServer
 from octop.infra.users.identity import User
 from octop.infra.utils.locale import Locale, resolve_request_locale
+from octop.infra.utils.ulid import new_short_id
 
 router = APIRouter(prefix="/apps")
 
@@ -93,6 +96,10 @@ class AppTableOut(BaseModel):
     label: str = Field(default="", description="Display name of the table.")
     row_count: int = Field(default=0, description="Rows currently stored in the table.")
     is_main: bool = Field(default=False, description="Whether this is the app's main table.")
+    public_visible: bool = Field(
+        default=True,
+        description="Whether the table is exposed by the app's public read-only link.",
+    )
     columns: list[AppColumn] = Field(
         default_factory=list,
         description="Column definitions of the table.",
@@ -101,6 +108,12 @@ class AppTableOut(BaseModel):
 
 class AppTablesResponse(BaseModel):
     tables: list[AppTableOut]
+
+
+class TableVisibilityBody(BaseModel):
+    public_visible: bool = Field(
+        description="Expose this table on the app's public read-only link."
+    )
 
 
 class AppFilesResponse(BaseModel):
@@ -136,6 +149,20 @@ class QuickCreateResponse(BaseModel):
     pii_columns: list[str] = Field(default_factory=list)
     blocked_pii: list[str] = Field(default_factory=list)
     failed_rows: list[FailedRowOut] = Field(default_factory=list)
+
+
+class GameSessionBody(BaseModel):
+    game_id: str = Field(description="Configured external game id.")
+
+
+class GameSessionOut(BaseModel):
+    session_id: str
+    game_id: str
+    name: str
+    url: str = Field(description="External game entry URL.")
+    token: str = Field(description="Short-lived token for the result endpoint.")
+    expires_at: int = Field(description="Unix expiry for the token.")
+    sandbox: str = Field(description="Iframe sandbox policy for this game.")
 
 
 class RowMeta(BaseModel):
@@ -223,6 +250,13 @@ class AlterSchemaBody(BaseModel):
         default_factory=dict,
         description="Column name -> new type/label/required/enum values.",
     )
+    pii: dict[str, str | None] = Field(
+        default_factory=dict,
+        description=(
+            "Column name -> sensitive-data kind (id_card, bank_card, phone, "
+            "address, salary, email, secret). Pass null to clear."
+        ),
+    )
 
 
 class UpdateAppBody(BaseModel):
@@ -280,6 +314,7 @@ def _service(server: OctopServer) -> AppService:
         agent_repo=server.services.agent_repo,
         user_repo=server.services.user_repo,
         workspaces=server.app_runtime.agent_registry,
+        secret_repo=server.services.secret_repo,
     )
 
 
@@ -320,6 +355,7 @@ async def _table_out(service: AppService, row: AppRecord, table: AppTableView) -
         label=table.label,
         row_count=table.row_count,
         is_main=table.is_main,
+        public_visible=table.public_visible,
         columns=columns,
     )
 
@@ -363,6 +399,15 @@ def _assistant(server: OctopServer, service: AppService) -> AppAssistant:
     )
 
 
+def _generator(server: OctopServer) -> AppGenerator:
+    if server.services is None or server.app_runtime is None:
+        raise OctopError(ErrorCode.INTERNAL_ERROR, "server is not started")
+    return AppGenerator(
+        agents=server.app_runtime.agent_registry,
+        usage_repo=server.services.usage_repo,
+    )
+
+
 def _tool_runner(server: OctopServer) -> GatewayToolRunner:
     if server.services is None:
         raise OctopError(ErrorCode.INTERNAL_ERROR, "server is not started")
@@ -389,6 +434,7 @@ def _service_with_runner(server: OctopServer) -> AppService:
         user_repo=server.services.user_repo,
         workspaces=server.app_runtime.agent_registry,
         external_tool_runner=_tool_runner(server),
+        secret_repo=server.services.secret_repo,
     )
 
 
@@ -449,10 +495,32 @@ class QuickInspectResponse(BaseModel):
     suggested_view: dict[str, Any] = Field(description="Suggested dashboard view spec.")
 
 
+class QuickSheetBody(BaseModel):
+    sheet: str = Field(description="Sheet name from the inspection report.")
+    columns: list[AppColumn] = Field(description="Confirmed fields for this sheet.")
+    header_row: int | None = Field(
+        default=None, ge=0, le=100, description="0-based header row override."
+    )
+    mapping: dict[str, str] | None = Field(
+        default=None, description="Source header -> schema column map."
+    )
+    metric_column: str | None = Field(default=None, description="Numeric column for KPIs/charts.")
+    group_column: str | None = Field(default=None, description="Categorical column for grouping.")
+    view: Literal["dashboard", "ledger", "board"] = Field(
+        default="dashboard", description="Generated view style for this sheet."
+    )
+
+
 class QuickCreateBody(BaseModel):
     agent_id: str = Field(description="Agent that will host the new app.")
     path: str = Field(description="Workspace path returned by quick/inspect.")
-    columns: list[AppColumn] = Field(description="Confirmed fields for the new app.")
+    columns: list[AppColumn] = Field(
+        default_factory=list, description="Confirmed fields for a single-sheet import."
+    )
+    sheets: list[QuickSheetBody] | None = Field(
+        default=None,
+        description="Multi-sheet import; when present, top-level columns/sheet are ignored.",
+    )
     view: Literal["dashboard", "ledger", "board"] = Field(
         default="dashboard", description="Generated view style."
     )
@@ -464,6 +532,12 @@ class QuickCreateBody(BaseModel):
     )
     mapping: dict[str, str] | None = Field(
         default=None, description="Source header -> schema column map for quick imports."
+    )
+    metric_column: str | None = Field(
+        default=None, description="Numeric column used for KPIs and charts."
+    )
+    group_column: str | None = Field(
+        default=None, description="Categorical column used for the bar chart and board."
     )
     include_pii: bool = Field(default=False, description="Import columns detected as sensitive.")
     upsert_key: list[str] | None = Field(
@@ -613,26 +687,43 @@ async def quick_create_app(
 ) -> QuickCreateResponse:
     service = _service(server)
     _assert_agent_access(service, user, body.agent_id)
-    row, result = await service.quick_create(
-        agent_id=body.agent_id,
-        owner_user_id=user.id,
-        path=body.path,
-        columns=[column.model_dump(exclude_none=True) for column in body.columns],
-        view=body.view,
-        name=body.name,
-        description=body.description,
-        sheet=body.sheet,
-        header_row=body.header_row,
-        mapping=body.mapping,
-        include_pii=body.include_pii,
-        upsert_key=body.upsert_key,
-    )
+    if body.sheets:
+        row, result = await service.quick_create_multi(
+            agent_id=body.agent_id,
+            owner_user_id=user.id,
+            path=body.path,
+            sheets=[sheet.model_dump(exclude_none=True) for sheet in body.sheets],
+            name=body.name,
+            description=body.description,
+            include_pii=body.include_pii,
+        )
+        audit_payload = {"path": body.path, "sheets": [sheet.sheet for sheet in body.sheets]}
+    else:
+        if not body.columns:
+            raise OctopError(ErrorCode.APP_ROW_INVALID, "at least one column is required")
+        row, result = await service.quick_create(
+            agent_id=body.agent_id,
+            owner_user_id=user.id,
+            path=body.path,
+            columns=[column.model_dump(exclude_none=True) for column in body.columns],
+            view=body.view,
+            name=body.name,
+            description=body.description,
+            sheet=body.sheet,
+            header_row=body.header_row,
+            mapping=body.mapping,
+            metric_column=body.metric_column,
+            group_column=body.group_column,
+            include_pii=body.include_pii,
+            upsert_key=body.upsert_key,
+        )
+        audit_payload = {"path": body.path, "view": body.view}
     _audit(
         server,
         actor=f"user:{user.id}",
         action="miniapp.quick_create",
         target=row.app_id,
-        payload={"path": body.path, "view": body.view},
+        payload=audit_payload,
     )
     return QuickCreateResponse(
         app=await _app_detail(service, row),
@@ -644,6 +735,65 @@ async def quick_create_app(
         pii_columns=result.pii_columns,
         blocked_pii=result.blocked_pii,
         failed_rows=[FailedRowOut(**item) for item in result.failed_rows],
+    )
+
+
+@router.post(
+    "/{app_id}/game-sessions",
+    response_model=GameSessionOut,
+    status_code=201,
+    summary="Create an external game session",
+    description=(
+        "Issues a short-lived token for a configured external game. The game "
+        "opens in the platform side panel and writes results through "
+        "POST /api/game-sessions/{token}/results."
+    ),
+)
+async def create_app_game_session(
+    app_id: str,
+    body: GameSessionBody,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> GameSessionOut:
+    service = _service(server)
+    row = service.get(app_id)
+    # Results are written into the app, so a game session needs write access.
+    service.require(row, user.id, "edit_data", is_admin=user.is_admin)
+    if server.services is None:
+        raise OctopError(ErrorCode.INTERNAL_ERROR, "server is not started")
+    game = next(
+        (item for item in server.services.config.games if item.id == body.game_id),
+        None,
+    )
+    if game is None:
+        raise OctopError(ErrorCode.APP_NOT_FOUND, f"unknown game: {body.game_id!r}")
+    secret = server.services.secret_repo.get("jwt")
+    if secret is None:
+        raise OctopError(ErrorCode.INTERNAL_ERROR, "jwt secret missing")
+    session_id = f"game_{new_short_id(16)}"
+    token, expires_at = create_game_token(
+        secret,
+        app_id=row.app_id,
+        user_id=user.id,
+        game_id=game.id,
+        session_id=session_id,
+        is_admin=user.is_admin,
+    )
+    _audit(
+        server,
+        actor=f"user:{user.id}",
+        action="miniapp.game_session",
+        target=row.app_id,
+        payload={"game_id": game.id, "session_id": session_id},
+    )
+    return GameSessionOut(
+        session_id=session_id,
+        game_id=game.id,
+        name=game.name,
+        url=game.url,
+        token=token,
+        expires_at=expires_at,
+        sandbox=game.sandbox,
     )
 
 
@@ -737,6 +887,37 @@ async def list_app_tables(
 ) -> AppTablesResponse:
     service, row, _permission = _row_access(server, user, app_id, "view")
     return AppTablesResponse(tables=await _table_outs(service, row))
+
+
+@router.patch(
+    "/{app_id}/tables/{table_key}",
+    response_model=AppTableOut,
+    summary="Set table visibility",
+    description=(
+        "Expose or hide one table on the app's public read-only link. Requires edit_structure."
+    ),
+)
+async def set_app_table_visibility(
+    app_id: str,
+    table_key: str,
+    body: TableVisibilityBody,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> AppTableOut:
+    service, row, _permission = _row_access(server, user, app_id, "edit_structure")
+    view = await service.set_table_visibility(
+        row,
+        table=table_key,
+        public_visible=body.public_visible,
+    )
+    _audit(
+        server,
+        actor=f"user:{user.id}",
+        action="light_app.table.visibility",
+        target=app_id,
+        payload={"table": table_key, "public_visible": body.public_visible},
+    )
+    return await _table_out(service, row, view)
 
 
 @router.get(
@@ -1129,6 +1310,7 @@ async def alter_app_schema(
         renames=body.renames,
         drops=body.drops,
         types={name: spec.model_dump(exclude_none=True) for name, spec in body.types.items()},
+        pii=body.pii,
     )
     updated = service.get(app_id)
     schema = await service.read_schema(updated, table)
@@ -1368,10 +1550,42 @@ class AskAssistantBody(BaseModel):
     )
 
 
+class AssistantChartSeriesOut(BaseModel):
+    key: str = Field(description="Data key inside each chart point.")
+    label: str = Field(description="Human-readable series name.")
+
+
+class AssistantChartOut(BaseModel):
+    type: Literal["bar", "line", "pie", "area", "scatter", "stacked_bar"] = Field(
+        description="Chart type the dashboard should render."
+    )
+    title: str = Field(description="Chart title.")
+    x: str = Field(description="Column used for the x axis.")
+    x_label: str = Field(default="", description="Human-readable x column label.")
+    series: list[AssistantChartSeriesOut] = Field(description="One entry per numeric series.")
+    data: list[dict[str, Any]] = Field(
+        description="Chart points; each has `x` plus one key per series."
+    )
+    sampled: bool = Field(
+        default=False,
+        description="True when the chart is based on the first 500 rows only.",
+    )
+    sample_size: int = Field(default=0, description="Rows used to build the chart.")
+    matched_rows: int = Field(default=0, description="Rows matching the chart filters.")
+    truncated: bool = Field(
+        default=False,
+        description="True when the series was capped to the requested point limit.",
+    )
+
+
 class AssistantMessageOut(BaseModel):
     role: str = Field(description="user or assistant.")
     content: str
     created_at: int
+    charts: list[AssistantChartOut] = Field(
+        default_factory=list,
+        description="Chart specs attached to an assistant answer, if any.",
+    )
 
 
 class AssistantHistoryResponse(BaseModel):
@@ -1395,7 +1609,12 @@ async def get_app_assistant_history(
     turns = _assistant(server, service).history(row, user.id)
     return AssistantHistoryResponse(
         messages=[
-            AssistantMessageOut(role=t.role, content=t.content, created_at=t.created_at)
+            AssistantMessageOut(
+                role=t.role,
+                content=t.content,
+                created_at=t.created_at,
+                charts=[AssistantChartOut.model_validate(chart) for chart in t.charts],
+            )
             for t in turns
         ],
     )
@@ -1406,8 +1625,8 @@ async def get_app_assistant_history(
     summary="Ask the app assistant (SSE)",
     description=(
         "Streams SSE frames (event: chunk) whose data carries "
-        "{type: token|tool|done|error}. Read-only over the app's data; consumes "
-        "the owning agent's model quota. Requires the view permission."
+        "{type: token|tool|chart|done|error}. Read-only over the app's data; "
+        "consumes the owning agent's model quota. Requires the view permission."
     ),
 )
 async def ask_app_assistant(
@@ -1435,6 +1654,68 @@ async def ask_app_assistant(
             yield format_sse("chunk", event)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+class GenerateBody(BaseModel):
+    prompt: str = Field(
+        min_length=1,
+        max_length=8000,
+        description="The instruction or text the model should process.",
+    )
+    system: str = Field(
+        default="",
+        max_length=4000,
+        description="Optional extra system instruction supplied by the app.",
+    )
+
+
+class GenerateResponse(BaseModel):
+    text: str = Field(description="Generated text, truncated to 16k characters.")
+    model: str = Field(description="Model reference that answered.")
+    input_tokens: int = Field(description="Prompt tokens billed to the owning agent.")
+    output_tokens: int = Field(description="Completion tokens billed to the owning agent.")
+
+
+@router.post(
+    "/{app_id}/generate",
+    response_model=GenerateResponse,
+    summary="Generate text with the app's AI model",
+    description=(
+        "One-shot, non-streaming text generation using the owning agent's "
+        "default model. App HTML calls it through `octopApp.generate(prompt, "
+        "{system})`; the iframe never sees a JWT. Requires the view permission "
+        "and consumes the owning agent's model quota. Public share links do not "
+        "expose this endpoint."
+    ),
+)
+async def generate_app_text(
+    app_id: str,
+    body: GenerateBody,
+    request: Request,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> GenerateResponse:
+    _service, row, _permission = _row_access(server, user, app_id, "view")
+    prompt = body.prompt.strip()
+    if not prompt:
+        raise OctopError(ErrorCode.APP_PROMPT_INVALID, "prompt must not be empty")
+    from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+    METRICS.inc("light_app_generate_total")
+    locale = resolve_request_locale(request)
+    generated = await _generator(server).generate(
+        row,
+        user_id=user.id,
+        prompt=prompt,
+        system=body.system,
+        locale=locale,
+    )
+    return GenerateResponse(
+        text=generated.text,
+        model=generated.model_ref,
+        input_tokens=generated.input_tokens,
+        output_tokens=generated.output_tokens,
+    )
 
 
 class UploadImportResponse(BaseModel):

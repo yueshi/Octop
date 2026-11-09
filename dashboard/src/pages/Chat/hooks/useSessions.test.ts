@@ -56,6 +56,23 @@ describe("toSession / sortSessions ordering", () => {
     ).toEqual(["thr_new", "thr_old"]);
   });
 
+  it("maps channel_chat_type and defaults to dm", () => {
+    const group = toSession({
+      thread_id: "thr_group",
+      title: "group",
+      last_active: 1,
+      channel_type: "feishu",
+      channel_chat_type: "group",
+    });
+    const legacy = toSession({
+      thread_id: "thr_legacy",
+      title: null,
+      last_active: 1,
+    });
+    expect(group.channelChatType).toBe("group");
+    expect(legacy.channelChatType).toBe("dm");
+  });
+
   it("keeps pinned sessions first", () => {
     const pinned = toSession({
       thread_id: "thr_pin",

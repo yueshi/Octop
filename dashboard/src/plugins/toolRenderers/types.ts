@@ -1,5 +1,7 @@
 import type { ComponentType } from "react";
 
+import type { AppGameSession } from "../../api/modules/apps";
+
 /** Parsed ``octop_ui`` envelope from a tool JSON string output. */
 export interface OctopUiHint {
   renderer: string;
@@ -37,6 +39,8 @@ export interface ToolRenderProps {
   host: OctopPluginUIHost;
   /** Original tool output string (for builtins that need media parsing). */
   output?: string;
+  /** True when this renderer is mounted inside the chat side dock. */
+  docked?: boolean;
   isStreaming: boolean;
   hideMediaPreview?: boolean;
   onAcpPermissionSelect?: (message: string) => void;
@@ -59,6 +63,11 @@ export interface OpenSidePanelOptions {
   toolName?: string;
 }
 
+export interface OpenGamePanelOptions {
+  appId: string;
+  session: AppGameSession;
+}
+
 export interface OctopPluginUIHost {
   registerRenderer(
     reg: Omit<ToolRendererRegistration, "pluginId"> & { pluginId?: string },
@@ -72,6 +81,8 @@ export interface OctopPluginUIHost {
   openSidePanel(opts: OpenSidePanelOptions): void;
   /** Close the side dock tab for this tool call, if open. */
   closeSidePanel(callId: string): void;
+  /** Open an external game in its own dock tab (no-op outside chat). */
+  openGamePanel(opts: OpenGamePanelOptions): void;
 }
 
 /** Shape expected from ``ui/dist/index.js``. */

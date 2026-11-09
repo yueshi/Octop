@@ -97,6 +97,11 @@ def _require_thread(
     return row
 
 
+def _thread_channel_chat_type(session_key: str) -> str:
+    parts = str(session_key or "").split(":", 3)
+    return parts[3] if len(parts) == 4 and parts[3] else "dm"
+
+
 @router.get("/agents/{agent_id}/threads", summary="List threads")
 async def list_threads(
     agent_id: str,
@@ -127,6 +132,7 @@ async def list_threads(
             "thread_id": r.thread_id,
             "title": r.title,
             "channel_type": r.channel_type,
+            "channel_chat_type": _thread_channel_chat_type(r.session_key),
             "session_key": r.session_key,
             "last_active": r.last_active,
             "created_at": r.created_at,

@@ -22,6 +22,9 @@ from datetime import date
 from pathlib import PurePosixPath
 from typing import Any
 
+from pypinyin import Style, lazy_pinyin
+
+from octop.infra.apps.pii import detect_header_pii, detect_text_pii
 from octop.infra.errors import ErrorCode, OctopError
 
 MAX_INSPECT_BYTES = 50 * 1024 * 1024
@@ -68,18 +71,6 @@ _DATETIME_PATTERNS = (
     re.compile(r"^\d{4}年\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2}"),
 )
 
-_PII_VALUE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("id_card", re.compile(r"^\d{17}[\dXx]$")),
-    ("bank_card", re.compile(r"^\d{16,19}$")),
-    ("phone", re.compile(r"^1[3-9]\d{9}$")),
-)
-_PII_HEADER_KEYWORDS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("id_card", re.compile(r"身份证|证件号|护照")),
-    ("bank_card", re.compile(r"银行卡|卡号|账号|账户")),
-    ("phone", re.compile(r"手机|电话|联系方式")),
-    ("address", re.compile(r"住址|地址|家庭住址")),
-    ("salary", re.compile(r"工资|薪资|薪酬|月薪|收入")),
-)
 _TOTALS_MARKERS = ("合计", "小计", "总计", "汇总", "总额")
 _SNAKE_CASE_RE = re.compile(r"[^a-z0-9]+")
 _ASCII_HEADER_RE = re.compile(r"^[A-Za-z0-9 _\-./()]+$")
@@ -368,8 +359,12 @@ def suggest_column_name(header: str, index: int) -> str:
         name = _snake_case(header)
         if name:
             return name
-    # A Chinese (or otherwise non-ASCII) label has no mechanical translation;
-    # the model is expected to rename it when it confirms the schema.
+    # Chinese headers become pinyin keys (xing_ming) instead of col_1; the
+    # model/user can still rename them while confirming the schema.
+    syllables = lazy_pinyin(header, style=Style.NORMAL, errors="ignore")
+    name = _snake_case(" ".join(syllables))
+    if name:
+        return name[:50]
     return f"col_{index + 1}"
 
 
@@ -450,16 +445,26 @@ def infer_column_type(values: Sequence[str], *, distinct: int, rows: int) -> str
 
 
 def detect_pii(header: str, values: Sequence[str]) -> str | None:
-    """Return the PII kind of a column, or ``None``."""
-    for kind, pattern in _PII_HEADER_KEYWORDS:
-        if pattern.search(header):
-            return kind
+    """Return the PII kind of a column, or ``None``.
+
+    Header names win. Value scanning uses the shared free-text detector with a
+    majority threshold so one stray number in a note column does not block an
+    entire import; public reads still redact individual values.
+    """
+    header_kind = detect_header_pii(header)
+    if header_kind is not None:
+        return header_kind
     if not values:
         return None
-    for kind, pattern in _PII_VALUE_PATTERNS:
-        hits = sum(1 for value in values if pattern.match(value.strip()))
-        if values and hits / len(values) >= 0.3:
-            return kind
+    counts: dict[str, int] = {}
+    for value in values:
+        for hit in detect_text_pii(value.strip()):
+            counts[hit.kind] = counts.get(hit.kind, 0) + 1
+    if not counts:
+        return None
+    kind, hits = max(counts.items(), key=lambda item: item[1])
+    if hits / len(values) >= 0.3:
+        return kind
     return None
 
 
@@ -502,6 +507,7 @@ def inspect_sheet(sheet: RawSheet) -> SheetReport:
     headers = list(headers) + [f"col_{index + 1}" for index in range(len(headers), width)]
 
     columns: list[ColumnStats] = []
+    used_names: set[str] = set()
     for column_index, header in enumerate(headers):
         values = [row[column_index] for row in scanned if column_index < len(row)]
         non_empty = [value for value in values if value.strip()]
@@ -509,10 +515,17 @@ def inspect_sheet(sheet: RawSheet) -> SheetReport:
         distinct = len(distinct_values)
         column_type = infer_column_type(non_empty, distinct=distinct, rows=len(scanned))
         pii_kind = detect_pii(header, non_empty[:200])
+        name = suggest_column_name(header, column_index)
+        base = name
+        suffix = 2
+        while name in used_names:
+            name = f"{base}_{suffix}"
+            suffix += 1
+        used_names.add(name)
         columns.append(
             ColumnStats(
                 source=header,
-                name_suggestion=suggest_column_name(header, column_index),
+                name_suggestion=name,
                 type=column_type,
                 non_empty_ratio=round(len(non_empty) / max(len(scanned), 1), 3),
                 distinct=distinct,

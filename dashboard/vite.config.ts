@@ -61,9 +61,9 @@ export default defineConfig(({ mode }) => {
 
   const isProd = mode === "production";
   const analyze = env.ANALYZE === "true";
-  // Dev server defaults to Vite's :5173. Override with VITE_DEV_PORT (e.g. 80
+  // Octop's dev server defaults to :8848. Override with VITE_DEV_PORT (e.g. 80
   // for LAN / same-origin setups). Must stay in sync with server.hmr.clientPort.
-  const devServerPort = Number(process.env.VITE_DEV_PORT || 5173);
+  const devServerPort = Number(process.env.VITE_DEV_PORT || 8848);
 
   // Conditionally load the visualizer plugin (sync require to avoid async issues)
   const extraPlugins: Plugin[] = [];

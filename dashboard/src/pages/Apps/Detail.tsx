@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Alert,
   Button,
@@ -13,6 +21,7 @@ import {
   Select,
   Space,
   Spin,
+  Switch,
   Table,
   Tabs,
   Tag,
@@ -48,10 +57,12 @@ import { message } from "../../utils/antdMessage";
 import {
   appsApi,
   askAppAssistant,
+  type AppAssistantChart,
   type AppAssistantMessage,
   type AppColumn,
   type AppDetail,
   type AppFile,
+  type AppGameSession,
   type AppImportMode,
   type AppPublication,
   type AppRowMeta,
@@ -69,76 +80,21 @@ import { apiErrorMessage, isNotFoundApiError } from "../../utils/apiError";
 import { formatBytes } from "../../utils/formatBytes";
 import { formatServerDateTime } from "../../utils/formatMessageTime";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
-import { APP_CSP } from "./appCsp";
+import GameFrame, {
+  MINIAPP_GAME_FINISHED_EVENT,
+  type MiniAppGameFinishedDetail,
+} from "../../components/MiniAppFrame/GameFrame";
+import { buildSrcDoc } from "../../components/MiniAppFrame/sdk";
 
 const { Text } = Typography;
+
+const AssistantChart = lazy(() => import("./AssistantChart"));
 
 /** Assistant drawer width presets (px) shared by the drag handle and the
  *  min/mid/max quick buttons; min and max follow the viewport. */
 const assistantMinWidth = () => Math.floor(window.innerWidth * 0.35);
 const assistantMaxWidth = () =>
   Math.max(assistantMinWidth(), Math.floor(window.innerWidth * 0.9));
-
-/**
- * Bridge exposed to app HTML as `window.octopApp`. Every call goes through the
- * parent dashboard over postMessage so the iframe never sees a JWT and never
- * needs `allow-same-origin`.
- */
-const APP_SDK = `(function () {
-  var pending = new Map();
-  var seq = 0;
-  function call(method, params) {
-    return new Promise(function (resolve, reject) {
-      var id = ++seq;
-      pending.set(id, { resolve: resolve, reject: reject });
-      parent.postMessage(
-        { source: "octop-app", type: "request", id: id, method: method, params: params || {} },
-        "*"
-      );
-    });
-  }
-  window.addEventListener("message", function (event) {
-    var data = event.data;
-    if (!data || data.source !== "octop-app-host") return;
-    var entry = pending.get(data.id);
-    if (!entry) return;
-    pending.delete(data.id);
-    if (data.ok) entry.resolve(data.data);
-    else entry.reject(new Error(data.error || "Request failed"));
-  });
-  window.octopApp = {
-    schema: function (table) { return call("schema", { table: table || null }); },
-    tables: function () { return call("tables"); },
-    listRows: function (options) { return call("rows", options || {}); },
-    appendRow: function (row, options) {
-      return call("append", { row: row, table: (options || {}).table || null });
-    },
-    openExternal: function (url) { return call("openExternal", { url: url || "" }); },
-    asset: function (name) { return call("asset", { name: name || "" }); }
-  };
-})();`;
-
-function buildSrcDoc(html: string): string {
-  const head = `<meta http-equiv="Content-Security-Policy" content="${APP_CSP}"><script>${APP_SDK}</script>`;
-  const headMatch = /<head[^>]*>/i.exec(html);
-  if (headMatch?.index !== undefined) {
-    const at = headMatch.index + headMatch[0].length;
-    return `${html.slice(0, at)}${head}${html.slice(at)}`;
-  }
-  const htmlMatch = /<html[^>]*>/i.exec(html);
-  if (htmlMatch?.index !== undefined) {
-    const at = htmlMatch.index + htmlMatch[0].length;
-    return `${html.slice(0, at)}<head>${head}</head>${html.slice(at)}`;
-  }
-  const doctypeMatch = /<!doctype[^>]*>/i.exec(html);
-  if (doctypeMatch?.index !== undefined) {
-    const at = doctypeMatch.index + doctypeMatch[0].length;
-    return `${html.slice(0, at)}<html><head>${head}</head><body>${html.slice(
-      at,
-    )}</body></html>`;
-  }
-  return `<!doctype html><html><head>${head}</head><body>${html}</body></html>`;
-}
 
 function permissionLabel(
   permission: AppDetail["permission"],
@@ -185,6 +141,8 @@ export default function AppDetailPage() {
   const [loading, setLoading] = useState(true);
   const [htmlLoading, setHtmlLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [gameSession, setGameSession] = useState<AppGameSession | null>(null);
+  const [htmlReloadKey, setHtmlReloadKey] = useState(0);
 
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameForm] = Form.useForm<{ name: string; description: string }>();
@@ -302,6 +260,18 @@ export default function AppDetailPage() {
     };
   }, [appId, detail?.has_html, t]);
 
+  // A game wrote rows in its host: remount the app so it re-reads them.
+  useEffect(() => {
+    const onGameEvent = (event: Event) => {
+      const detail = (event as CustomEvent<MiniAppGameFinishedDetail>).detail;
+      if (!detail || detail.appId !== appId) return;
+      setHtmlReloadKey((value) => value + 1);
+    };
+    window.addEventListener(MINIAPP_GAME_FINISHED_EVENT, onGameEvent);
+    return () =>
+      window.removeEventListener(MINIAPP_GAME_FINISHED_EVENT, onGameEvent);
+  }, [appId]);
+
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const frame = iframeRef.current;
@@ -318,6 +288,9 @@ export default function AppDetailPage() {
           row?: Record<string, unknown>;
           url?: string;
           name?: string;
+          prompt?: string;
+          system?: string;
+          gameId?: string;
         };
       } | null;
       if (
@@ -336,7 +309,13 @@ export default function AppDetailPage() {
       };
       void (async () => {
         try {
-          if (data.method === "schema") {
+          if (data.method === "me") {
+            const current = await appsApi.get(appId);
+            reply({
+              ok: true,
+              data: { permission: current.permission },
+            });
+          } else if (data.method === "schema") {
             const current = await appsApi.get(appId);
             const tableKey = data.params?.table || "main";
             if (tableKey === "main") {
@@ -397,6 +376,21 @@ export default function AppDetailPage() {
               };
             });
             reply({ ok: true, data: result });
+          } else if (data.method === "generate") {
+            const result = await appsApi.generate(appId, {
+              prompt: String(data.params?.prompt ?? ""),
+              system: String(data.params?.system ?? ""),
+            });
+            reply({ ok: true, data: result });
+          } else if (data.method === "launchGame") {
+            const gameId = String(data.params?.gameId ?? "").trim();
+            if (!gameId) throw new Error("gameId is required");
+            const session = await appsApi.createGameSession(appId, gameId);
+            setGameSession(session);
+            reply({
+              ok: true,
+              data: { sessionId: session.session_id, status: "opened" },
+            });
           } else if (data.method === "openExternal") {
             const url = String(data.params?.url ?? "").trim();
             if (!/^https?:\/\//i.test(url)) {
@@ -579,6 +573,32 @@ export default function AppDetailPage() {
     }
   };
 
+  const setTableVisibility = async (
+    tableKey: string,
+    publicVisible: boolean,
+  ) => {
+    try {
+      const updated = await appsApi.setTableVisibility(
+        appId,
+        tableKey,
+        publicVisible,
+      );
+      setDetail((prev) =>
+        prev
+          ? {
+              ...prev,
+              tables: prev.tables.map((item) =>
+                item.table_key === tableKey ? updated : item,
+              ),
+            }
+          : prev,
+      );
+      message.success(t("apps.saveSuccess"));
+    } catch (err) {
+      message.error(apiErrorMessage(err, t("apps.saveFailed"), t));
+    }
+  };
+
   const openRename = () => {
     if (!detail) return;
     renameForm.setFieldsValue({
@@ -719,13 +739,32 @@ export default function AppDetailPage() {
           });
         } else if (event.type === "tool") {
           setAssistantTool(event.name);
-        } else if (event.type === "done") {
-          const citations = event.citations ?? [];
+        } else if (event.type === "chart") {
           setAssistantMsgs((prev) => {
             const next = [...prev];
             const last = next[next.length - 1];
             if (last?.role === "assistant") {
-              next[next.length - 1] = { ...last, citations };
+              next[next.length - 1] = {
+                ...last,
+                charts: [...(last.charts ?? []), event.chart],
+              };
+            }
+            return next;
+          });
+        } else if (event.type === "done") {
+          const citations = event.citations ?? [];
+          const charts = event.charts;
+          setAssistantMsgs((prev) => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last?.role === "assistant") {
+              next[next.length - 1] = {
+                ...last,
+                citations,
+                // `done` carries the authoritative list; chart events are for
+                // rendering while the answer is still streaming.
+                ...(charts ? { charts } : {}),
+              };
             }
             return next;
           });
@@ -1140,6 +1179,7 @@ export default function AppDetailPage() {
                     </div>
                   ) : detail.has_html && html ? (
                     <iframe
+                      key={htmlReloadKey}
                       ref={iframeRef}
                       title={t("apps.iframeTitle")}
                       sandbox="allow-scripts"
@@ -1901,6 +1941,25 @@ export default function AppDetailPage() {
                       )}
                     </Space>
                     <Space size={4}>
+                      {canEditStructure && (
+                        <Tooltip title={t("apps.tableVisibilityHint")}>
+                          <Space size={4}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              {t("apps.publicTable")}
+                            </Text>
+                            <Switch
+                              size="small"
+                              checked={table.public_visible}
+                              onChange={(checked) =>
+                                void setTableVisibility(
+                                  table.table_key,
+                                  checked,
+                                )
+                              }
+                            />
+                          </Space>
+                        </Tooltip>
+                      )}
                       {canEditData && (
                         <Button
                           type="text"
@@ -2200,14 +2259,26 @@ export default function AppDetailPage() {
               )}
               {assistantMsgs.map((item, index) => {
                 const isUser = item.role === "user";
+                const hasCharts = Boolean(item.charts?.length);
                 const streaming =
                   assistantBusy && index === assistantMsgs.length - 1;
                 return (
                   <div
                     key={index}
                     style={{
-                      alignSelf: isUser ? "flex-end" : "flex-start",
-                      maxWidth: "85%",
+                      // Charts need a concrete parent width for
+                      // ResponsiveContainer; give the bubble the full drawer
+                      // width (capped on wide screens) instead of letting it
+                      // shrink to the chart's min-content width.
+                      alignSelf: hasCharts
+                        ? "flex-start"
+                        : isUser
+                        ? "flex-end"
+                        : "flex-start",
+                      width: hasCharts ? "100%" : undefined,
+                      maxWidth: hasCharts ? "min(100%, 720px)" : "85%",
+                      minWidth: 0,
+                      boxSizing: "border-box",
                       background: isUser
                         ? "rgba(22, 119, 255, 0.08)"
                         : "rgba(0, 0, 0, 0.03)",
@@ -2229,9 +2300,30 @@ export default function AppDetailPage() {
                       )
                     ) : streaming ? (
                       <Spin size="small" />
-                    ) : (
+                    ) : hasCharts ? null : (
                       "…"
                     )}
+                    {!isUser && hasCharts ? (
+                      <div
+                        style={{
+                          marginTop: 8,
+                          display: "grid",
+                          gap: 12,
+                          minWidth: 0,
+                        }}
+                      >
+                        {item.charts?.map(
+                          (chart: AppAssistantChart, chartIndex) => (
+                            <Suspense
+                              key={`${chart.title}-${chartIndex}`}
+                              fallback={<Spin size="small" />}
+                            >
+                              <AssistantChart chart={chart} />
+                            </Suspense>
+                          ),
+                        )}
+                      </div>
+                    ) : null}
                     {!isUser && item.citations?.length ? (
                       <div
                         style={{
@@ -2277,6 +2369,27 @@ export default function AppDetailPage() {
           )}
         </div>
       </Drawer>
+
+      <Modal
+        title={gameSession?.name}
+        open={!!gameSession}
+        onCancel={() => setGameSession(null)}
+        footer={null}
+        width="92vw"
+        destroyOnHidden
+        styles={{ body: { height: "80vh", padding: 0 } }}
+      >
+        {gameSession && (
+          <GameFrame
+            appId={appId}
+            session={gameSession}
+            onFinished={() => {
+              setGameSession(null);
+              void loadDetail();
+            }}
+          />
+        )}
+      </Modal>
     </PageShell>
   );
 }

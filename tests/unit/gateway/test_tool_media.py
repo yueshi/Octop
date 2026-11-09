@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import tempfile
 import time
@@ -20,9 +21,11 @@ from octop.infra.gateway.media.constants import INBOUND_DIR, OUTBOUND_DIR
 from octop.infra.gateway.media.ingress import AgentBackedMediaBackend
 from octop.infra.gateway.media.tool_media import (
     attachment_frames_from_tool_result,
+    block_to_content_part,
     enrich_media_block_preview,
     enrich_tool_result_with_backend,
     iter_media_blocks,
+    media_events_from_tool_result,
 )
 
 
@@ -483,6 +486,7 @@ def test_is_media_push_tool_allowlist() -> None:
     assert is_media_push_tool("namespace/desktop_screenshot")
     assert is_media_push_tool("mobile_screenshot")
     assert is_media_push_tool("generate_image")
+    assert is_media_push_tool("app_share_link")
     assert not is_media_push_tool("write_file")
     assert not is_media_push_tool("read_file")
     assert not is_media_push_tool("browser_use")
@@ -696,3 +700,178 @@ def test_attachment_frame_dedup_key_prefers_path() -> None:
         == "path:outbound/a.png"
     )
     assert attachment_frame_dedup_key({"preview_url": "/api/x"}) == "url:/api/x"
+
+
+@pytest.mark.asyncio
+async def test_block_to_content_part_resolves_dashboard_preview_url() -> None:
+    """IM media must read the workspace source behind a preview URL, not fetch it."""
+    from octop.infra.gateway.media.backend_files import media_preview_url
+
+    with tempfile.TemporaryDirectory() as ws:
+        workspace = _workspace(ws)
+        png = Path(ws) / OUTBOUND_DIR / "live.png"
+        png.parent.mkdir(parents=True)
+        png.write_bytes(b"LIVE-PNG")
+        preview = media_preview_url("agent-1", png.as_uri(), "image/png")
+
+        part = await block_to_content_part(
+            {
+                "type": "image",
+                "source": {"type": "url", "url": preview, "media_type": "image/png"},
+                "preview_url": preview,
+                "filename": "live.png",
+            },
+            workspace=workspace,
+        )
+
+    assert part is not None
+    assert part.url == ""
+    assert part.data == base64.b64encode(b"LIVE-PNG").decode("ascii")
+    assert part.mime_type == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_block_to_content_part_drops_missing_preview_source() -> None:
+    from octop.infra.gateway.media.backend_files import media_preview_url
+
+    with tempfile.TemporaryDirectory() as ws:
+        workspace = _workspace(ws)
+        preview = media_preview_url(
+            "agent-1",
+            f"file://{ws}/{OUTBOUND_DIR}/gone.png",
+            "image/png",
+        )
+        part = await block_to_content_part(
+            {
+                "type": "image",
+                "source": {"type": "url", "url": preview},
+                "preview_url": preview,
+            },
+            workspace=workspace,
+        )
+
+    assert part is None
+
+
+@pytest.mark.asyncio
+async def test_media_events_skip_historical_tool_calls() -> None:
+    with tempfile.TemporaryDirectory() as ws:
+        workspace = _workspace(ws)
+        await workspace.aupload_bytes(f"{OUTBOUND_DIR}/old.png", b"OLD")
+        await workspace.aupload_bytes(f"{OUTBOUND_DIR}/live.png", b"LIVE")
+        old_block = {
+            "type": "image",
+            "source": {
+                "type": "url",
+                "url": f"file://{ws}/{OUTBOUND_DIR}/old.png",
+                "media_type": "image/png",
+            },
+            "filename": "old.png",
+        }
+        live_block = {
+            "type": "image",
+            "source": {
+                "type": "url",
+                "url": f"file://{ws}/{OUTBOUND_DIR}/live.png",
+                "media_type": "image/png",
+            },
+            "filename": "live.png",
+        }
+        chunk = {
+            "type": "tool_result",
+            "messages": [
+                {"tool_call_id": "call-old", "name": "send_file_to_user", "content": old_block},
+                {"tool_call_id": "call-live", "name": "send_file_to_user", "content": live_block},
+            ],
+        }
+
+        events = [
+            event
+            async for event in media_events_from_tool_result(
+                chunk,
+                workspace=workspace,
+                allowed_tool_call_ids={"call-live"},
+            )
+        ]
+
+    assert len(events) == 1
+    part = events[0].content[0]
+    assert part.data == base64.b64encode(b"LIVE").decode("ascii")
+
+
+@pytest.mark.asyncio
+async def test_enrich_tool_result_does_not_mutate_shared_message() -> None:
+    """Dashboard enrichment must copy BaseMessage, not rewrite harness state."""
+    from langchain_core.messages import ToolMessage
+
+    with tempfile.TemporaryDirectory() as ws:
+        workspace = _workspace(ws, virtual_mode=True)
+        png = Path(ws) / OUTBOUND_DIR / "shot.png"
+        png.parent.mkdir(parents=True)
+        png.write_bytes(b"PNG")
+        original = json.dumps(
+            {
+                "type": "image",
+                "source": {"type": "url", "url": png.as_uri(), "media_type": "image/png"},
+                "filename": "shot.png",
+                "path": str(png),
+            }
+        )
+        message = ToolMessage(
+            content=original,
+            name="send_file_to_user",
+            tool_call_id="call-1",
+        )
+        chunk = {"type": "tool_result", "messages": [message]}
+
+        enriched = await enrich_tool_result_with_backend(
+            chunk,
+            agent_id="agent-1",
+            workspace=workspace,
+        )
+
+    assert message.content == original
+    assert "preview_url" not in json.loads(message.content)
+    enriched_message = enriched["messages"][0]
+    assert enriched_message is not message
+    assert json.loads(enriched_message.content)["preview_url"].startswith("/api/agents/agent-1/")
+
+
+@pytest.mark.asyncio
+async def test_media_events_skip_im_unsafe_blocks() -> None:
+    with tempfile.TemporaryDirectory() as ws:
+        workspace = _workspace(ws)
+        await workspace.aupload_bytes(f"{OUTBOUND_DIR}/cover.svg", b"<svg/>")
+        chunk = {
+            "type": "tool_result",
+            "messages": [
+                {
+                    "tool_call_id": "call-share",
+                    "name": "app_share_link",
+                    "content": [
+                        {"type": "text", "text": "App\n/p/token"},
+                        {
+                            "type": "image",
+                            "path": f"{OUTBOUND_DIR}/cover.svg",
+                            "source": {
+                                "type": "url",
+                                "url": f"file://{ws}/{OUTBOUND_DIR}/cover.svg",
+                                "media_type": "image/svg+xml",
+                            },
+                            "filename": "cover.svg",
+                            "im_safe": False,
+                        },
+                    ],
+                }
+            ],
+        }
+        events = [
+            event
+            async for event in media_events_from_tool_result(
+                chunk,
+                workspace=workspace,
+                allowed_tool_call_ids={"call-share"},
+            )
+        ]
+
+    assert events == []

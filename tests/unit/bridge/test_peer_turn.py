@@ -29,6 +29,7 @@ def test_bridge_turn_ws_payload_keeps_composer_fields() -> None:
             "target_agent_ids": ["doctor"],
             "mcp_servers": ["gmail"],
             "skills": ["notes"],
+            "reply_via": "im",
         }
     )
     assert out["type"] == "user_turn"
@@ -41,6 +42,7 @@ def test_bridge_turn_ws_payload_keeps_composer_fields() -> None:
     assert out["target_agent_ids"] == ["doctor"]
     assert out["mcp_servers"] == ["gmail"]
     assert out["skills"] == ["notes"]
+    assert out["reply_via"] == "im"
     assert "request_id" not in out
     assert "agent_id" not in out
 

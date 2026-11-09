@@ -65,14 +65,28 @@ function TitleBar({ isTeam = false }: { isTeam?: boolean }) {
 describe("thinking display preference", () => {
   beforeEach(() => localStorage.clear());
 
-  it("keeps the existing default: expand while streaming, collapse on completion", () => {
-    const split = thinkingSplit();
-    const { rerender } = render(
-      <AssistantProcessSummary split={split} isStreaming />,
-    );
-    expect(screen.getByText("Thinking content")).toBeInTheDocument();
-    rerender(<AssistantProcessSummary split={split} isStreaming={false} />);
+  it("collapses by default while streaming and expands on demand", () => {
+    render(<AssistantProcessSummary split={thinkingSplit()} isStreaming />);
     expect(screen.queryByText("Thinking content")).not.toBeInTheDocument();
+    expect(screen.getByRole("button")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.getByText("Thinking content")).toBeInTheDocument();
+  });
+
+  it("shows elapsed thinking time while streaming", () => {
+    render(
+      <AssistantProcessSummary
+        split={thinkingSplit()}
+        isStreaming
+        startedAt={Date.now() - 12_000}
+      />,
+    );
+    expect(
+      screen.getByText(/深度思考中 · 12s|Thinking · 12s/),
+    ).toBeInTheDocument();
   });
 
   it("collapses by default while streaming in team chats", () => {
@@ -113,7 +127,7 @@ describe("thinking display preference", () => {
     ).toBeInTheDocument();
   });
 
-  it("saves the menu choice and applies it to mounted panels and later visits", async () => {
+  it("toggles the menu choice and applies it to mounted panels and later visits", async () => {
     const { unmount } = render(
       <>
         <TitleBar />
@@ -124,12 +138,12 @@ describe("thinking display preference", () => {
     const preference = await screen.findByRole("switch", {
       name: "chat.collapseThinking",
     });
-    expect(preference).not.toBeChecked();
+    expect(preference).toBeChecked();
     fireEvent.click(
       screen.getByRole("menuitem", { name: /chat.collapseThinking/ }),
     );
-    expect(localStorage.getItem(COLLAPSE_THINKING_SOLO_KEY)).toBe("true");
-    expect(screen.queryByText("Thinking content")).not.toBeInTheDocument();
+    expect(localStorage.getItem(COLLAPSE_THINKING_SOLO_KEY)).toBe("false");
+    expect(screen.getByText("Thinking content")).toBeInTheDocument();
     unmount();
     render(
       <>
@@ -137,11 +151,11 @@ describe("thinking display preference", () => {
         <AssistantProcessSummary split={thinkingSplit()} isStreaming />
       </>,
     );
-    expect(screen.queryByText("Thinking content")).not.toBeInTheDocument();
+    expect(screen.getByText("Thinking content")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "更多" }));
     expect(
       await screen.findByRole("switch", { name: "chat.collapseThinking" }),
-    ).toBeChecked();
+    ).not.toBeChecked();
   });
 
   it("defaults team menu switch on and stores team preference separately", async () => {

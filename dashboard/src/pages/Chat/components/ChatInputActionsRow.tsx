@@ -435,6 +435,15 @@ export default function ChatInputActionsRow({
     (model) => modelOptionValue(model) === reasoningModelRef,
   );
   const reasoningModelCapability = reasoningModel?.reasoning_config;
+  // Always-thinking models (e.g. MiniMax-M3.1-Flash) cannot be switched off,
+  // but some still expose effort levels. Show the status plus effort choices
+  // instead of meaningless auto/on/off modes.
+  const alwaysOnReasoning = Boolean(
+    reasoningModelCapability &&
+      reasoningModelCapability.adapter !== "status_only" &&
+      !reasoningModelCapability.toggle &&
+      reasoningModelCapability.efforts.length > 0,
+  );
 
   const reasoningModeLabel = (mode: "auto" | "enabled" | "disabled") =>
     mode === "auto"
@@ -474,6 +483,12 @@ export default function ChatInputActionsRow({
     if (capability.adapter === "status_only") {
       return t("chat.reasoningAlways", "始终推理");
     }
+    if (!capability.toggle && capability.efforts.length > 0) {
+      return (
+        (active ? reasoningEffort : capability.default_effort) ||
+        t("chat.reasoningAlways", "始终推理")
+      );
+    }
     if (active) {
       return reasoningEffort || reasoningModeLabel(reasoningMode);
     }
@@ -506,7 +521,8 @@ export default function ChatInputActionsRow({
           <span>{reasoningModel ? modelOptionLabel(reasoningModel) : ""}</span>
         </Tooltip>
       </div>
-      {reasoningModelCapability.adapter === "status_only" ? (
+      {reasoningModelCapability.adapter === "status_only" ||
+      alwaysOnReasoning ? (
         <div className={styles.reasoningStatusRow}>
           <Brain size={16} />
           <span>{t("chat.reasoningAlways", "始终推理")}</span>
@@ -533,36 +549,37 @@ export default function ChatInputActionsRow({
               {reasoningMode === mode && <Check size={16} />}
             </button>
           ))}
-          {reasoningModelCapability.efforts.length > 0 && (
-            <>
-              <div className={styles.reasoningMenuDivider} />
-              <div className={styles.reasoningMenuSectionLabel}>
-                {t("chat.reasoningEffort", "思考强度")}
-              </div>
-              {reasoningModelCapability.efforts.map((effort) => (
-                <button
-                  key={effort}
-                  type="button"
-                  className={`${styles.reasoningMenuChoice} ${
-                    reasoningEffort === effort
-                      ? styles.reasoningMenuChoiceActive
-                      : ""
-                  }`}
-                  onClick={() =>
-                    onReasoningChange?.(
-                      reasoningMode === "disabled" ? "enabled" : reasoningMode,
-                      effort,
-                    )
-                  }
-                >
-                  <span>{effort}</span>
-                  {reasoningEffort === effort && <Check size={16} />}
-                </button>
-              ))}
-            </>
-          )}
         </>
       )}
+      {reasoningModelCapability.adapter !== "status_only" &&
+        reasoningModelCapability.efforts.length > 0 && (
+          <>
+            <div className={styles.reasoningMenuDivider} />
+            <div className={styles.reasoningMenuSectionLabel}>
+              {t("chat.reasoningEffort", "思考强度")}
+            </div>
+            {reasoningModelCapability.efforts.map((effort) => (
+              <button
+                key={effort}
+                type="button"
+                className={`${styles.reasoningMenuChoice} ${
+                  reasoningEffort === effort
+                    ? styles.reasoningMenuChoiceActive
+                    : ""
+                }`}
+                onClick={() =>
+                  onReasoningChange?.(
+                    reasoningMode === "disabled" ? "enabled" : reasoningMode,
+                    effort,
+                  )
+                }
+              >
+                <span>{effort}</span>
+                {reasoningEffort === effort && <Check size={16} />}
+              </button>
+            ))}
+          </>
+        )}
     </div>
   ) : null;
 

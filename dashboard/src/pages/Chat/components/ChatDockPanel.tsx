@@ -15,6 +15,7 @@ import {
   Check,
   FilePen,
   FolderOpen,
+  Gamepad2,
   Globe,
   Plus,
   Puzzle,
@@ -35,6 +36,7 @@ import { resolveBrowserProfile } from "../../../utils/browserProfile";
 import type { DockTab, DockTabId } from "../hooks/useChatDockPanel";
 import { dockFileBasename } from "../utils/dockFilePath";
 import styles from "../index.module.less";
+import GameFrame from "../../../components/MiniAppFrame/GameFrame";
 import WorkspaceDrawer from "../../Agent/Workspace/components/WorkspaceDrawer";
 import ChatDockFileList from "./ChatDockFileList";
 import FilePanelContent from "./FilePanelContent";
@@ -421,6 +423,11 @@ const ChatDockPanel: React.FC<ChatDockPanelProps> = ({
                     t("chat.dockToolUiTitle", "Plugin tool")}
                 </span>
               </>
+            ) : tab.kind === "game" ? (
+              <>
+                <Gamepad2 size={16} strokeWidth={2} aria-hidden />
+                <span title={tab.session.name}>{tab.session.name}</span>
+              </>
             ) : tab.kind === "knowledge" ? (
               <>
                 <BookOpen size={16} strokeWidth={2} aria-hidden />
@@ -655,6 +662,26 @@ const ChatDockPanel: React.FC<ChatDockPanelProps> = ({
             </div>
           );
         })}
+
+        {openTabs
+          .filter(
+            (tab): tab is Extract<DockTab, { kind: "game" }> =>
+              tab.kind === "game",
+          )
+          .map((tab) => {
+            const isActive =
+              activeTab?.kind === "game" && activeTab.id === tab.id;
+            return (
+              <div
+                key={tab.id}
+                className={styles.dockTabBody}
+                hidden={!isActive}
+                style={{ display: isActive ? "flex" : "none" }}
+              >
+                <GameFrame appId={tab.appId} session={tab.session} />
+              </div>
+            );
+          })}
       </div>
     </ChatDockPanelShell>
   );

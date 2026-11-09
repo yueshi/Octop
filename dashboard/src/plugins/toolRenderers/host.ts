@@ -8,6 +8,7 @@ import {
 import { registerToolRenderer } from "./registry";
 import type {
   OctopPluginUIHost,
+  OpenGamePanelOptions,
   ToolRenderContext,
   ToolRendererRegistration,
 } from "./types";
@@ -20,6 +21,7 @@ let dockHandlers: {
     toolName?: string;
   }) => void;
   closeSidePanel?: (callId: string) => void;
+  openGamePanel?: (opts: OpenGamePanelOptions) => void;
 } = {};
 
 /** Chat page wires dock open/close for plugin ``host.openSidePanel``. */
@@ -74,6 +76,9 @@ function createHost(defaultPluginId: string): OctopPluginUIHost {
     },
     closeSidePanel(callId) {
       dockHandlers.closeSidePanel?.(callId);
+    },
+    openGamePanel(opts) {
+      dockHandlers.openGamePanel?.(opts);
     },
   };
 }

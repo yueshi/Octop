@@ -34,6 +34,7 @@ export interface AppTable {
   label: string;
   row_count: number;
   is_main: boolean;
+  public_visible: boolean;
   columns: AppColumn[];
 }
 
@@ -107,6 +108,16 @@ export interface AppViewSpec {
   table: { columns: string[]; page_size: number };
 }
 
+export interface QuickSheetInput {
+  sheet: string;
+  columns: AppColumn[];
+  header_row?: number;
+  mapping?: Record<string, string>;
+  metric_column?: string | null;
+  group_column?: string | null;
+  view?: QuickView;
+}
+
 export interface QuickInspectResponse {
   upload_path: string;
   sheet: string;
@@ -172,22 +183,61 @@ export interface AppAssistantCitation {
   row_id: string;
 }
 
+export interface AppAssistantChartSeries {
+  key: string;
+  label: string;
+}
+
+export interface AppAssistantChart {
+  type: "bar" | "line" | "pie" | "area" | "scatter" | "stacked_bar";
+  title: string;
+  x: string;
+  x_label?: string;
+  series: AppAssistantChartSeries[];
+  data: Record<string, string | number>[];
+  sampled?: boolean;
+  sample_size?: number;
+  matched_rows?: number;
+  truncated?: boolean;
+}
+
 export interface AppAssistantMessage {
   role: "user" | "assistant";
   content: string;
   created_at: number;
   citations?: AppAssistantCitation[];
+  charts?: AppAssistantChart[];
+}
+
+export interface AppGenerateResult {
+  text: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+/** One launch of an external game hosted on its own origin. */
+export interface AppGameSession {
+  session_id: string;
+  game_id: string;
+  name: string;
+  url: string;
+  token: string;
+  expires_at: number;
+  sandbox: string;
 }
 
 export type AppAssistantEvent =
   | { type: "token"; text: string }
   | { type: "tool"; name: string }
+  | { type: "chart"; chart: AppAssistantChart }
   | {
       type: "done";
       rounds: number;
       input_tokens: number;
       output_tokens: number;
       citations?: AppAssistantCitation[];
+      charts?: AppAssistantChart[];
     }
   | { type: "error"; message: string };
 
@@ -367,13 +417,16 @@ export const appsApi = {
   quickCreate: (body: {
     agent_id: string;
     path: string;
-    columns: AppColumn[];
-    view: QuickView;
+    columns?: AppColumn[];
+    sheets?: QuickSheetInput[];
+    view?: QuickView;
     name: string;
     description?: string;
     sheet?: string;
     header_row?: number;
     mapping?: Record<string, string>;
+    metric_column?: string | null;
+    group_column?: string | null;
     include_pii?: boolean;
     upsert_key?: string[];
   }) =>
@@ -400,6 +453,19 @@ export const appsApi = {
 
   tables: (appId: string) =>
     request<{ tables: AppTable[] }>(`/apps/${encodeId(appId)}/tables`),
+
+  setTableVisibility: (
+    appId: string,
+    tableKey: string,
+    publicVisible: boolean,
+  ) =>
+    request<AppTable>(
+      `/apps/${encodeId(appId)}/tables/${encodeURIComponent(tableKey)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ public_visible: publicVisible }),
+      },
+    ),
 
   rows: (appId: string, limit = 200, offset = 0, table = "main") =>
     request<AppRowsResponse>(
@@ -488,6 +554,20 @@ export const appsApi = {
     request<{ messages: AppAssistantMessage[] }>(
       `/apps/${encodeId(appId)}/assistant/history`,
     ),
+
+  /** One-shot text generation through the app's owning agent model. */
+  generate: (appId: string, body: { prompt: string; system?: string }) =>
+    request<AppGenerateResult>(`/apps/${encodeId(appId)}/generate`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** Issue a short-lived, app/user-scoped session for an external game. */
+  createGameSession: (appId: string, gameId: string) =>
+    request<AppGameSession>(`/apps/${encodeId(appId)}/game-sessions`, {
+      method: "POST",
+      body: JSON.stringify({ game_id: gameId }),
+    }),
 
   uploadImportFile: (
     appId: string,

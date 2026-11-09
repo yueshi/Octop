@@ -1,15 +1,15 @@
-# 小程序数据与协作架构方案
+# MiniApp 数据与协作架构方案
 
 > 状态：设计稿，未实施（2026-10-23）
 >
-> 范围：`feature/light-apps` 分支上的小程序能力（Agent tools + 工作区文件 + 沙箱 iframe）
+> 范围：`feature/light-apps` 分支上的 MiniApp 能力（Agent tools + 工作区文件 + 沙箱 iframe）
 >
 > 目标：把行数据从工作区 CSV 迁移到控制面 DB，补齐多人并发、外部数据读取、发布链接与长期可维护性。
 >
-> 相关：[小程序多 CSV（多数据表）设计](./light-apps-multi-table-design.md) 是一个**先行可交付的增量**
+> 相关：[MiniApp 多 CSV（多数据表）设计](./light-apps-multi-table-design.md) 是一个**先行可交付的增量**
 > （一个应用支持多张表），落地后与本方案的 P0 阶段衔接。
 >
-> 另见：[小程序默认 AI 助手与外部数据导入设计](./light-apps-assistant-and-import-design.md)
+> 另见：[MiniApp 默认 AI 助手与外部数据导入设计](./light-apps-assistant-and-import-design.md)
 > （§10 外部数据的落地版本）。
 
 ---
@@ -33,7 +33,7 @@
 2. **多人并发不安全**：锁只在单进程内；`launch.py` 支持多 worker，多实例部署时两个追加会互相覆盖。
 3. **数据不可直接维护**：数据只能由 Agent 追加或 iframe 内的表单写入；用户改一行、导一批数据都做不到。
 
-WorkBuddy 的资料库/小程序验证了正确方向：CSV 在云端作为“在线表格”承载，HTML 通过表格 ID 读取；发布链接默认关闭、可撤销；Agent 继承当前用户权限。本方案按 Octop 的自托管与多租户模型做适配。
+WorkBuddy 的资料库/MiniApp 验证了正确方向：CSV 在云端作为“在线表格”承载，HTML 通过表格 ID 读取；发布链接默认关闭、可撤销；Agent 继承当前用户权限。本方案按 Octop 的自托管与多租户模型做适配。
 
 ---
 
@@ -183,7 +183,7 @@ PostgreSQL 版本将 `INTEGER PRIMARY KEY AUTOINCREMENT` 换成
 ### 4.6 迁移编号
 
 上游 `develop` 已占用 022–024（`skill_package_shared`、`user_groups`、
-`user_group_profile`），本分支的小程序迁移因此整体重排为 **025–029**：
+`user_group_profile`），本分支的 MiniApp 迁移因此整体重排为 **025–029**：
 
 - `025_light_apps`：应用、协作者、多表、助手历史、数据源、团队看板；
 - `026_goal_deliverables`、`027_external_events`、`028_light_app_rows`、
@@ -573,7 +573,7 @@ cd dashboard && npx tsc -b
   `src/octop/i18n/{en,zh}.json` 的 `errors.*` 与 dashboard `apiErrors.*`；
 - 新 UI 文案同步 `dashboard/src/locales/{en,zh}.json` 的 `apps.*`；
 - 新路由补 `summary` / `description` / `response_model`，检查 `/api/docs` 可读性；
-- 更新 `docs/api.md` 中与小程序相关的接口说明。
+- 更新 `docs/api.md` 中与 MiniApp 相关的接口说明。
 
 ---
 
@@ -603,7 +603,7 @@ cd dashboard && npx tsc -b
 | 多端同步 | `data_version` 轮询 | P2 |
 | 评论、修订、协同编辑 | 不做 | — |
 
-WorkBuddy 明确小程序不适合复杂业务逻辑、高并发写入、严格权限控制；Octop 作为自托管
+WorkBuddy 明确 MiniApp 不适合复杂业务逻辑、高并发写入、严格权限控制；Octop 作为自托管
 平台，反而应在权限、审计、数据主权上做强，这是差异化方向。
 
 ---

@@ -1,11 +1,11 @@
-# 小程序：默认 AI 助手 + 外部数据导入设计
+# MiniApp：默认 AI 助手 + 外部数据导入设计
 
-> 状态：已实施 —— M1 多表、M2 助手、M3 手动导入、M4 外部数据源、M5 自动同步全部落地（2026-10-24；遗留：`append` 模式无去重键、助手无应用内 SDK 入口）
+> 状态：已实施 —— M1 多表、M2 助手、M3 手动导入、M4 外部数据源、M5 自动同步全部落地（2026-10-24；遗留：`append` 模式无去重键、数据助手无应用内 SDK 入口）。应用内通用生成入口于 2026-11-06 补齐（见 §2.9）。
 >
-> 范围：`feature/light-apps` 分支上的小程序能力
+> 范围：`feature/light-apps` 分支上的 MiniApp 能力
 >
-> 相关：[小程序多 CSV（多数据表）设计](./light-apps-multi-table-design.md)、
-> [小程序数据与协作架构方案](./light-apps-architecture.md)
+> 相关：[MiniApp 多 CSV（多数据表）设计](./light-apps-multi-table-design.md)、
+> [MiniApp 数据与协作架构方案](./light-apps-architecture.md)
 
 ---
 
@@ -13,7 +13,7 @@
 
 | # | 需求 | 一句话 |
 |---|------|--------|
-| 1 | 小程序默认支持 AI 助手 | 应用创建后自带一个能读本应用数据、能回答问题的对话入口；用户不必自己接模型 |
+| 1 | MiniApp 默认支持 AI 助手 | 应用创建后自带一个能读本应用数据、能回答问题的对话入口；用户不必自己接模型 |
 | 2 | 支持从外部文件或其他数据源导入数据 | 表的数据可以来自上传的 CSV/Excel、Agent 工作区里的文件，或外部数据源；既可手动导入，也可自动同步 |
 
 需求 1 让「应用自带智能」；需求 2 让「应用有真数据」。两者都建立在多表模型之上：
@@ -35,7 +35,7 @@
 
 **决定：做 B，并把 A 作为可选的编程入口。**
 
-- B 保证「默认」：任何小程序（包括 Agent 随手生成的最简页面）打开就有助手；
+- B 保证「默认」：任何 MiniApp （包括 Agent 随手生成的最简页面）打开就有助手；
 - A 让应用作者能把助手嵌进自己的界面（例如把「问助手」做成页面内的一个按钮）。
 
 ### 2.2 助手的身份与能力边界
@@ -90,7 +90,7 @@ SSE token 流 → Dashboard 助手面板显示回答
 | 清理 | repo 插入时裁剪到最近 200 条；应用删除时按 `app_id` 清空 |
 | 上下文裁剪 | 每次提问回放最近 12 条历史消息作为上下文 |
 
-### 2.5 SDK 入口（可选，供应用作者内嵌）— 未实施
+### 2.5 SDK 入口（可选，供应用作者内嵌）— 数据助手未实施（通用生成见 §2.9）
 
 ```js
 // 应用 HTML 内自行渲染聊天框时可用
@@ -107,6 +107,7 @@ const answer = await octopApp.ask("帮我看看这周的趋势");
 |------|------|------|
 | POST | `/api/apps/{app_id}/assistant` | SSE 流式问答；body `{question, thread_id?}` |
 | GET | `/api/apps/{app_id}/assistant/history` | 取该用户在此应用的会话历史（用于面板重开时回填） |
+| POST | `/api/apps/{app_id}/generate` | 一次性通用生成；body `{prompt, system?}`，返回 `{text, model, input_tokens, output_tokens}` |
 
 SSE 沿用 `api/routers/chat/sse.py` 的 `format_sse`，事件名统一为 `chunk`，
 事件类型放在 data 载荷的 `type` 字段：`token` / `tool` / `done` / `error`
@@ -130,6 +131,33 @@ SSE 沿用 `api/routers/chat/sse.py` 的 `format_sse`，事件名统一为 `chun
   回答完成后写 `usage_repo.record(..., source="app_assistant")`；
 - 面板上标注「消耗 Agent 额度」；
 - 单次会话最大轮数与超时沿用 Agent 既有上限，不另设。
+
+### 2.9 应用内通用生成（已实现，2026-11-06）
+
+数据助手限定「只回答本应用数据」，无法覆盖摘要、分类、改写、抽取、生成建议等
+通用文本任务。为此提供独立的、无状态的一次性生成入口：
+
+```js
+// 应用 HTML 内
+const { text } = await octopApp.generate("把这条记录改写成一句客户提醒", {
+  system: "面向客户，语气礼貌，不超过 40 字",
+});
+```
+
+| 项 | 决定 |
+|----|------|
+| 后端 | `POST /api/apps/{app_id}/generate`（非流式 JSON） |
+| 模型 | 所属 Agent 的默认模型；Agent 未运行 → 普通 HTTP 错误 |
+| 权限 | 应用 `view` 权限即可；与应用 ACL 完全一致 |
+| 计费 | 计入所属 Agent 额度，`source=app_generate` |
+| 历史 | 不保存会话；每次调用相互独立 |
+| 工具 | 无；不能读写应用数据，也不能调用 Agent 工具 |
+| 限制 | `prompt` ≤ 8000 字符，`system` ≤ 4000 字符，输出截断到 16000 字符，超时 90s |
+| 公开链接 | 不开放；公开页面的 SDK 直接以「只读公开链接」拒绝 |
+| 桥接 | iframe 仍不持有 JWT：`octopApp.generate()` → 父页面 → 带 JWT 的 HTTP 请求 |
+
+与 §2.5 的 `octopApp.ask()` 的区别：`generate` 是通用生成，不读应用数据、不保存
+对话；`ask` 是数据问答，会调用只读工具并共享助手历史（仍未实施）。
 
 ---
 
@@ -269,7 +297,7 @@ mode=append → 追加到该表；mode=replace → 覆盖该表
 ## 4. 三个需求的合并视图
 
 ```
-                     ┌──────────────── 小程序 ────────────────┐
+                     ┌──────────────── MiniApp ───────────────┐
                      │  app.html（沙箱 iframe）                │
    需求 1            │    ↕ window.octopApp（postMessage 桥）    │
    助手        ←──→  │  Dashboard 详情页：助手面板 + 数据区       │
@@ -316,7 +344,7 @@ M2 与 M3 可并行。M1 是三者共同前提。
 |------|------|
 | 助手写数据 | 写操作应由显式工具发起，避免「问一句就改了表」 |
 | 助手跨应用访问 | 助手只服务一个应用 |
-| 助手长期记忆 / 跨应用画像 | 超出小程序边界 |
+| 助手长期记忆 / 跨应用画像 | 超出 MiniApp 边界 |
 | 导入时自动改表结构 | 列变更必须显式（`app_update_schema`），导入只填数据 |
 | 外部源的写操作 | 只读工具，杜绝把外部系统改掉 |
 | 从 URL 抓取导入 | 需要抓取策略与 SSRF 防护，另行设计 |
@@ -328,6 +356,8 @@ M2 与 M3 可并行。M1 是三者共同前提。
 | 关注点 | 位置 |
 |--------|------|
 | 应用服务（读写、建表） | `src/octop/infra/apps/service.py` |
+| 应用内通用生成 | `src/octop/infra/apps/generation.py` |
+| 应用模型解析（助手与生成共用） | `src/octop/infra/apps/model_access.py` |
 | 表模型与校验 | `src/octop/infra/apps/models.py` |
 | Agent 工具与只读工具集 | `src/octop/infra/apps/tools.py` |
 | HTTP 路由 | `src/octop/api/routers/apps.py` |

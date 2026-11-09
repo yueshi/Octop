@@ -139,6 +139,11 @@ interface ChatInputProps {
   contextUsedTokens?: number | null;
   contextMaxTokens?: number;
   decisionSaved?: number;
+  /** Which transport should deliver the next turn on an IM thread. */
+  replyVia?: "im" | "web";
+  /** Channel display name; non-null only for IM threads. */
+  replyViaLabel?: string | null;
+  onReplyViaChange?: (value: "im" | "web") => void;
 }
 
 const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
@@ -195,6 +200,9 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       contextUsedTokens = null,
       contextMaxTokens = 128_000,
       decisionSaved = 0,
+      replyVia = "web",
+      replyViaLabel = null,
+      onReplyViaChange,
     },
     ref,
   ) {
@@ -869,6 +877,33 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
               onSteer={onSteerQueued}
             />
           )}
+          {replyViaLabel && onReplyViaChange ? (
+            <div className={styles.replyViaBar}>
+              <button
+                type="button"
+                className={`${styles.replyViaOption} ${
+                  replyVia === "im" ? styles.replyViaOptionActive : ""
+                }`}
+                aria-pressed={replyVia === "im"}
+                onClick={() => onReplyViaChange("im")}
+              >
+                {t("chat.replyVia.via", {
+                  channel: replyViaLabel,
+                  defaultValue: "Reply via {{channel}}",
+                })}
+              </button>
+              <button
+                type="button"
+                className={`${styles.replyViaOption} ${
+                  replyVia === "web" ? styles.replyViaOptionActive : ""
+                }`}
+                aria-pressed={replyVia === "web"}
+                onClick={() => onReplyViaChange("web")}
+              >
+                {t("chat.replyVia.webOnly", "Web only")}
+              </button>
+            </div>
+          ) : null}
           <ChatInputPreviewBar
             attachments={attachments}
             uploading={uploading}

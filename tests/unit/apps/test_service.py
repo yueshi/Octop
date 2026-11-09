@@ -24,6 +24,7 @@ from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.agents import AgentRepo
 from octop.infra.db.repos.apps import LightAppRepo
+from octop.infra.db.repos.secrets import SecretRepo
 from octop.infra.db.repos.users import UserRepo
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.utils.ulid import new_ulid
@@ -99,6 +100,7 @@ def world(tmp_path: Path) -> World:
             agent_repo=agent_repo,
             user_repo=user_repo,
             workspaces=_Workspaces({agent_id: workspace, other_agent_id: other_workspace}),
+            secret_repo=SecretRepo(db),
         ),
         repo=repo,
         db=db,
@@ -1977,3 +1979,221 @@ async def test_quick_create_rejects_paths_outside_imports(world: World) -> None:
             name="Nope",
         )
     _assert_code(exc, ErrorCode.APP_ROW_INVALID)
+
+
+@pytest.mark.parametrize(
+    "template_id",
+    [
+        "customer-followup",
+        "expense-tracker",
+        "project-tasks",
+        "inventory-count",
+        "reimbursement",
+    ],
+)
+async def test_every_system_template_creates_an_app(world: World, template_id: str) -> None:
+    row = await world.service.create_from_template(
+        agent_id=world.agent_id,
+        owner_user_id=world.alice_id,
+        template=template_id,
+        source="system",
+        name=f"模板 {template_id}",
+    )
+    schema = await world.service.read_schema(row)
+    assert schema.columns
+    html = await world.service.read_html(row)
+    assert html and "octopApp.listRows" in html
+
+
+async def test_quick_create_multi_imports_two_sheets(world: World) -> None:
+    data = _xlsx_bytes(
+        {
+            "orders": [
+                ["订单号", "区域", "金额"],
+                ["A-1", "华东", 120],
+                ["A-2", "华南", 80],
+            ],
+            "details": [
+                ["订单号", "商品", "数量"],
+                ["A-1", "纸杯", 10],
+                ["A-1", "吸管", 20],
+                ["A-2", "纸杯", 5],
+            ],
+        }
+    )
+    inspected = await world.service.quick_inspect(world.agent_id, filename="orders.xlsx", data=data)
+    sheets = []
+    for sheet in inspected["report"]["sheets"]:
+        columns = [
+            {
+                "name": column["name_suggestion"],
+                "label": column["source"],
+                "type": "string" if column["type"] == "enum" else column["type"],
+                "required": False,
+            }
+            for column in sheet["columns"]
+        ]
+        sheets.append(
+            {
+                "sheet": sheet["name"],
+                "columns": columns,
+                "mapping": {
+                    column["source"]: column["name_suggestion"] for column in sheet["columns"]
+                },
+                "view": "ledger",
+            }
+        )
+    row, result = await world.service.quick_create_multi(
+        agent_id=world.agent_id,
+        owner_user_id=world.alice_id,
+        path=inspected["upload_path"],
+        sheets=sheets,
+        name="订单看板",
+    )
+    assert result.imported == 5
+    tables = world.service.list_tables(row)
+    assert [table.table_key for table in tables] == ["main", "table_2"]
+    assert tables[1].label == "details"
+    _schema, orders, order_total = await world.service.read_rows(row)
+    assert order_total == 2
+    _schema, details, detail_total = await world.service.read_rows(row, table="table_2")
+    assert detail_total == 3
+    html = await world.service.read_html(row)
+    assert html and '"table_2"' in html
+    assert '"label": "details"' in html
+
+
+async def test_publication_token_reused_until_rotated_or_revoked(world: World) -> None:
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+
+    first, expires = world.service.get_or_create_publication(row, user_id=world.alice_id)
+    again, expires_again = world.service.get_or_create_publication(row, user_id=world.alice_id)
+    rotated, _ = world.service.get_or_create_publication(row, user_id=world.alice_id, rotate=True)
+
+    assert again == first
+    assert expires_again == expires
+    assert rotated != first
+
+    world.service.revoke_publication(row)
+    after_revoke, _ = world.service.get_or_create_publication(row, user_id=world.alice_id)
+    assert after_revoke not in {first, rotated}
+
+
+async def test_append_rejects_unmarked_pii_and_alter_can_mark(world: World) -> None:
+    row = await world.service.create(
+        agent_id=world.agent_id,
+        owner_user_id=world.alice_id,
+        name="Contacts",
+        columns=[
+            {"name": "title", "type": "string"},
+            {"name": "contact", "type": "text"},
+        ],
+    )
+
+    with pytest.raises(OctopError) as exc:
+        await world.service.append_row(
+            row,
+            {"title": "A", "contact": "李静 13800000002"},
+        )
+    assert exc.value.code == ErrorCode.APP_PII_UNMARKED
+    assert exc.value.details["column"] == "contact"
+
+    schema = await world.service.alter_schema(row, pii={"contact": "phone"})
+    assert schema.column("contact") is not None
+    assert schema.column("contact").pii == "phone"
+
+    await world.service.append_row(
+        row,
+        {"title": "A", "contact": "李静 13800000002"},
+    )
+    _schema, rows, _total = await world.service.read_rows(
+        world.service.get(row.app_id),
+        redact_pii=True,
+    )
+    assert rows == [{"title": "A", "contact": "••••"}]
+
+
+async def test_create_auto_marks_sensitive_headers(world: World) -> None:
+    row = await world.service.create(
+        agent_id=world.agent_id,
+        owner_user_id=world.alice_id,
+        name="Family",
+        columns=[
+            {"name": "emergency_contact", "label": "紧急联系人", "type": "string"},
+            {"name": "id_tail", "label": "证件后四位", "type": "string"},
+            {"name": "note", "label": "备注", "type": "text"},
+        ],
+    )
+
+    schema = await world.service.read_schema(row)
+
+    assert schema.column("emergency_contact").pii == "phone"
+    assert schema.column("id_tail").pii == "id_card"
+    assert schema.column("note").pii is None
+
+
+async def test_table_visibility_defaults_main_public_addons_private(world: World) -> None:
+    row = await world.service.create(
+        agent_id=world.agent_id,
+        owner_user_id=world.alice_id,
+        name="Tracker",
+        columns=[{"name": "title", "type": "string"}],
+    )
+    await world.service.create_table(
+        row,
+        table_key="members",
+        columns=[{"name": "name", "type": "string"}],
+    )
+
+    views = world.service.list_tables(row)
+    assert [(view.table_key, view.public_visible) for view in views] == [
+        ("main", True),
+        ("members", False),
+    ]
+    assert world.service.is_table_public(row, "main") is True
+    assert world.service.is_table_public(row, "members") is False
+
+    updated = await world.service.set_table_visibility(
+        row,
+        table="members",
+        public_visible=True,
+    )
+    assert updated.public_visible is True
+    assert world.service.is_table_public(row, "members") is True
+
+
+async def test_read_redacts_unmarked_free_text_pii(world: World) -> None:
+    row = await world.service.create(
+        agent_id=world.agent_id,
+        owner_user_id=world.alice_id,
+        name="Notes",
+        columns=[
+            {"name": "title", "type": "string"},
+            {"name": "note", "type": "text"},
+        ],
+    )
+    # Simulate legacy rows written before write-time PII checks existed. One
+    # phone among five notes stays below the column-marking threshold, so the
+    # value-level redactor must catch it on its own.
+    for index in range(4):
+        world.repo.append_data_row(
+            row.app_id,
+            "main",
+            {"title": f"N{index}", "note": "hello"},
+            created_by=world.alice_id,
+        )
+    world.repo.append_data_row(
+        row.app_id,
+        "main",
+        {"title": "N4", "note": "call 13800000002"},
+        created_by=world.alice_id,
+    )
+
+    _schema, rows, _total = await world.service.read_rows(
+        world.service.get(row.app_id),
+        redact_pii=True,
+    )
+
+    assert rows[4] == {"title": "N4", "note": "call 138****0002"}
+    assert rows[0]["note"] == "hello"

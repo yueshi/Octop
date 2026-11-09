@@ -1,12 +1,18 @@
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import {
   Button,
   Card,
-  Col,
   Empty,
   Form,
   Modal,
-  Row,
   Select,
   Space,
   Spin,
@@ -17,10 +23,22 @@ import {
 } from "antd";
 import type { UploadFile } from "antd";
 import {
+  closestCenter,
+  DndContext,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
   AppWindow,
   Bot,
   Clock,
+  GripVertical,
   MessageSquareText,
+  MoveDiagonal2,
   Table2,
   User,
 } from "lucide-react";
@@ -35,6 +53,19 @@ import {
 } from "../../api/modules/apps";
 import PageShell from "../../layouts/PageShell";
 import CreateMiniAppModal from "./CreateMiniAppModal";
+import styles from "./index.module.less";
+import {
+  APP_CARD_SPANS,
+  loadAppCardLayout,
+  moveAppInOrder,
+  nextAppCardSize,
+  reconcileAppOrder,
+  saveAppCardLayout,
+  snapAppCardSize,
+  withAppCardSize,
+  type AppCardLayout,
+  type AppCardSize,
+} from "./appCardLayout";
 import { apiErrorMessage } from "../../utils/apiError";
 import { formatServerDateTime } from "../../utils/formatMessageTime";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
@@ -42,6 +73,39 @@ import { usePreviewImage } from "../../hooks/usePreviewImage";
 import { useAgent } from "../../context/AgentContext";
 
 const { Text, Paragraph } = Typography;
+
+const CARD_SIZE_CLASS: Record<AppCardSize, string> = {
+  standard: styles.sizeStandard,
+  tall: styles.sizeTall,
+  large: styles.sizeLarge,
+};
+
+const CARD_SIZE_LABEL_KEY: Record<AppCardSize, string> = {
+  standard: "apps.layout.sizeStandard",
+  tall: "apps.layout.sizeTall",
+  large: "apps.layout.sizeLarge",
+};
+
+const CARD_BODY_STYLE = {
+  padding: 0,
+  display: "flex",
+  flexDirection: "column" as const,
+  flex: 1,
+  minHeight: 0,
+};
+
+interface ResizeSession {
+  appId: string;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startWidth: number;
+  startHeight: number;
+  startSize: AppCardSize;
+  colWidth: number;
+  rowHeight: number;
+  gap: number;
+}
 
 function permissionLabel(
   permission: AppSummary["permission"],
@@ -80,23 +144,199 @@ function MetaItem({
   );
 }
 
-function AppPreview({ app }: { app: AppSummary }) {
+function AppPreview({
+  app,
+  className,
+}: {
+  app: AppSummary;
+  className?: string;
+}) {
   const url = usePreviewImage(
     app.has_preview ? appPreviewPath(app.app_id) : null,
   );
-  if (!url) return null;
   return (
-    <img
-      src={url}
-      alt={app.name}
-      style={{
-        display: "block",
-        width: "100%",
-        height: 140,
-        objectFit: "cover",
-        background: "var(--fn-color-brand-bg)",
+    <div className={className}>
+      {url ? (
+        <img
+          className={styles.previewImage}
+          src={url}
+          alt={app.name}
+          draggable={false}
+        />
+      ) : (
+        <div className={styles.previewEmpty}>
+          <AppWindow size={30} strokeWidth={1.2} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AppCardTile({
+  app,
+  size,
+  timeZone,
+  onOpen,
+  onResizeStart,
+  onCycleSize,
+}: {
+  app: AppSummary;
+  size: AppCardSize;
+  timeZone: string;
+  onOpen: (appId: string) => void;
+  onResizeStart: (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    appId: string,
+    size: AppCardSize,
+  ) => void;
+  onCycleSize: (appId: string, size: AppCardSize) => void;
+}) {
+  const { t } = useTranslation();
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDragNodeRef,
+    transform,
+    isDragging,
+  } = useDraggable({ id: app.app_id });
+  const { setNodeRef: setDropNodeRef, isOver } = useDroppable({
+    id: app.app_id,
+  });
+  const setNodeRef = useCallback(
+    (node: HTMLElement | null) => {
+      setDragNodeRef(node);
+      setDropNodeRef(node);
+    },
+    [setDragNodeRef, setDropNodeRef],
+  );
+  const sizeLabel = t(CARD_SIZE_LABEL_KEY[size]);
+
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      role="group"
+      tabIndex={0}
+      aria-label={`${app.name} · ${t("apps.layout.dragHint")}`}
+      className={[
+        styles.tile,
+        CARD_SIZE_CLASS[size],
+        isDragging ? styles.tileDragging : "",
+        isOver ? styles.tileOver : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      style={
+        transform
+          ? {
+              transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+              zIndex: 5,
+            }
+          : undefined
+      }
+      onClick={() => onOpen(app.app_id)}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen(app.app_id);
+        }
       }}
-    />
+    >
+      <span className={styles.dragHandle} aria-hidden>
+        <GripVertical size={14} />
+      </span>
+      <button
+        type="button"
+        className={styles.resizeHandle}
+        title={`${t("apps.layout.resizeHint")} · ${sizeLabel}`}
+        aria-label={`${t("apps.layout.resizeHint")} · ${sizeLabel}`}
+        onPointerDown={(event) => onResizeStart(event, app.app_id, size)}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          event.stopPropagation();
+          onCycleSize(app.app_id, size);
+        }}
+      >
+        <MoveDiagonal2 size={13} />
+      </button>
+      <Card
+        hoverable
+        className={styles.card}
+        styles={{ body: CARD_BODY_STYLE }}
+        style={{
+          overflow: "hidden",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          borderColor: "var(--fn-color-brand-border)",
+        }}
+      >
+        <AppPreview app={app} className={styles.preview} />
+        <div className={styles.body}>
+          <Space
+            align="start"
+            style={{ width: "100%", justifyContent: "space-between" }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Text
+                strong
+                ellipsis={{ tooltip: app.name }}
+                style={{ fontSize: 15 }}
+              >
+                {app.name}
+              </Text>
+            </div>
+            <Space size={4} style={{ marginInlineEnd: 0, flex: "none" }}>
+              {!app.has_html && (
+                <Tag color="warning" style={{ marginInlineEnd: 0 }}>
+                  {t("apps.noInterface")}
+                </Tag>
+              )}
+              {app.permission !== "edit_structure" && (
+                <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+                  {permissionLabel(app.permission, t)}
+                </Tag>
+              )}
+            </Space>
+          </Space>
+          <Paragraph
+            type="secondary"
+            ellipsis={{ rows: 2 }}
+            style={{ margin: "6px 0 0", minHeight: 44 }}
+          >
+            {app.description || "—"}
+          </Paragraph>
+        </div>
+        <div className={styles.metaWrap}>
+          <div className={styles.meta}>
+            <Space size={12} wrap style={{ marginBottom: 4 }}>
+              <MetaItem icon={<User size={12} color="var(--fn-color-brand)" />}>
+                {t("apps.createdBy", {
+                  name: app.owner_username || "—",
+                })}
+              </MetaItem>
+              <MetaItem icon={<Bot size={12} color="var(--fn-color-info)" />}>
+                {app.agent_name || app.agent_id}
+              </MetaItem>
+            </Space>
+            <Space size={12} wrap>
+              <MetaItem
+                icon={<Table2 size={12} color="var(--fn-color-info)" />}
+              >
+                {t("apps.rows", { count: app.row_count })}
+              </MetaItem>
+              <MetaItem icon={<Clock size={12} />}>
+                {formatServerDateTime(app.updated_at, timeZone)}
+              </MetaItem>
+            </Space>
+          </div>
+        </div>
+      </Card>
+    </div>
   );
 }
 
@@ -112,6 +352,187 @@ export default function AppsPage() {
   const [restoreForm] = Form.useForm<{ agent_id: string }>();
   const [restoreFiles, setRestoreFiles] = useState<UploadFile[]>([]);
   const [restoreSaving, setRestoreSaving] = useState(false);
+
+  const [layout, setLayout] = useState<AppCardLayout>(loadAppCardLayout);
+  const [draftSize, setDraftSize] = useState<{
+    appId: string;
+    size: AppCardSize;
+  } | null>(null);
+  const [resize, setResize] = useState<ResizeSession | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const suppressClickRef = useRef(false);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+  );
+
+  const orderedApps = useMemo(() => {
+    const byId = new Map(apps.map((app) => [app.app_id, app]));
+    return reconcileAppOrder(
+      apps.map((app) => app.app_id),
+      layout.order,
+    )
+      .map((appId) => byId.get(appId))
+      .filter((app): app is AppSummary => Boolean(app));
+  }, [apps, layout.order]);
+
+  useEffect(() => {
+    saveAppCardLayout(layout);
+  }, [layout]);
+
+  const sizeOf = useCallback(
+    (appId: string): AppCardSize =>
+      draftSize?.appId === appId
+        ? draftSize.size
+        : layout.sizes[appId] ?? "standard",
+    [draftSize, layout.sizes],
+  );
+
+  const openApp = useCallback(
+    (appId: string) => {
+      // A drag or resize ends with a click; do not navigate in that case.
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false;
+        return;
+      }
+      navigate(`/apps/${appId}`);
+    },
+    [navigate],
+  );
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const activeId = String(event.active.id);
+      const overId = event.over ? String(event.over.id) : null;
+      if (!overId || activeId === overId) return;
+      setLayout((prev) => {
+        const ids = reconcileAppOrder(
+          apps.map((app) => app.app_id),
+          prev.order,
+        );
+        const from = ids.indexOf(activeId);
+        const to = ids.indexOf(overId);
+        if (from < 0 || to < 0) return prev;
+        return { ...prev, order: moveAppInOrder(ids, from, to) };
+      });
+    },
+    [apps],
+  );
+
+  const cycleSize = useCallback((appId: string, size: AppCardSize) => {
+    setLayout((prev) => withAppCardSize(prev, appId, nextAppCardSize(size)));
+  }, []);
+
+  const startResize = useCallback(
+    (
+      event: ReactPointerEvent<HTMLButtonElement>,
+      appId: string,
+      size: AppCardSize,
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const grid = gridRef.current;
+      if (!grid) return;
+      // Capture the pointer so the drag still ends when the mouse is released
+      // outside the browser window (otherwise the resize never completes).
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        /* capture is best-effort */
+      }
+      const computed = window.getComputedStyle(grid);
+      const columns = computed.gridTemplateColumns
+        .split(/\s+/)
+        .map((value) => Number.parseFloat(value))
+        .filter((value) => Number.isFinite(value) && value > 0);
+      const colWidth = columns[0] ?? 280;
+      const rowHeight = Number.parseFloat(computed.gridAutoRows) || 260;
+      const gap = Number.parseFloat(computed.columnGap) || 16;
+      const span = APP_CARD_SPANS[size];
+      suppressClickRef.current = true;
+      setDraftSize({ appId, size });
+      setResize({
+        appId,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startWidth: span.cols * colWidth + (span.cols - 1) * gap,
+        startHeight: span.rows * rowHeight + (span.rows - 1) * gap,
+        startSize: size,
+        colWidth,
+        rowHeight,
+        gap,
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!resize) return;
+    let moved = false;
+    let next = resize.startSize;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+    const releaseClick = () => {
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 0);
+    };
+
+    const onMove = (event: PointerEvent) => {
+      if (event.pointerId !== resize.pointerId) return;
+      const dx = event.clientX - resize.startX;
+      const dy = event.clientY - resize.startY;
+      if (!moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+      moved = true;
+      const width = Math.max(resize.colWidth, resize.startWidth + dx);
+      const height = Math.max(resize.rowHeight, resize.startHeight + dy);
+      const cols = Math.min(
+        2,
+        Math.max(
+          1,
+          Math.round((width + resize.gap) / (resize.colWidth + resize.gap)),
+        ),
+      );
+      const rows = Math.min(
+        2,
+        Math.max(
+          1,
+          Math.round((height + resize.gap) / (resize.rowHeight + resize.gap)),
+        ),
+      );
+      next = snapAppCardSize(cols, rows);
+      setDraftSize({ appId: resize.appId, size: next });
+    };
+
+    const onUp = (event: PointerEvent) => {
+      if (event.pointerId !== resize.pointerId) return;
+      const finalSize = moved ? next : nextAppCardSize(resize.startSize);
+      setLayout((prev) => withAppCardSize(prev, resize.appId, finalSize));
+      setDraftSize(null);
+      setResize(null);
+      releaseClick();
+    };
+
+    const onCancel = () => {
+      setDraftSize(null);
+      setResize(null);
+      releaseClick();
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    window.addEventListener("blur", onCancel);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("blur", onCancel);
+      document.body.style.userSelect = previousUserSelect;
+      releaseClick();
+    };
+  }, [resize]);
 
   const openRestore = () => {
     setRestoreOpen(true);
@@ -200,90 +621,38 @@ export default function AppsPage() {
           </Space>
         </Empty>
       ) : (
-        <Row gutter={[16, 16]}>
-          {apps.map((app) => (
-            <Col key={app.app_id} xs={24} sm={12} lg={8} xl={6}>
-              <Card
-                hoverable
-                onClick={() => navigate(`/apps/${app.app_id}`)}
-                styles={{ body: { padding: 0 } }}
-                style={{
-                  overflow: "hidden",
-                  height: "100%",
-                  borderColor: "var(--fn-color-brand-border)",
-                }}
-              >
-                <AppPreview app={app} />
-                <div
-                  style={{
-                    padding: "14px 16px 10px",
-                    background:
-                      "linear-gradient(180deg, var(--fn-color-brand-bg) 0%, transparent 100%)",
-                    boxShadow: "inset 0 3px 0 var(--fn-color-brand)",
-                  }}
-                >
-                  <Space
-                    align="start"
-                    style={{ width: "100%", justifyContent: "space-between" }}
-                  >
-                    <Text strong style={{ fontSize: 15 }}>
-                      {app.name}
-                    </Text>
-                    <Space size={4} style={{ marginInlineEnd: 0 }}>
-                      {!app.has_html && (
-                        <Tag color="warning" style={{ marginInlineEnd: 0 }}>
-                          {t("apps.noInterface")}
-                        </Tag>
-                      )}
-                      {app.permission !== "edit_structure" && (
-                        <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-                          {permissionLabel(app.permission, t)}
-                        </Tag>
-                      )}
-                    </Space>
-                  </Space>
-                  <Paragraph
-                    type="secondary"
-                    ellipsis={{ rows: 2 }}
-                    style={{ margin: "6px 0 0", minHeight: 44 }}
-                  >
-                    {app.description || "—"}
-                  </Paragraph>
-                </div>
-                <div
-                  style={{
-                    borderTop: "1px solid var(--fn-color-brand-border)",
-                    background: "var(--fn-color-brand-bg)",
-                    padding: "8px 16px 10px",
-                  }}
-                >
-                  <Space size={12} wrap style={{ marginBottom: 4 }}>
-                    <MetaItem
-                      icon={<User size={12} color="var(--fn-color-brand)" />}
-                    >
-                      {t("apps.createdBy", { name: app.owner_username || "—" })}
-                    </MetaItem>
-                    <MetaItem
-                      icon={<Bot size={12} color="var(--fn-color-info)" />}
-                    >
-                      {app.agent_name || app.agent_id}
-                    </MetaItem>
-                  </Space>
-                  <Space size={12} wrap>
-                    <MetaItem
-                      icon={<Table2 size={12} color="var(--fn-color-info)" />}
-                    >
-                      {t("apps.rows", { count: app.row_count })}
-                    </MetaItem>
-                    <MetaItem icon={<Clock size={12} />}>
-                      {formatServerDateTime(app.updated_at, timeZone)}
-                    </MetaItem>
-                  </Space>
-                </div>
-              </Card>
-            </Col>
-          ))}
-        </Row>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={() => {
+            suppressClickRef.current = true;
+          }}
+          onDragEnd={(event) => {
+            handleDragEnd(event);
+            window.setTimeout(() => {
+              suppressClickRef.current = false;
+            }, 0);
+          }}
+          onDragCancel={() => {
+            window.setTimeout(() => {
+              suppressClickRef.current = false;
+            }, 0);
+          }}
+        >
+          <div ref={gridRef} className={styles.grid}>
+            {orderedApps.map((app) => (
+              <AppCardTile
+                key={app.app_id}
+                app={app}
+                size={sizeOf(app.app_id)}
+                timeZone={timeZone}
+                onOpen={openApp}
+                onResizeStart={startResize}
+                onCycleSize={cycleSize}
+              />
+            ))}
+          </div>
+        </DndContext>
       )}
 
       <CreateMiniAppModal

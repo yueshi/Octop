@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "columns": [
+    { "name": "applicant", "label": "申请人", "type": "string", "required": true },
+    { "name": "expense_date", "label": "费用日期", "type": "date", "required": true },
+    { "name": "category", "label": "费用类别", "type": "enum", "values": ["差旅", "交通", "餐饮", "办公", "招待", "其他"] },
+    { "name": "amount", "label": "金额", "type": "number", "required": true },
+    { "name": "status", "label": "状态", "type": "enum", "values": ["待审批", "已通过", "已驳回", "已打款"] },
+    { "name": "invoice_no", "label": "发票号", "type": "string" },
+    { "name": "note", "label": "备注", "type": "string" }
+  ]
+}

@@ -16,6 +16,7 @@ import styles from "../index.module.less";
 interface TurnProcessBlocksProps {
   split: AssistantTurnSplit;
   isStreaming: boolean;
+  startedAt?: number | null;
   onAcpPermissionSelect?: (message: string) => void;
   hideToolMedia: boolean;
   agentId: string | null;
@@ -36,6 +37,7 @@ function hasFoldContent(split: AssistantTurnSplit): boolean {
 export function TurnProcessBlocks({
   split,
   isStreaming,
+  startedAt = null,
   onAcpPermissionSelect,
   hideToolMedia,
   agentId,
@@ -90,6 +92,7 @@ export function TurnProcessBlocks({
             split={folded}
             statsSplit={split}
             isStreaming={isStreaming}
+            startedAt={startedAt}
             isTeam={isTeamRoom}
             onAcpPermissionSelect={onAcpPermissionSelect}
             hideToolMedia={hideToolMedia}

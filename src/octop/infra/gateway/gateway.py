@@ -121,6 +121,10 @@ class Gateway:
         self._dispatcher = build_default_dispatcher()
         self._slash_meta: SlashRuntimeMeta | None = None
         self._ws_hub = WebSocketHub()
+        # Bridge turn ids explicitly cancelled while queued. The processor
+        # consumes one at turn start; entries auto-expire so an active-turn
+        # cancel cannot leak into a later turn.
+        self._cancelled_bridge_turns: dict[str, float] = {}
         self._cli_hub = CliHub()
         self._steer = SteerCoordinator()
         self._ws_channel: WebSocketChannel | None = None
@@ -635,6 +639,107 @@ class Gateway:
         """Push a HITL pause (§7.4-2 ``approval_required``) to one user's sockets."""
         await self._ws_hub.push_to_user(user_id, frame)
 
+    async def publish_thread_updated(
+        self,
+        *,
+        user_id: int,
+        agent_id: str,
+        thread_id: str,
+        turn_id: str,
+        active: bool,
+    ) -> None:
+        """Tell dashboard clients that a thread's turn state or history changed.
+
+        This is transport-independent: IM turns call it too, so the sidebar,
+        unread badge and open history do not depend on a Dashboard-originated
+        WebSocket turn.
+        """
+        row = self._thread_registry.get_thread(thread_id)
+        if row is None:
+            return
+        if active:
+            self._ws_hub.mark_turn_active(thread_id)
+        else:
+            self._ws_hub.mark_turn_idle(thread_id)
+        unread = 0
+        try:
+            counts = self._repos.session_repo.unread_counts_for_threads([thread_id])
+            unread = int(counts.get(thread_id, 0))
+        except Exception:
+            logger.debug("unread count lookup failed thread=%s", thread_id, exc_info=True)
+        # The chat socket only knows the dashboard turn protocol. IM turns
+        # publish the same lifecycle frames so a Web client watching this
+        # thread can open/close its streaming state and reload history.
+        await self._ws_hub.push_to_thread(
+            thread_id,
+            {
+                "type": "turn.started" if active else "turn.ended",
+                "turn_id": turn_id,
+                "agent_id": agent_id,
+                "thread_id": thread_id,
+                "source": "im",
+            },
+        )
+        await self._ws_hub.push_to_user(
+            user_id,
+            {
+                "type": "thread.updated",
+                "agent_id": agent_id,
+                "thread_id": thread_id,
+                "channel_type": row.channel_type,
+                "turn_active": active,
+                "unread_count": unread,
+                "title": row.title,
+                "last_active": row.last_active,
+            },
+        )
+
+    def enqueue_im_turn(self, channel_id: str, message: Any) -> bool:
+        """Route a Web-originated turn through an IM channel's worker queue."""
+        manager = self._require_channel_manager()
+        if manager.get_channel(channel_id) is None:
+            return False
+        manager.enqueue(channel_id, message)
+        return True
+
+    def cancel_im_bridge_turn(self, turn_id: str) -> None:
+        """Mark a Web → IM bridge turn cancelled before/while it runs."""
+        cleaned = turn_id.strip()
+        if not cleaned:
+            return
+        now = time.monotonic()
+        for key, ts in list(self._cancelled_bridge_turns.items()):
+            if now - ts > 3600:
+                self._cancelled_bridge_turns.pop(key, None)
+        self._cancelled_bridge_turns[cleaned] = now
+
+    def consume_im_bridge_cancel(self, turn_id: str) -> bool:
+        """True once when this bridge turn was cancelled before it started."""
+        cleaned = turn_id.strip()
+        if not cleaned:
+            return False
+        return self._cancelled_bridge_turns.pop(cleaned, None) is not None
+
+    def clear_im_bridge_cancel(self, turn_id: str) -> None:
+        self._cancelled_bridge_turns.pop(turn_id.strip(), None)
+
+    def im_turn_waiting(self, channel_id: str, subject_id: str) -> bool:
+        """Best-effort check that another turn owns this IM session lock.
+
+        ``ChannelManager`` serializes per ``channel_id:subject_id``; when that
+        lock is held, a freshly enqueued bridge turn will wait in the queue.
+        The lock registry is an octop-gateway implementation detail, so this
+        returns False when it is unavailable rather than failing the turn.
+        """
+        manager = self._channel_manager
+        if manager is None or not channel_id or not subject_id:
+            return False
+        locks = getattr(manager, "_session_locks", None)
+        if not isinstance(locks, dict):
+            return False
+        lock = locks.get(f"{channel_id}:{subject_id}")
+        return bool(lock is not None and lock.locked())
+
     def _require_channel_manager(self) -> ChannelManager:
         if self._channel_manager is None:
             raise RuntimeError("gateway not booted")
@@ -851,6 +956,13 @@ class Gateway:
             backend = media_backend_for_agent(self._agent_manager, row.agent_id)
             if backend is not None:
                 registered.set_media_backend(backend)
+            if row.kind == "feishu" and not team_host:
+                # Feishu has no typing indicator implementation in the adapter.
+                # An invoke-mode turn would otherwise stay completely silent
+                # until the final answer; a single placeholder keeps the user
+                # informed without streaming tokens.
+                registered.constraints.reply_timeout = 12.0
+                registered.constraints.timeout_strategy = "placeholder"
         self._set_runtime_status(row.channel_id, connected=True)
         if row.kind == "weixin" and registered is not None:
             self._listen_for_weixin_context_token(registered, row)

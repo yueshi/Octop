@@ -70,37 +70,54 @@ def reasoning_capability(
     thinking_option = options.get("thinking") if isinstance(options, dict) else None
     model_id = str(model.get("id") or "").strip().lower()
     known_token_plan_model = model_id in TOKEN_PLAN_REASONING_MODELS
+    url = (base_url or "").lower()
+    # MiniMax-M3.1 always thinks and rejects ``thinking.type=disabled``; its
+    # OpenAI-compatible endpoint still accepts ``reasoning_effort``. Models
+    # discovered from /v1/models carry no metadata, so infer the capability
+    # here instead of requiring the provider row to be re-saved.
+    minimax_m3_1 = model_id.startswith("minimax-m3.1") and (
+        "minimaxi.com" in url or "minimax.io" in url
+    )
     if not isinstance(raw, dict):
-        if not legacy and not isinstance(thinking_option, dict) and not known_token_plan_model:
+        if minimax_m3_1:
+            raw = {
+                "default_mode": "enabled",
+                "toggle": False,
+                "adapter": "openai_reasoning_effort",
+                "efforts": ["low", "medium", "high", "xhigh", "max"],
+                "default_effort": "high",
+            }
+        elif not legacy and not isinstance(thinking_option, dict) and not known_token_plan_model:
             return None
-        raw = {
-            "default_mode": thinking_option.get("type", "enabled")
-            if isinstance(thinking_option, dict)
-            else "enabled"
-            if known_token_plan_model
-            else "auto",
-            "adapter": _legacy_adapter(model_id, base_url=base_url),
-        }
-        if model_id in {"minimax-m2.5", "minimax-m2.7"}:
-            raw.update(
-                {
-                    "toggle": False,
-                    "default_mode": "enabled",
-                    "adapter": "status_only",
-                }
-            )
-        if model_id.startswith("deepseek-v4-"):
-            raw.update(
-                {
-                    "efforts": ["high", "max"],
-                    "adapter": "thinking_nested_effort"
-                    if any(
-                        host in (base_url or "").lower()
-                        for host in ("lkeap.cloud.tencent.com", "tencentmaas.com")
-                    )
-                    else "thinking",
-                }
-            )
+        else:
+            raw = {
+                "default_mode": thinking_option.get("type", "enabled")
+                if isinstance(thinking_option, dict)
+                else "enabled"
+                if known_token_plan_model
+                else "auto",
+                "adapter": _legacy_adapter(model_id, base_url=base_url),
+            }
+            if model_id in {"minimax-m2.5", "minimax-m2.7"}:
+                raw.update(
+                    {
+                        "toggle": False,
+                        "default_mode": "enabled",
+                        "adapter": "status_only",
+                    }
+                )
+            if model_id.startswith("deepseek-v4-"):
+                raw.update(
+                    {
+                        "efforts": ["high", "max"],
+                        "adapter": "thinking_nested_effort"
+                        if any(
+                            host in (base_url or "").lower()
+                            for host in ("lkeap.cloud.tencent.com", "tencentmaas.com")
+                        )
+                        else "thinking",
+                    }
+                )
 
     if raw.get("supported", True) is not True:
         return None

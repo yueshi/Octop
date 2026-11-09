@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>项目任务看板</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --line:#e5e7eb; --text:#1f2937; --muted:#6b7280; --brand:#7c3aed; --brand-dark:#6d28d9; --danger:#dc2626; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:20px; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; font-size:14px; }
+  .page { max-width:1180px; margin:0 auto; }
+  .head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  h1 { margin:0; font-size:22px; }
+  .sub { margin:6px 0 0; color:var(--muted); font-size:13px; }
+  .badge { flex:none; padding:4px 10px; border-radius:999px; background:#f3e8ff; color:#6d28d9; font-size:12px; }
+  .stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:18px 0; }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:6px; }
+  .stat span { color:var(--muted); font-size:12px; }
+  .stat strong { font-size:24px; font-variant-numeric:tabular-nums; }
+  .toolbar { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+  input, select, textarea { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 10px; outline:none; }
+  input:focus, select:focus, textarea:focus { border-color:var(--brand); }
+  .toolbar input { flex:1 1 220px; }
+  .toolbar select { flex:0 0 130px; }
+  button { font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--card); color:var(--text); border-radius:8px; padding:8px 14px; }
+  button.primary { background:var(--brand); border-color:var(--brand); color:#fff; }
+  button.primary:hover { background:var(--brand-dark); }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:14px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+  .panel label { display:flex; flex-direction:column; gap:6px; color:var(--muted); font-size:12px; }
+  .panel label.wide { grid-column:1/-1; }
+  .panel input, .panel select, .panel textarea { width:100%; }
+  .actions { grid-column:1/-1; display:flex; gap:8px; }
+  .board { display:flex; gap:12px; overflow-x:auto; padding-bottom:8px; align-items:flex-start; }
+  .col { flex:0 0 265px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px; }
+  .col h2 { margin:0 0 10px; font-size:13px; display:flex; justify-content:space-between; align-items:center; }
+  .col h2 span { color:var(--muted); font-weight:400; }
+  .card { border:1px solid var(--line); border-radius:9px; padding:10px; margin-bottom:9px; background:#fafafa; }
+  .card:hover { border-color:#c4b5fd; background:#fdfcff; }
+  .card-title { font-weight:600; font-size:13px; line-height:1.4; margin-bottom:6px; }
+  .meta { display:flex; flex-wrap:wrap; gap:6px; color:var(--muted); font-size:12px; }
+  .pill { display:inline-block; padding:1px 7px; border-radius:999px; font-size:11px; }
+  .p-high { background:#fee2e2; color:#991b1b; }
+  .p-mid { background:#fef3c7; color:#92400e; }
+  .p-low { background:#e0f2fe; color:#075985; }
+  .overdue { color:var(--danger); font-weight:600; }
+  .progress { height:6px; border-radius:999px; background:#f1f5f9; overflow:hidden; margin-top:8px; }
+  .progress i { display:block; height:100%; border-radius:999px; background:var(--brand); }
+  .empty { color:var(--muted); text-align:center; padding:18px 0; font-size:12px; }
+  .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); margin:0; padding:9px 18px; border-radius:999px; background:#111827; color:#fff; font-size:13px; box-shadow:0 6px 20px rgba(0,0,0,.18); }
+  .toast.error { background:var(--danger); }
+  @media (max-width:820px) { .stats { grid-template-columns:repeat(2,minmax(0,1fr)); } .panel { grid-template-columns:1fr; } body { padding:12px; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="head">
+    <div><h1>项目任务看板</h1><p class="sub">按状态分列推进任务，盯住负责人、优先级和截止日期。</p></div>
+    <span class="badge" id="readonly" hidden>只读</span>
+  </header>
+  <section class="stats">
+    <div class="stat"><span>任务总数</span><strong id="stat-total">0</strong></div>
+    <div class="stat"><span>进行中</span><strong id="stat-doing">0</strong></div>
+    <div class="stat"><span>已完成</span><strong id="stat-done">0</strong></div>
+    <div class="stat"><span>已逾期</span><strong id="stat-overdue">0</strong></div>
+  </section>
+  <section class="toolbar">
+    <input id="search" placeholder="搜索任务、负责人或备注">
+    <select id="filter-priority"><option value="">全部优先级</option></select>
+    <button id="toggle-add" class="primary" type="button">新增任务</button>
+  </section>
+  <form id="add-form" class="panel" hidden>
+    <label>任务 *<input name="task" maxlength="200" required></label>
+    <label>负责人<input name="owner" maxlength="50"></label>
+    <label>状态<select name="status"></select></label>
+    <label>优先级<select name="priority"></select></label>
+    <label>截止日期<input type="date" name="due_date"></label>
+    <label>进度（%）<input type="number" name="progress" min="0" max="100" step="5" placeholder="0"></label>
+    <label class="wide">备注<input name="note" maxlength="200" placeholder="阻塞原因、下一步动作"></label>
+    <div class="actions"><button type="submit" class="primary">保存</button><button type="button" id="cancel-add">取消</button></div>
+  </form>
+  <section class="board" id="board"></section>
+</div>
+<p id="toast" class="toast" hidden></p>
+<script>
+(function () {
+  "use strict";
+  var STATUSES = ["待办", "进行中", "已完成", "阻塞"];
+  var PRIORITIES = ["高", "中", "低"];
+  var PRIORITY_CLASS = { "高": "p-high", "中": "p-mid", "低": "p-low" };
+  var rows = [];
+  var canEdit = true;
+  function $(s) { return document.querySelector(s); }
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function today() { var d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function escapeHtml(v) { return String(v == null ? "" : v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+  function toast(message, isError) {
+    var el = $("#toast"); el.textContent = message; el.classList.toggle("error", Boolean(isError)); el.hidden = false;
+    clearTimeout(toast.timer); toast.timer = setTimeout(function () { el.hidden = true; }, 2600);
+  }
+  function fillSelect(select, values, includeAll) {
+    select.innerHTML = (includeAll ? '<option value="">全部</option>' : "") + values.map(function (v) {
+      return '<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + "</option>";
+    }).join("");
+  }
+  function progressValue(row) {
+    var n = Number(row.progress);
+    if (!isFinite(n)) return 0;
+    return Math.max(0, Math.min(100, Math.round(n)));
+  }
+  function render() {
+    var q = $("#search").value.trim().toLowerCase();
+    var priority = $("#filter-priority").value;
+    var todayText = today();
+    var filtered = rows.filter(function (row) {
+      if (priority && row.priority !== priority) return false;
+      if (!q) return true;
+      return [row.task, row.owner, row.note].join(" ").toLowerCase().indexOf(q) >= 0;
+    });
+    var byStatus = {};
+    STATUSES.forEach(function (status) { byStatus[status] = []; });
+    filtered.forEach(function (row) {
+      var status = STATUSES.indexOf(row.status) >= 0 ? row.status : "待办";
+      byStatus[status].push(row);
+    });
+    var overdue = 0;
+    rows.forEach(function (row) {
+      if (row.status !== "已完成" && row.due_date && row.due_date < todayText) overdue += 1;
+    });
+    $("#stat-total").textContent = String(rows.length);
+    $("#stat-doing").textContent = String(rows.filter(function (r) { return r.status === "进行中"; }).length);
+    $("#stat-done").textContent = String(rows.filter(function (r) { return r.status === "已完成"; }).length);
+    $("#stat-overdue").textContent = String(overdue);
+    $("#board").innerHTML = STATUSES.map(function (status) {
+      var cards = byStatus[status].slice().sort(function (a, b) {
+        var pa = PRIORITIES.indexOf(a.priority), pb = PRIORITIES.indexOf(b.priority);
+        if (pa !== pb) return (pa < 0 ? 9 : pa) - (pb < 0 ? 9 : pb);
+        var da = a.due_date || "9999-12-31", db = b.due_date || "9999-12-31";
+        return da < db ? -1 : da > db ? 1 : 0;
+      });
+      var body = cards.length ? cards.map(function (row) {
+        var late = status !== "已完成" && row.due_date && row.due_date < todayText;
+        var pct = progressValue(row);
+        var priorityClass = PRIORITY_CLASS[row.priority] || "p-low";
+        return '<div class="card"><div class="card-title">' + escapeHtml(row.task) + "</div>" +
+          '<div class="meta">' +
+          (row.priority ? '<span class="pill ' + priorityClass + '">' + escapeHtml(row.priority) + "</span>" : "") +
+          (row.owner ? "<span>负责人：" + escapeHtml(row.owner) + "</span>" : "") +
+          (row.due_date ? '<span class="' + (late ? "overdue" : "") + '">截止：' + escapeHtml(row.due_date) + "</span>" : "") +
+          "</div>" +
+          '<div class="progress" title="进度 ' + pct + '%"><i style="width:' + pct + '%"></i></div>' +
+          (row.note ? '<div class="meta" style="margin-top:6px">' + escapeHtml(row.note) + "</div>" : "") +
+          "</div>";
+      }).join("") : '<p class="empty">暂无任务</p>';
+      return '<div class="col"><h2>' + status + "<span>" + cards.length + "</span></h2>" + body + "</div>";
+    }).join("");
+  }
+  async function refresh() {
+    try {
+      var result = await octopApp.listRows({ limit: 500 });
+      rows = (result && result.rows) || [];
+      render();
+    } catch (error) {
+      toast("加载失败：" + (error && error.message ? error.message : "未知错误"), true);
+    }
+  }
+  async function detectReadonly() {
+    if (typeof octopApp.me !== "function") return false;
+    try { var me = await octopApp.me(); return Boolean(me) && me.permission === "view"; } catch (e) { return false; }
+  }
+  function openForm(open) {
+    $("#add-form").hidden = !open;
+    $("#toggle-add").textContent = open ? "收起" : "新增任务";
+    if (open) $("#add-form input[name=task]").focus();
+  }
+  $("#toggle-add").addEventListener("click", function () { openForm($("#add-form").hidden); });
+  $("#cancel-add").addEventListener("click", function () { $("#add-form").reset(); openForm(false); });
+  $("#search").addEventListener("input", render);
+  $("#filter-priority").addEventListener("change", render);
+  $("#add-form").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var form = event.target, data = new FormData(form);
+    var task = String(data.get("task") || "").trim();
+    if (!task) { toast("请填写任务", true); return; }
+    var progressText = String(data.get("progress") || "").trim();
+    try {
+      await octopApp.appendRow({
+        task: task,
+        owner: String(data.get("owner") || "").trim(),
+        status: String(data.get("status") || STATUSES[0]),
+        priority: String(data.get("priority") || PRIORITIES[1]),
+        due_date: String(data.get("due_date") || ""),
+        progress: progressText === "" ? "" : Number(progressText),
+        note: String(data.get("note") || "").trim()
+      });
+      form.reset();
+      $("#add-form select[name=status]").value = "待办";
+      $("#add-form select[name=priority]").value = "中";
+      openForm(false);
+      await refresh();
+      toast("已添加任务");
+    } catch (error) {
+      toast("保存失败：" + (error && error.message ? error.message : "未知错误"), true);
+    }
+  });
+  async function boot() {
+    canEdit = !(await detectReadonly());
+    if (!canEdit) { $("#readonly").hidden = false; $("#toggle-add").hidden = true; openForm(false); }
+    fillSelect($("#add-form select[name=status]"), STATUSES, false);
+    fillSelect($("#add-form select[name=priority]"), PRIORITIES, false);
+    $("#add-form select[name=priority]").value = "中";
+    $("#filter-priority").innerHTML = '<option value="">全部优先级</option>' + PRIORITIES.map(function (p) {
+      return '<option value="' + escapeHtml(p) + '">' + escapeHtml(p) + "</option>";
+    }).join("");
+    await refresh();
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

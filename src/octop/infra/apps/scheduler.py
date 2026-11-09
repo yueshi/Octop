@@ -110,6 +110,7 @@ def build_source_service(
         agent_repo=services.agent_repo,
         user_repo=services.user_repo,
         workspaces=workspaces,  # type: ignore[arg-type]
+        secret_repo=services.secret_repo,
         external_tool_runner=GatewayToolRunner(
             repo=connector_repo,
             service=ConnectorService(

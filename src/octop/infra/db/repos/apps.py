@@ -89,6 +89,7 @@ class LightAppTableRow:
     schema_json: str
     schema_version: int
     data_version: int
+    public_visible: bool
     created_at: int
     updated_at: int
 
@@ -103,6 +104,7 @@ class LightAppTableRow:
             schema_json=str(r["schema_json"] or ""),
             schema_version=int(r["schema_version"] or 1),
             data_version=int(r["data_version"] or 0),
+            public_visible=bool(int(r["public_visible"] or 0)),
             created_at=int(r["created_at"]),
             updated_at=int(r["updated_at"]),
         )
@@ -878,19 +880,35 @@ class LightAppRepo:
         app_id: str,
         table_key: str,
         label: str = "",
+        *,
+        public_visible: bool = False,
     ) -> LightAppTableRow:
         ts = now_ts()
         with self._db.transaction() as conn:
             conn.execute(
                 "INSERT INTO light_app_tables("
-                "app_id, table_key, label, row_count, created_at, updated_at"
-                ") VALUES (?, ?, ?, 0, ?, ?)",
-                (app_id, table_key, label, ts, ts),
+                "app_id, table_key, label, row_count, public_visible, created_at, updated_at"
+                ") VALUES (?, ?, ?, 0, ?, ?, ?)",
+                (app_id, table_key, label, int(public_visible), ts, ts),
             )
         row = self.get_table(app_id, table_key)
         if row is None:
             raise RuntimeError(f"light app table insert failed: {app_id}/{table_key}")
         return row
+
+    def set_table_visibility(
+        self,
+        app_id: str,
+        table_key: str,
+        *,
+        public_visible: bool,
+    ) -> None:
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE light_app_tables SET public_visible = ?, updated_at = ? "
+                "WHERE app_id = ? AND table_key = ?",
+                (int(public_visible), now_ts(), app_id, table_key),
+            )
 
     def set_table_row_count(self, app_id: str, table_key: str, row_count: int) -> None:
         with self._db.transaction() as conn:

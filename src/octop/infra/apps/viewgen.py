@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from octop.infra.apps.models import Schema
@@ -30,8 +31,15 @@ def suggest_view(
     *,
     view: str = VIEW_DASHBOARD,
     title: str = "",
+    metric: str | None = None,
+    group: str | None = None,
 ) -> dict[str, Any]:
-    """Build a stable view spec from an inspection report and schema."""
+    """Build a stable view spec from an inspection report and schema.
+
+    ``metric`` selects the numeric column used for KPIs/charts; ``group``
+    selects the categorical column used for the bar chart and board columns.
+    Both are optional and ignored when they are not valid schema columns.
+    """
     if view not in VIEWS:
         view = VIEW_DASHBOARD
     columns = [column for column in schema.columns if not column.pii]
@@ -43,46 +51,55 @@ def suggest_view(
     numeric = [column for column in columns if column.type in {"number", "integer"}]
     dates = [column for column in columns if column.type in {"date", "datetime"}]
     categorical = [column for column in columns if _is_categorical(column, stats)]
+    metric_column = next((column for column in numeric if column.name == metric), None)
+    if metric_column is None and numeric:
+        metric_column = numeric[0]
+    group_column = next((column for column in categorical if column.name == group), None)
+    if group_column is None and categorical:
+        group_column = categorical[0]
 
     kpis: list[dict[str, Any]] = [
         {"column": "", "agg": "count", "label": "记录数"},
     ]
-    for column in numeric[:2]:
-        kpis.append({"column": column.name, "agg": "sum", "label": f"{column.label}合计"})
-    if numeric:
-        kpis.append({"column": numeric[0].name, "agg": "avg", "label": f"{numeric[0].label}均值"})
+    if metric_column is not None:
+        kpis.append(
+            {"column": metric_column.name, "agg": "sum", "label": f"{metric_column.label}合计"}
+        )
+        kpis.append(
+            {"column": metric_column.name, "agg": "avg", "label": f"{metric_column.label}均值"}
+        )
 
     charts: list[dict[str, Any]] = []
-    if dates and numeric:
+    if dates and metric_column is not None:
         charts.append(
             {
                 "type": "line",
                 "x": dates[0].name,
-                "y": numeric[0].name,
+                "y": metric_column.name,
                 "agg": "sum",
-                "label": f"{numeric[0].label}趋势",
+                "label": f"{metric_column.label}趋势",
             }
         )
-    if categorical:
-        target = numeric[0] if numeric else None
+    if group_column is not None:
         charts.append(
             {
                 "type": "bar",
-                "x": categorical[0].name,
-                "y": target.name if target else "",
-                "agg": "sum" if target else "count",
-                "label": f"按{categorical[0].label}分布",
+                "x": group_column.name,
+                "y": metric_column.name if metric_column else "",
+                "agg": "sum" if metric_column else "count",
+                "label": f"按{group_column.label}分布",
             }
         )
-    if len(categorical) > 1:
-        target = numeric[0] if numeric else None
+    other_categorical = [column for column in categorical if column is not group_column]
+    if other_categorical:
+        other = other_categorical[0]
         charts.append(
             {
                 "type": "bar",
-                "x": categorical[1].name,
-                "y": target.name if target else "",
-                "agg": "sum" if target else "count",
-                "label": f"按{categorical[1].label}分布",
+                "x": other.name,
+                "y": metric_column.name if metric_column else "",
+                "agg": "sum" if metric_column else "count",
+                "label": f"按{other.label}分布",
             }
         )
 
@@ -94,7 +111,7 @@ def suggest_view(
         "kpis": kpis,
         "charts": charts if view == VIEW_DASHBOARD else [],
         "filters": filters,
-        "group_by": categorical[0].name if categorical else "",
+        "group_by": group_column.name if group_column else "",
         "table": {"columns": table_columns, "page_size": 50},
     }
 
@@ -106,26 +123,53 @@ def render_html(
     title: str,
     description: str = "",
 ) -> str:
-    """Render one self-contained dashboard/ledger/board page."""
+    """Render a single-table dashboard/ledger/board page."""
+    return render_multi_html(
+        [{"key": "main", "label": "明细", "schema": schema, "spec": spec}],
+        title=title,
+        description=description,
+    )
+
+
+def render_multi_html(
+    tables: Sequence[dict[str, Any]],
+    *,
+    title: str,
+    description: str = "",
+) -> str:
+    """Render one page with a tab per table (single table hides the tabs)."""
     config = {
         "title": title,
         "description": description,
-        "spec": spec,
-        "columns": [
+        "tables": [
             {
-                "name": column.name,
-                "label": column.label,
-                "type": column.type,
-                "pii": column.pii,
-                "values": list(column.values),
+                "key": str(table.get("key") or "main"),
+                "label": str(table.get("label") or table.get("key") or "明细"),
+                "spec": table.get("spec") or {},
+                "columns": _columns_payload(table.get("schema")),
             }
-            for column in schema.columns
+            for table in tables
         ],
     }
     payload = json.dumps(config, ensure_ascii=False).replace("</", "<\\/")
     return _TEMPLATE.replace("__TITLE__", html.escape(title or "小程序")).replace(
         "__CONFIG__", payload
     )
+
+
+def _columns_payload(schema: Schema | None) -> list[dict[str, Any]]:
+    if schema is None:
+        return []
+    return [
+        {
+            "name": column.name,
+            "label": column.label,
+            "type": column.type,
+            "pii": column.pii,
+            "values": list(column.values),
+        }
+        for column in schema.columns
+    ]
 
 
 def _is_categorical(column: Any, stats: dict[str, Any]) -> bool:
@@ -155,6 +199,9 @@ _TEMPLATE = """<!doctype html>
   header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
   h1 { margin:0; font-size:22px; }
   .sub { margin:6px 0 0; color:var(--muted); font-size:13px; }
+  .tabs { display:flex; gap:4px; overflow-x:auto; margin:14px 0 0; border-bottom:1px solid var(--line); }
+  .tabs button { border:0; background:transparent; padding:8px 12px; color:var(--muted); border-bottom:2px solid transparent; border-radius:0; cursor:pointer; font:inherit; white-space:nowrap; }
+  .tabs button.active { color:var(--brand); border-bottom-color:var(--brand); font-weight:600; }
   .toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 12px; }
   select, input { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:7px 10px; outline:none; }
   select:focus, input:focus { border-color:var(--brand); }
@@ -199,6 +246,7 @@ _TEMPLATE = """<!doctype html>
   <header>
     <div><h1 id="title"></h1><p class="sub" id="description"></p></div>
   </header>
+  <nav class="tabs hidden" id="tabs"></nav>
   <section class="toolbar" id="toolbar">
     <input class="search" id="search" placeholder="搜索…">
   </section>
@@ -215,10 +263,12 @@ _TEMPLATE = """<!doctype html>
 (function () {
   "use strict";
   var CONFIG = __CONFIG__;
-  var SPEC = CONFIG.spec || {};
-  var COLUMNS = CONFIG.columns || [];
+  var TABLES = CONFIG.tables || [];
+  var DATA = {};
+  var ACTIVE = null;
+  var SPEC = {};
+  var COLUMNS = [];
   var COLUMN_MAP = {};
-  for (var i = 0; i < COLUMNS.length; i++) COLUMN_MAP[COLUMNS[i].name] = COLUMNS[i];
   var rows = [];
   var filtered = [];
   var page = 0;
@@ -397,10 +447,44 @@ _TEMPLATE = """<!doctype html>
     renderTable();
     renderBoard();
   }
-  async function loadRows() {
+  function setActive(table) {
+    ACTIVE = table;
+    SPEC = table.spec || {};
+    COLUMNS = table.columns || [];
+    COLUMN_MAP = {};
+    for (var i = 0; i < COLUMNS.length; i++) COLUMN_MAP[COLUMNS[i].name] = COLUMNS[i];
+    rows = DATA[table.key] || [];
+    filtered = rows.slice();
+    page = 0;
+    filters = {};
+    query = "";
+    renderTabs();
+    renderFilters();
+    render();
+  }
+  function renderTabs() {
+    var nav = $("#tabs");
+    if (TABLES.length <= 1) { nav.classList.add("hidden"); return; }
+    nav.classList.remove("hidden");
+    nav.innerHTML = TABLES.map(function (table) {
+      var active = ACTIVE && ACTIVE.key === table.key ? " active" : "";
+      return '<button type="button" class="' + active + '" data-key="' + escapeHtml(table.key) + '">' +
+        escapeHtml(table.label || table.key) + "</button>";
+    }).join("");
+    var buttons = nav.querySelectorAll("button");
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].addEventListener("click", function (event) {
+        var key = event.currentTarget.getAttribute("data-key");
+        for (var j = 0; j < TABLES.length; j++) {
+          if (TABLES[j].key === key) { setActive(TABLES[j]); return; }
+        }
+      });
+    }
+  }
+  async function loadRows(tableKey) {
     var all = [], offset = 0, total = null;
     while (total === null || all.length < total) {
-      var result = await octopApp.listRows({ limit: 500, offset: offset });
+      var result = await octopApp.listRows({ table: tableKey, limit: 500, offset: offset });
       var batch = (result && result.rows) || [];
       all = all.concat(batch);
       total = result && typeof result.total === "number" ? result.total : all.length;
@@ -414,15 +498,19 @@ _TEMPLATE = """<!doctype html>
     $("#title").textContent = CONFIG.title || "小程序";
     $("#description").textContent = CONFIG.description || "";
     document.title = CONFIG.title || "小程序";
-    try {
-      rows = await loadRows();
-      filtered = rows.slice();
-      renderFilters();
-      render();
-    } catch (error) {
+    if (!TABLES.length) {
       $("#empty").classList.remove("hidden");
-      $("#empty").textContent = "加载失败：" + (error && error.message ? error.message : "未知错误");
+      $("#empty").textContent = "没有可展示的数据表。";
+      return;
     }
+    for (var i = 0; i < TABLES.length; i++) {
+      try {
+        DATA[TABLES[i].key] = await loadRows(TABLES[i].key);
+      } catch (error) {
+        DATA[TABLES[i].key] = [];
+      }
+    }
+    setActive(TABLES[0]);
   }
   $("#prev").addEventListener("click", function () { if (page > 0) { page -= 1; renderTable(); } });
   $("#next").addEventListener("click", function () { page += 1; renderTable(); });

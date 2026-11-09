@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -9,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from octop_gateway.media import MediaBackend
 from octop_gateway.models import MessageEvent
 
-from octop.i18n import channel_tool_hint_end, channel_tool_hint_start, tool_display_name
+from octop.i18n import channel_tool_hint_end, channel_tool_hint_start, tool_display_name, tr
 from octop.infra.gateway.hitl.format import format_hitl_card, normalize_hitl_request
 from octop.infra.gateway.hitl.stream_compat import install_harness_hitl_compat
 from octop.infra.gateway.media.tool_media import (
@@ -35,6 +36,15 @@ class StreamProjectionState:
     hitl_pending_id: str | None = None
 
 
+@dataclass(frozen=True)
+class StreamBudget:
+    """Per-turn guard for external IM channels."""
+
+    max_tool_calls: int = 20
+    max_seconds: float = 180.0
+    max_repeats: int = 3
+
+
 @dataclass
 class _ToolProjectionState:
     current_node: str | None = None
@@ -46,10 +56,51 @@ class _ToolProjectionState:
     # historical tool results (replayed via PatchToolCallsMiddleware / Overwrite)
     # must not trigger re-sends.
     saw_tool_call: bool = False
+    # Tool call ids started in this stream. Media from any other ToolMessage
+    # is a full-history replay and must not be re-sent.
+    live_tool_call_ids: set[str] = field(default_factory=set)
     # Track tool_call_ids whose media we've already emitted to prevent
     # re-emission when PatchToolCallsMiddleware emits Overwrite(full_history).
     emitted_media_ids: set[str] = field(default_factory=set)
     emitted_tool_error_ids: set[str] = field(default_factory=set)
+    started_at: float = field(default_factory=time.monotonic)
+    repeat_counts: dict[str, int] = field(default_factory=dict)
+
+
+def _cancel_stream(agent_manager: AgentManager, agent_id: str, thread_id: str) -> None:
+    cancel = getattr(agent_manager, "cancel_stream", None)
+    if callable(cancel) and thread_id:
+        cancel(agent_id, thread_id)
+
+
+def _tool_result_repeat_key(message: Any) -> str:
+    name = message.get("name") if isinstance(message, dict) else getattr(message, "name", None)
+    content = (
+        message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
+    )
+    return f"{name}:{hash(str(content)[:600])}"
+
+
+def _live_message_call_id(message: Any) -> str | None:
+    raw = (
+        message.get("tool_call_id")
+        if isinstance(message, dict)
+        else getattr(message, "tool_call_id", None)
+    )
+    return raw.strip() if isinstance(raw, str) and raw.strip() else None
+
+
+def _is_error_result(message: Any) -> bool:
+    status = (
+        message.get("status") if isinstance(message, dict) else getattr(message, "status", None)
+    )
+    if status == "error":
+        return True
+    content = (
+        message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
+    )
+    text = str(content or "").lower()
+    return any(marker in text for marker in ("error", "failed", "timed out", "timeout"))
 
 
 def enrich_tool_stream_chunk(
@@ -90,10 +141,16 @@ async def _project_chunks(
     projection_state: StreamProjectionState | None,
     hitl_coordinator: HitlChannelCoordinator | None,
     hitl_ctx: HitlStreamContext | None,
+    budget: StreamBudget | None = None,
+    thread_id: str = "",
 ) -> AsyncIterator[MessageEvent]:
     loc = normalize_locale(str(locale))
     tool_state = _ToolProjectionState()
     harness_workspace = harness_workspace_for_agent(agent_manager, agent_id)
+
+    def _budget_stop(reason: str) -> MessageEvent:
+        _cancel_stream(agent_manager, agent_id, thread_id)
+        return MessageEvent.text(reason)
 
     def _tool_label(raw: str) -> str:
         return tool_display_name(raw, loc)
@@ -115,6 +172,9 @@ async def _project_chunks(
         )
 
     async for chunk in chunks:
+        if budget is not None and time.monotonic() - tool_state.started_at > budget.max_seconds:
+            yield _budget_stop(tr("stream_guard.time_budget", loc, seconds=int(budget.max_seconds)))
+            return
         if usage_tracker is not None:
             usage_tracker.observe(chunk)
         if history_tracker is not None:
@@ -140,6 +200,21 @@ async def _project_chunks(
 
         elif ctype == "tool_call_chunk":
             tool_state.saw_tool_call = True
+            call_id = chunk.get("id")
+            if (
+                isinstance(call_id, str)
+                and call_id
+                and call_id not in tool_state.live_tool_call_ids
+            ):
+                tool_state.live_tool_call_ids.add(call_id)
+                if (
+                    budget is not None
+                    and len(tool_state.live_tool_call_ids) > budget.max_tool_calls
+                ):
+                    yield _budget_stop(
+                        tr("stream_guard.tool_budget", loc, count=budget.max_tool_calls)
+                    )
+                    return
             idx_key = f"_idx_{chunk.get('index', 0)}"
             tool_state.active_tool_idx = idx_key
 
@@ -167,6 +242,21 @@ async def _project_chunks(
                 seen=tool_state.emitted_tool_error_ids,
                 live=tool_state.saw_tool_call,
             )
+            if budget is not None:
+                messages = chunk.get("messages")
+                if isinstance(messages, list):
+                    for message in messages:
+                        call_id = _live_message_call_id(message)
+                        if not call_id or call_id not in tool_state.live_tool_call_ids:
+                            continue
+                        if not _is_error_result(message):
+                            continue
+                        key = _tool_result_repeat_key(message)
+                        count = tool_state.repeat_counts.get(key, 0) + 1
+                        tool_state.repeat_counts[key] = count
+                        if count >= budget.max_repeats:
+                            yield _budget_stop(tr("stream_guard.no_progress", loc))
+                            return
             final_name = (
                 tool_state.tool_name_buf.get(tool_state.active_tool_idx or "", "") or "tool"
             )
@@ -185,6 +275,7 @@ async def _project_chunks(
                     async for media_event in media_events_from_tool_result(
                         chunk_for_media,
                         workspace=harness_workspace,
+                        allowed_tool_call_ids=tool_state.live_tool_call_ids or None,
                     ):
                         yield media_event
             tool_state.current_node = node
@@ -226,6 +317,7 @@ async def project_stream(
     projection_state: StreamProjectionState | None = None,
     hitl_coordinator: HitlChannelCoordinator | None = None,
     hitl_ctx: HitlStreamContext | None = None,
+    budget: StreamBudget | None = None,
 ) -> AsyncIterator[MessageEvent]:
     del media_backend  # IM tool media uses agent.backend directly
     async for ev in _project_chunks(
@@ -238,6 +330,8 @@ async def project_stream(
         projection_state=projection_state,
         hitl_coordinator=hitl_coordinator,
         hitl_ctx=hitl_ctx,
+        budget=budget,
+        thread_id=str(request.get("thread_id") or ""),
     ):
         yield ev
 

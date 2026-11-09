@@ -27,6 +27,29 @@ def test_minimax_token_plan_reasoning_is_always_on() -> None:
     assert capability["default_mode"] == "enabled"
 
 
+def test_minimax_m3_1_flash_defaults_to_always_on_effort_control() -> None:
+    for base_url in ("https://api.minimaxi.com/v1", "https://api.minimax.io/v1"):
+        capability = reasoning_capability({"id": "MiniMax-M3.1-Flash"}, base_url=base_url)
+        assert capability is not None
+        assert capability["toggle"] is False
+        assert capability["default_mode"] == "enabled"
+        assert capability["adapter"] == "openai_reasoning_effort"
+        assert capability["efforts"] == ["low", "medium", "high", "xhigh", "max"]
+        assert capability["default_effort"] == "high"
+
+
+def test_minimax_m3_1_flash_sends_default_high_effort() -> None:
+    capability = reasoning_capability(
+        {"id": "MiniMax-M3.1-Flash"}, base_url="https://api.minimaxi.com/v1"
+    )
+    assert reasoning_request_parameters(capability, mode="auto", effort=None) == {
+        "model_fields": {"reasoning_effort": "high"}
+    }
+    assert reasoning_request_parameters(capability, mode="disabled", effort="low") == {
+        "model_fields": {"reasoning_effort": "low"}
+    }
+
+
 def test_deepseek_v4_uses_nested_effort_parameter() -> None:
     for base_url in (
         "https://api.lkeap.cloud.tencent.com/plan/v3",

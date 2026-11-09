@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -121,6 +122,24 @@ class CapabilitiesConfig:
     mobile: MobileCapabilities = field(default_factory=MobileCapabilities)
 
 
+# allow-same-origin keeps the game's real origin so its API calls carry a
+# normal CORS Origin (the game is on a different host from the dashboard).
+DEFAULT_GAME_SANDBOX = (
+    "allow-scripts allow-forms allow-popups allow-modals allow-same-origin allow-downloads"
+)
+
+
+@dataclass(frozen=True)
+class GameConfig:
+    """External game allowed to launch from a MiniApp side panel."""
+
+    id: str
+    name: str
+    url: str
+    origin: str = ""
+    sandbox: str = DEFAULT_GAME_SANDBOX
+
+
 @dataclass(frozen=True)
 class OctopConfig:
     bind_host: str = "127.0.0.1"
@@ -143,6 +162,10 @@ class OctopConfig:
     capabilities: CapabilitiesConfig = field(default_factory=CapabilitiesConfig)
     max_upload_mb: int = DEFAULT_MAX_UPLOAD_MB
     browser_idle_timeout_minutes: int = DEFAULT_BROWSER_IDLE_TIMEOUT_MINUTES
+    # Absolute origin used when handing links to IM users (e.g. WeChat).
+    # Empty → tools return relative paths only.
+    public_base_url: str = ""
+    games: list[GameConfig] = field(default_factory=list)
 
     @property
     def max_upload_bytes(self) -> int:
@@ -416,6 +439,47 @@ def env_bind_overrides() -> tuple[str | None, int | None]:
     return host, port
 
 
+_GAME_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+
+
+def _parse_games_section(raw: object) -> list[GameConfig]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        msg = "config.games must be a list"
+        raise ValueError(msg)
+    games: list[GameConfig] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("config.games entries must be objects")
+        game_id = str(item.get("id") or "").strip()
+        name = str(item.get("name") or game_id).strip()
+        url = str(item.get("url") or "").strip()
+        origin = str(item.get("origin") or "").strip()
+        if not _GAME_ID_RE.fullmatch(game_id):
+            raise ValueError(f"invalid game id: {game_id!r}")
+        if game_id in seen:
+            raise ValueError(f"duplicate game id: {game_id!r}")
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError(f"game {game_id!r} url must be an http(s) URL")
+        derived = f"{parsed.scheme}://{parsed.netloc}"
+        if origin and origin != derived:
+            raise ValueError(f"game {game_id!r} origin must match its url")
+        seen.add(game_id)
+        games.append(
+            GameConfig(
+                id=game_id,
+                name=name,
+                url=url,
+                origin=derived,
+                sandbox=str(item.get("sandbox") or DEFAULT_GAME_SANDBOX),
+            )
+        )
+    return games
+
+
 def load_config(path: Path) -> OctopConfig:
     """Load ``config.json``; write defaults if absent. Apply env overrides.
 
@@ -621,6 +685,12 @@ def load_config(path: Path) -> OctopConfig:
         backup=backup,
         capabilities=capabilities,
         max_upload_mb=int(merged.get("max_upload_mb", DEFAULT_MAX_UPLOAD_MB)),
+        public_base_url=str(
+            os.environ.get("OCTOP_PUBLIC_BASE_URL") or merged.get("public_base_url") or ""
+        )
+        .strip()
+        .rstrip("/"),
+        games=_parse_games_section(merged.get("games")),
         browser_idle_timeout_minutes=max(
             0,
             int(

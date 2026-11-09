@@ -12,7 +12,14 @@ from pydantic import Field
 
 from octop.infra.agents.tool_scope import current_tool_scope
 from octop.infra.apps.models import MAIN_TABLE_KEY
-from octop.infra.apps.service import MAX_ASSET_BYTES, AppService, AppTableView
+from octop.infra.apps.pii import detect_text_pii, find_unmarked_pii
+from octop.infra.apps.service import (
+    FILE_PREVIEW,
+    MAX_ASSET_BYTES,
+    AppService,
+    AppTableView,
+    app_path,
+)
 from octop.infra.db.repos.apps import PERMISSION_RANK, LightAppRow
 
 APP_DELETE_TOOL_NAME = "app_delete"
@@ -20,11 +27,14 @@ APP_DELETE_TOOL_NAME = "app_delete"
 APP_TOOL_NAMES: tuple[str, ...] = (
     "app_inspect_file",
     "app_list",
+    "app_open",
+    "app_share_link",
     "app_create",
     "app_create_from_template",
     "app_add_table",
     "app_update_schema",
     "app_alter_schema",
+    "app_set_table_visibility",
     "app_write_html",
     "app_read_data",
     "app_append_row",
@@ -42,8 +52,10 @@ _COLUMNS_HELP = (
     '{"name": "snake_case identifier", "label": "display label", '
     '"type": "string|text|integer|number|boolean|date|datetime|enum", '
     '"required": false, "values": ["only for enum"], '
-    '"pii": "optional id_card|bank_card|phone|address|salary"}. '
-    "Up to 50 columns; names must start with a letter or underscore."
+    '"pii": "required for sensitive data: id_card|bank_card|phone|address|salary|email|secret"}. '
+    "Up to 50 columns; names must start with a letter or underscore. "
+    "Never put a phone, ID, bank card, email or address in a free-text/note "
+    "column: mark the column pii instead."
 )
 
 _TABLE_HELP = (
@@ -58,6 +70,9 @@ _HTML_HELP = (
     "Inside the page use the injected `window.octopApp` SDK: "
     "`await octopApp.schema(table)` returns the column definitions; "
     "`await octopApp.listRows({table, limit, offset})` returns {rows, total}; "
+    "`await octopApp.tables()` returns the tables visible to the current viewer; "
+    "render tabs from that response instead of hardcoding table keys, because "
+    "public links omit private tables. "
     "`await octopApp.appendRow({column: value}, {table})` adds a row when the "
     "viewer has edit permission. Remote scripts/styles/images/fonts are blocked, "
     "so keep CSS/JS inline and use data: or blob: URLs for images; relative URLs "
@@ -78,6 +93,16 @@ def _tool_ctx() -> tuple[str, int]:
     if user_raw is None:
         raise ValueError("missing configurable.user")
     return str(agent_id), int(user_raw)
+
+
+def _tool_source() -> str:
+    """Channel source for the current turn, e.g. ``weixin/01M5...``."""
+    cfg = get_config().get("configurable") or {}
+    return str(cfg.get("octop_source") or "").strip()
+
+
+def _is_dashboard_source(source: str) -> bool:
+    return not source or source.split("/", 1)[0] in {"dashboard", "web"}
 
 
 def _ok(data: Any) -> str:
@@ -132,6 +157,20 @@ def _summary(row: LightAppRow) -> dict[str, Any]:
     }
 
 
+async def _app_card(service: AppService, row: LightAppRow) -> dict[str, Any]:
+    """Structured chat card for an app (open/created app)."""
+    return {
+        "octop_ui": {"renderer": "app_card", "version": 1},
+        "data": {
+            **_summary(row),
+            "agent_id": row.agent_id,
+            "has_html": await service.has_html(row),
+            "has_preview": await service.has_preview(row),
+        },
+        "text": f"MiniApp {row.name} ({row.app_id})",
+    }
+
+
 def _table_summary(table: AppTableView) -> dict[str, Any]:
     return {
         "table_key": table.table_key,
@@ -180,7 +219,101 @@ async def _download_asset(url: str) -> bytes:
     raise ValueError("too many redirects while downloading the asset")
 
 
-def build_app_tools(service: AppService) -> list[StructuredTool]:
+async def _share_link_warning(service: AppService, row: LightAppRow) -> str | None:
+    """Describe what a public link actually exposes, for the model to relay."""
+    tables = service.list_tables(row)
+    public = [table for table in tables if table.public_visible]
+    private = [table for table in tables if not table.public_visible]
+    pii_columns: list[str] = []
+    unmarked: list[str] = []
+    for table in public:
+        schema = await service.read_schema(row, table.table_key)
+        pii_columns.extend(
+            f"{table.table_key}.{column.name}" for column in schema.columns if column.pii
+        )
+        _schema, rows, _total = await service.read_rows(
+            row,
+            limit=50,
+            table=table.table_key,
+            redact_pii=False,
+        )
+        seen: set[str] = set()
+        for values in rows:
+            for column, _hit in find_unmarked_pii(
+                ((item.name, item.pii, item.type) for item in schema.columns),
+                values,
+            ):
+                key = f"{table.table_key}.{column}"
+                if key not in seen:
+                    seen.add(key)
+                    unmarked.append(key)
+    if not private and not pii_columns and not unmarked:
+        return None
+    lines = ["Sharing notice for the public link:"]
+    lines.append("Public tables: " + (", ".join(table.table_key for table in public) or "(none)"))
+    if private:
+        lines.append(
+            "Private tables (not in the public link): "
+            + ", ".join(table.table_key for table in private)
+        )
+    if pii_columns:
+        lines.append("Sensitive columns masked on public reads: " + ", ".join(pii_columns))
+    if unmarked:
+        lines.append(
+            "Unmarked PII detected in public tables: "
+            + ", ".join(unmarked)
+            + ". Mark these columns as pii or keep the table private before sharing."
+        )
+    html = await service.read_html(row)
+    if html and detect_text_pii(html):
+        lines.append("PII detected in the app HTML itself; remove it from the page before sharing.")
+    return "\n".join(lines)
+
+
+async def _share_link_payload(
+    service: AppService,
+    row: LightAppRow,
+    *,
+    user_id: int,
+    rotate: bool,
+    ttl_days: int,
+    public_base_url: str,
+) -> list[dict[str, Any]]:
+    """Channel-ready blocks: one plain-text link plus an optional cover."""
+    token, _expires_at = service.get_or_create_publication(
+        row,
+        user_id=user_id,
+        rotate=rotate,
+        ttl_days=ttl_days,
+    )
+    path = f"/p/{token}"
+    url = f"{public_base_url.rstrip('/')}{path}" if public_base_url else path
+    lines = [row.name]
+    if row.description:
+        lines.append(row.description)
+    lines.append(url)
+    blocks: list[dict[str, Any]] = [{"type": "text", "text": "\n".join(lines)}]
+    if await service.has_preview(row):
+        preview = app_path(row.app_id, FILE_PREVIEW)
+        blocks.append(
+            {
+                "type": "image",
+                "path": preview,
+                "source": {"type": "url", "url": preview, "media_type": "image/svg+xml"},
+                "filename": FILE_PREVIEW,
+                # iLink image messages need a raster format; dashboard can
+                # still render the SVG through its preview endpoint.
+                "im_safe": False,
+            }
+        )
+    return blocks
+
+
+def build_app_tools(
+    service: AppService,
+    *,
+    public_base_url: str = "",
+) -> list[StructuredTool]:
     """Return built-in light-app tools (wired via ``HarnessAgentConfig.tools``)."""
 
     async def app_inspect_file(
@@ -231,6 +364,102 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                     ]
                 }
             )
+        except Exception as exc:
+            return _err(exc)
+
+    async def app_open(
+        app_id: Annotated[
+            str,
+            Field(description="App id returned by app_list/app_create."),
+        ],
+    ) -> str:
+        try:
+            agent_id, user_id = _tool_ctx()
+            row = _get_for_actor(service, app_id, agent_id, user_id, "view")
+            source = _tool_source()
+            if _is_dashboard_source(source):
+                return _ok(await _app_card(service, row))
+            # IM channels cannot render the dashboard app_card. A public link
+            # plus a plain-text description is the channel-safe equivalent.
+            try:
+                _get_for_actor(service, app_id, agent_id, user_id, "edit_structure")
+                payload = await _share_link_payload(
+                    service,
+                    row,
+                    user_id=user_id,
+                    rotate=False,
+                    ttl_days=0,
+                    public_base_url=public_base_url,
+                )
+                warning = await _share_link_warning(service, row)
+                if warning:
+                    payload.append({"type": "text", "text": warning})
+                return _ok(payload)
+            except ValueError:
+                lines = [row.name]
+                if row.description:
+                    lines.append(row.description)
+                return _ok([{"type": "text", "text": "\n".join(lines)}])
+        except Exception as exc:
+            return _err(exc)
+
+    async def app_share_link(
+        app_id: Annotated[
+            str | None,
+            Field(description="App id; omit when passing name."),
+        ] = None,
+        name: Annotated[
+            str | None,
+            Field(description="App name (exact or substring match); omit when passing app_id."),
+        ] = None,
+        rotate: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Rotate the public link. Leave false to reuse the current link; "
+                    "rotating invalidates links already sent to users."
+                )
+            ),
+        ] = False,
+        ttl_days: Annotated[
+            int,
+            Field(ge=0, le=3650, description="Link lifetime in days; 0 means no expiry."),
+        ] = 0,
+    ) -> str:
+        try:
+            agent_id, user_id = _tool_ctx()
+            if app_id:
+                row = _get_for_actor(service, app_id, agent_id, user_id, "edit_structure")
+            elif name and name.strip():
+                needle = name.strip().lower()
+                rows = service.list_for_agent(agent_id, user_id)
+                exact = [
+                    candidate for candidate in rows if candidate.name.strip().lower() == needle
+                ]
+                matches = exact or [
+                    candidate for candidate in rows if needle in candidate.name.lower()
+                ]
+                if not matches:
+                    raise ValueError(f"MiniApp not found: {name}")
+                if len(matches) > 1:
+                    options = ", ".join(f"{item.name} ({item.app_id})" for item in matches[:5])
+                    raise ValueError(f"more than one MiniApp matches {name!r}: {options}")
+                row = matches[0]
+                service.require(row, user_id, "edit_structure", is_admin=False)
+            else:
+                raise ValueError("app_id or name is required")
+            payload = await _share_link_payload(
+                service,
+                row,
+                user_id=user_id,
+                rotate=rotate,
+                ttl_days=ttl_days,
+                public_base_url=public_base_url,
+            )
+            warning = await _share_link_warning(service, row)
+            if warning:
+                payload.append({"type": "text", "text": warning})
+            return _ok(payload)
         except Exception as exc:
             return _err(exc)
 
@@ -313,6 +542,16 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                 )
             ),
         ] = None,
+        pii: Annotated[
+            dict[str, str | None] | None,
+            Field(
+                description=(
+                    "Column name -> sensitive-data kind (id_card, bank_card, phone, "
+                    "address, salary, email, secret); pass null to clear. Use this "
+                    "for existing sensitive columns before writing free-text PII."
+                )
+            ),
+        ] = None,
         table: Annotated[str, Field(description=_TABLE_HELP)] = MAIN_TABLE_KEY,
     ) -> str:
         try:
@@ -324,6 +563,7 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                 renames=renames,
                 drops=drops,
                 types=types,
+                pii=pii,
             )
             return _ok(
                 {
@@ -331,6 +571,37 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                     "table": table,
                     "version": schema.version,
                     "columns": schema.to_dict()["columns"],
+                }
+            )
+        except Exception as exc:
+            return _err(exc)
+
+    async def app_set_table_visibility(
+        app_id: Annotated[str, Field(description="App id returned by app_create/app_list.")],
+        public: Annotated[
+            bool,
+            Field(
+                description=(
+                    "True to expose this table on the public read-only link; false "
+                    "to keep it visible only to signed-in users with access."
+                )
+            ),
+        ],
+        table: Annotated[str, Field(description=_TABLE_HELP)] = MAIN_TABLE_KEY,
+    ) -> str:
+        try:
+            agent_id, user_id = _tool_ctx()
+            row = _get_for_actor(service, app_id, agent_id, user_id, "edit_structure")
+            view = await service.set_table_visibility(
+                row,
+                table=table,
+                public_visible=public,
+            )
+            return _ok(
+                {
+                    "app_id": row.app_id,
+                    "table": view.table_key,
+                    "public_visible": view.public_visible,
                 }
             )
         except Exception as exc:
@@ -344,7 +615,9 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
             agent_id, user_id = _tool_ctx()
             row = _get_for_actor(service, app_id, agent_id, user_id, "edit_structure")
             size = await service.write_html(row, html)
-            return _ok({"app_id": row.app_id, "bytes": size})
+            card = await _app_card(service, row)
+            card["data"]["bytes"] = size
+            return _ok({**card["data"], **card})
         except Exception as exc:
             return _err(exc)
 
@@ -375,12 +648,9 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                 name=name,
                 description=description,
             )
-            return _ok(
-                {
-                    **_summary(row),
-                    "next_step": "call app_write_html only if you want to change the shell",
-                }
-            )
+            card = await _app_card(service, row)
+            card["data"]["next_step"] = "call app_write_html only if you want to change the shell"
+            return _ok({**card["data"], **card})
         except Exception as exc:
             return _err(exc)
 
@@ -403,6 +673,15 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
             str,
             Field(description="Display name for the table (optional)."),
         ] = "",
+        public: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Expose this table on the public read-only link. Defaults to "
+                    "false; only the main table is public by default."
+                )
+            ),
+        ] = False,
     ) -> str:
         try:
             agent_id, user_id = _tool_ctx()
@@ -412,12 +691,14 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                 table_key=key,
                 label=label,
                 columns=columns,
+                public_visible=public,
             )
             return _ok(
                 {
                     "app_id": row.app_id,
                     "table": table.table_key,
                     "label": table.label,
+                    "public_visible": table.public_visible,
                     "columns": columns,
                 }
             )
@@ -436,13 +717,15 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
         try:
             agent_id, user_id = _tool_ctx()
             row = _get_for_actor(service, app_id, agent_id, user_id, "view")
+            redact_pii = not _may_see_pii(service, row, user_id)
             schema, rows, row_meta, total = await service.read_rows_detailed(
                 row,
                 limit=limit,
                 offset=offset,
                 table=table,
-                redact_pii=not _may_see_pii(service, row, user_id),
+                redact_pii=redact_pii,
             )
+            pii_columns = [column.name for column in schema.columns if column.pii]
             return _ok(
                 {
                     "app_id": row.app_id,
@@ -453,6 +736,12 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                     "total": total,
                     "limit": limit,
                     "offset": offset,
+                    "pii_columns": pii_columns,
+                    "pii_masked": redact_pii,
+                    "pii_note": (
+                        "Tool output may be masked by the platform for safety; "
+                        "masking does not mean the stored value is masked or erased."
+                    ),
                 }
             )
         except Exception as exc:
@@ -494,6 +783,7 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                 created_by=user_id,
                 source="agent",
             )
+            schema = await service.read_schema(app, table)
             return _ok(
                 {
                     "app_id": app.app_id,
@@ -501,7 +791,7 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                     "row_index": index,
                     "row_id": stored.row_id,
                     "version": stored.version,
-                    "row": stored.values,
+                    "pii_columns": [column.name for column in schema.columns if column.pii],
                 }
             )
         except Exception as exc:
@@ -520,6 +810,7 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
             int | None,
             Field(description="Reject the update when the stored row version differs."),
         ] = None,
+        table: Annotated[str, Field(description=_TABLE_HELP)] = MAIN_TABLE_KEY,
     ) -> str:
         try:
             agent_id, user_id = _tool_ctx()
@@ -528,9 +819,18 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                 app,
                 row_id,
                 row,
+                table=table,
                 expected_version=expected_version,
             )
-            return _ok({"app_id": app.app_id, **updated})
+            schema = await service.read_schema(app, table)
+            return _ok(
+                {
+                    "app_id": app.app_id,
+                    "row_id": updated["row_id"],
+                    "version": updated["version"],
+                    "pii_columns": [column.name for column in schema.columns if column.pii],
+                }
+            )
         except Exception as exc:
             return _err(exc)
 
@@ -786,6 +1086,31 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
             ),
         ),
         StructuredTool.from_function(
+            coroutine=app_open,
+            name="app_open",
+            description=(
+                "Open an existing lightweight app in the chat. Call this when the user "
+                "asks to open, show or use an app; the dashboard renders an app card "
+                "with an inline preview and an open button. On IM channels this "
+                "returns a public link + plain text instead."
+            ),
+        ),
+        StructuredTool.from_function(
+            coroutine=app_share_link,
+            name="app_share_link",
+            description=(
+                "Get a channel-ready entry for a lightweight app in ONE call: reuses "
+                "or creates its read-only public link, returns a plain-text message "
+                "and (when available) a cover. Use this for chat/IM requests such "
+                "as 'give me the entry/link/card for X'. The result may include a "
+                "sharing notice (public/private tables, masked or unmarked PII); "
+                "relay that notice to the user in their language before sharing. "
+                "Treat the returned text as the final answer: do not browse, "
+                "screenshot, curl, query the database, read source code, download "
+                "or self-host the app afterwards."
+            ),
+        ),
+        StructuredTool.from_function(
             coroutine=app_create,
             name="app_create",
             description=(
@@ -828,6 +1153,15 @@ def build_app_tools(service: AppService) -> list[StructuredTool]:
                 "Rename, drop or retype columns of a lightweight app. Every "
                 "existing row is migrated; the change is rejected when a row "
                 "does not fit the new schema."
+            ),
+        ),
+        StructuredTool.from_function(
+            coroutine=app_set_table_visibility,
+            name="app_set_table_visibility",
+            description=(
+                "Expose or hide one table on the app's public read-only link. The main "
+                "table is public by default; add-on tables are private. Call this before "
+                "sharing when the public link should include (or must exclude) a table."
             ),
         ),
         StructuredTool.from_function(

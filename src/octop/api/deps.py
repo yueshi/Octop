@@ -39,6 +39,8 @@ _JWT_EXEMPT_PREFIXES = (
     "/api/downloads/link/",
     # Public read-only light-app links: the unguessable token is the credential.
     "/api/public/apps/",
+    # External game result writes: the scoped, short-lived session token is the credential.
+    "/api/game-sessions/",
     # Public webhook ingress: HMAC signature and source id are the credentials.
     "/api/hooks/",
 )
@@ -115,7 +117,13 @@ def _decode(server: OctopServer, token: str) -> dict[str, Any]:
 def resolve_user_from_token(server: OctopServer, token: str) -> User:
     payload = _decode(server, token)
     assert server.user_manager is not None
-    user = server.user_manager.get_by_id(int(payload["sub"]))
+    # The same secret signs other, narrower tokens (a MiniApp game session).
+    # Only a token carrying ``sub`` is an access token; the rest must fail as
+    # an auth error, not as a missing-claim crash.
+    subject = payload.get("sub")
+    if subject is None:
+        raise OctopError(ErrorCode.AUTH_FAILED, "not an access token")
+    user = server.user_manager.get_by_id(int(subject))
     if user is None:
         raise OctopError(ErrorCode.USER_DISABLED, "user not active")
     return user

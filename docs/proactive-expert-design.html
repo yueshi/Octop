@@ -199,7 +199,7 @@
         <td><span class="tag bad">P2 未实施</span></td></tr>
     <tr><td>HITL 持久化 + 定向推送 + <code>ask_creator</code></td><td>§7.4</td>
         <td><span class="tag bad">P3 未实施</span>（表已建）</td></tr>
-    <tr><td>原生看板 / 小程序投影</td><td>§7.6</td>
+    <tr><td>原生看板 / MiniApp 投影</td><td>§7.6</td>
         <td><span class="tag bad">P4/P5 未实施</span></td></tr>
     <tr><td>已核销结论（write_scope 作用域 / interrupt_on 静态配置）</td><td>§7.4 callout</td>
         <td><span class="tag ok">C11/C12 已核销</span></td></tr>
@@ -291,7 +291,7 @@
 
 <h3>3.5 看板相关能力</h3>
 <ul>
-  <li>无任何已实施看板页（团队 P4 未做）；小程序仍「读+追加」（团队版结论直接适用）。</li>
+  <li>无任何已实施看板页（团队 P4 未做）； MiniApp 仍「读+追加」（团队版结论直接适用）。</li>
   <li>看板底座（表/状态机/CAS/API）即团队 P1 产物，见 §一依据 2。</li>
 </ul>
 
@@ -336,7 +336,7 @@
         <td>单专家 HITL 卡本来就在自己会话（现状闭环）</td></tr>
     <tr><td>主动关怀调度策略（care）</td><td><span class="tag warn">改造后复用（增强项）</span></td>
         <td>active_hours/随机频控/去重泛化为自治运行策略</td></tr>
-    <tr><td>看板页 / 小程序投影（P4/P5）</td><td><span class="tag bad">必须新建时即按 agent 通用设计</span></td>
+    <tr><td>看板页 / MiniApp 投影（P4/P5）</td><td><span class="tag bad">必须新建时即按 agent 通用设计</span></td>
         <td>尚未实施——避免做出 team-only UI 后返工</td></tr>
   </tbody>
 </table>
@@ -404,7 +404,7 @@
       （active_hours/min_interval/quiet/预算）——care 与 autonomy 共用策略存储与求值
       （<code>scheduler.py:44-108</code> 触发算法直接改造复用）；事件触发器白名单 + 注入防线（D21 继承）。</li>
   <li><b>E6 长任务与组合</b>：spawn subagent 执行长任务（<code>task</code> 工具 + SubagentCatalog 安装流）+
-      子任务 stale 回收；小程序投影（团队 P5 共用：<code>team_tasks</code> 数据源）；
+      子任务 stale 回收； MiniApp 投影（团队 P5 共用：<code>team_tasks</code> 数据源）；
       <code>infra/metrics.py</code> 观测（wake 执行/失败/任务流转/HITL 超时）。</li>
 </ul>
 
@@ -461,10 +461,10 @@
     <tr><td>API</td><td>agent 通用路由（新）与 <code>/teams/*</code>（存量）指向同一 repo；CAS/校验同路径</td></tr>
     <tr><td>P2/P3 基建</td><td>隐形 wake、delivery HITL 挂起、预算闸门、kill switch、<code>ask_owner</code>/<code>ask_creator</code>
         同一批改造，两类 agent 同时受益</td></tr>
-    <tr><td>P4/P5</td><td>看板与小程序投影从一开始就按 agent 通用建模，团队/专家只是 kind 渲染差异</td></tr>
+    <tr><td>P4/P5</td><td>看板与 MiniApp 投影从一开始就按 agent 通用建模，团队/专家只是 kind 渲染差异</td></tr>
   </tbody>
 </table>
-<p><b>不共用的反面对照</b>：两套任务表 → 两套状态机 → 看板两页 → 小程序投影两套 → 预算/HITL 闸门各一份——
+<p><b>不共用的反面对照</b>：两套任务表 → 两套状态机 → 看板两页 → MiniApp 投影两套 → 预算/HITL 闸门各一份——
 每一条都是团队版 v2/v3 反思里同类问题的加倍。</p>
 <div class="callout note">
   <b>自然统一的加分项</b>：<code>team_tasks.assignee REFERENCES agents(agent_id)</code>——未来
@@ -501,7 +501,7 @@
         <td>团队版未规划的增量</td>
         <td>免打扰窗生效；配额暂停</td></tr>
     <tr><td><b>E6 长任务/组合</b></td>
-        <td>subagent spawn + stale 回收；小程序投影</td>
+        <td>subagent spawn + stale 回收； MiniApp 投影</td>
         <td>= 团队 P5 + 增量</td>
         <td>spawn 任务回收；投影回写</td></tr>
   </tbody>

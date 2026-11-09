@@ -1,5 +1,6 @@
 import * as React from "react";
 import * as ReactJSX from "react/jsx-runtime";
+import { AppCard } from "./builtin/AppCard";
 import { AppInspectCard } from "./builtin/AppInspectCard";
 import { DefaultToolRenderer } from "./builtin/DefaultToolRenderer";
 import { builtinPluginHost } from "./host";
@@ -30,6 +31,12 @@ export function ensureBuiltinToolRenderers(): void {
     id: "default",
     pluginId: "builtin",
     component: DefaultToolRenderer,
+  });
+  registerToolRenderer({
+    id: "app_card",
+    pluginId: "builtin",
+    tools: ["app_open", "app_write_html", "app_create_from_template"],
+    component: AppCard,
   });
   registerToolRenderer({
     id: "app_inspect_card",

@@ -82,6 +82,11 @@ import {
   isSharedExpertViewer,
 } from "../../utils/sharedExpert";
 import { isTeamAgent } from "../../utils/teamAgent";
+import {
+  CHANNEL_LABEL_KEYS,
+  CHANNEL_LABELS,
+  type ChannelKey,
+} from "../Agent/Channels/components/constants";
 import ChatDockPanels from "./components/ChatDockPanels";
 import type { ChatDockAddTabHandlers } from "./components/ChatDockPanel";
 import { ChatFilePreviewProvider } from "./ChatFilePreviewContext";
@@ -115,6 +120,9 @@ import {
   setPluginUiDockHandlers,
 } from "../../plugins/toolRenderers";
 import styles from "./index.module.less";
+
+const NON_IM_CHANNEL_TYPES = new Set(["dashboard", "cli", "mcp", "agentchat"]);
+const IM_DM_CHAT_TYPES = new Set(["dm", "direct", "p2p", "single"]);
 
 export default function ChatPage() {
   return <ChatPageInner />;
@@ -287,6 +295,37 @@ function ChatPageInner() {
     ensureThreadInList,
   } = useSessions(resolvedAgentId ?? null);
 
+  // Design B: on an IM thread the composer replies through that IM session by
+  // default. "Web only" is the escape hatch and never sends anything to IM.
+  const [replyVia, setReplyVia] = useState<"im" | "web">("im");
+  const activeChannelType = useMemo(
+    () =>
+      sessions.find((session) => session.id === activeThreadId)?.channelType ??
+      "dashboard",
+    [sessions, activeThreadId],
+  );
+  const activeChannelChatType = useMemo(
+    () =>
+      sessions.find((session) => session.id === activeThreadId)
+        ?.channelChatType ?? "dm",
+    [sessions, activeThreadId],
+  );
+  // Group/shared IM threads are not silently bridged: only DM owner threads
+  // have an unambiguous reply recipient.
+  const canBridgeIm =
+    !NON_IM_CHANNEL_TYPES.has(activeChannelType) &&
+    IM_DM_CHAT_TYPES.has(activeChannelChatType);
+  const activeChannelLabel = useMemo(() => {
+    if (!canBridgeIm) return null;
+    const key = activeChannelType as ChannelKey;
+    return Object.prototype.hasOwnProperty.call(CHANNEL_LABELS, key)
+      ? t(CHANNEL_LABEL_KEYS[key], CHANNEL_LABELS[key])
+      : activeChannelType;
+  }, [activeChannelType, canBridgeIm, t]);
+  useEffect(() => {
+    setReplyVia("im");
+  }, [activeThreadId]);
+
   const handleLoadMoreSessions = useCallback(() => {
     void loadMoreSessions(activeThreadId ?? undefined);
   }, [loadMoreSessions, activeThreadId]);
@@ -323,6 +362,16 @@ function ChatPageInner() {
         antMessage.info(t("chat.streamResumed"));
         return;
       }
+      if (event.kind === "turnQueued") {
+        const key = activeThreadId || "__empty__";
+        if (event.sessionId !== key) return;
+        antMessage.info(
+          t("chat.bridge.queued", {
+            channel: activeChannelLabel ?? "IM",
+          }),
+        );
+        return;
+      }
       if (event.kind !== "streamEnd") return;
       const key = activeThreadId || "__empty__";
       if (event.sessionId !== key || !resolvedAgentId || key === "__empty__") {
@@ -330,7 +379,7 @@ function ChatPageInner() {
       }
       void fetchAndSyncSessionArtifacts(resolvedAgentId, key);
     });
-  }, [activeThreadId, resolvedAgentId, t]);
+  }, [activeThreadId, resolvedAgentId, t, activeChannelLabel]);
 
   // Refresh thread artifacts after file-producing tools finish (mid-turn updates).
   useEffect(() => {
@@ -421,6 +470,7 @@ function ChatPageInner() {
     toggleTerminalPanel,
     openToolUiTab,
     focusToolUiTab,
+    openGameTab,
     closeTab: closeDockTab,
     setActiveTab: setDockActiveTab,
   } = useChatDockPanel(isMobile, resolvedAgentId);
@@ -528,9 +578,10 @@ function ChatPageInner() {
     setPluginUiDockHandlers({
       openSidePanel: openToolUiTab,
       closeSidePanel: closeToolUiPanel,
+      openGamePanel: openGameTab,
     });
     return () => setPluginUiDockHandlers({});
-  }, [openToolUiTab, closeToolUiPanel]);
+  }, [openToolUiTab, closeToolUiPanel, openGameTab]);
 
   const composerSession = useMemo(
     () => sessions.find((session) => session.id === activeThreadId) ?? null,
@@ -785,7 +836,10 @@ function ChatPageInner() {
         antMessage.warning(t("chat.hitl.finishPendingFirst"));
         return;
       }
-      handleSend(text, attachments, overrides);
+      const sendVia =
+        overrides?.replyVia ??
+        (canBridgeIm && replyVia === "im" ? "im" : "web");
+      handleSend(text, attachments, { ...overrides, replyVia: sendVia });
     },
     [
       interceptUserMessage,
@@ -795,6 +849,8 @@ function ChatPageInner() {
       activeThreadId,
       resumeHitl,
       t,
+      canBridgeIm,
+      replyVia,
     ],
   );
 
@@ -807,6 +863,14 @@ function ChatPageInner() {
       // Bypass skill-recording intercept — queued text must not be swallowed
       // after it has already left the queue. Target the queued thread/agent so
       // background streamEnd flushes do not send into the active session.
+      const targetSession = sessions.find(
+        (session) => session.id === ctx.threadId,
+      );
+      const targetChannelType = targetSession?.channelType ?? "dashboard";
+      const targetChatType = targetSession?.channelChatType ?? "dm";
+      const bridgeTarget =
+        !NON_IM_CHANNEL_TYPES.has(targetChannelType) &&
+        IM_DM_CHAT_TYPES.has(targetChatType);
       const ok = handleSend(item.text, item.attachments, {
         composerContext: item.composerContext,
         modelRef: item.modelRef,
@@ -816,13 +880,14 @@ function ChatPageInner() {
         selectedTargetAgents: item.composerContext?.targetAgents,
         threadId: ctx.threadId,
         agentId: ctx.agentId || undefined,
+        replyVia: bridgeTarget ? "im" : "web",
       });
       if (!ok) {
         antMessage.error(t("chat.queue.flushFailed"));
       }
       return ok;
     },
-    [handleSend, t],
+    [handleSend, t, sessions],
   );
 
   const membersStillTalking =
@@ -1365,6 +1430,7 @@ function ChatPageInner() {
         openToolUiPanel={openToolUiTab}
         closeToolUiPanel={closeToolUiPanel}
         focusToolUiPanel={focusToolUiTab}
+        openGamePanel={openGameTab}
       >
         {chatHistoryRail
           ? createPortal(chatSidebarPanel, chatHistoryRail)
@@ -1854,6 +1920,9 @@ function ChatPageInner() {
               onHitlPolicyChange={
                 hitlEnabled ? handleComposerHitlPolicyChange : undefined
               }
+              replyVia={replyVia}
+              replyViaLabel={activeChannelLabel}
+              onReplyViaChange={setReplyVia}
               availableConnectors={isTeamChat ? undefined : chatConnectors}
               selectedConnectors={isTeamChat ? [] : selectedConnectors}
               onConnectorsChange={

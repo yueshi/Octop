@@ -270,6 +270,57 @@ function renderRow(overrides: Record<string, unknown> = {}) {
   return { ...view, ...handlers, mic };
 }
 
+describe("ChatInputActionsRow reasoning menu", () => {
+  const alwaysOnModel: ResolvedModel = {
+    provider_id: 1,
+    provider_name: "Provider",
+    provider_kind: "openai",
+    model: "MiniMax-M3.1-Flash",
+    name: "MiniMax M3.1 Flash",
+    context_window: 128_000,
+    reasoning: true,
+    reasoning_config: {
+      supported: true,
+      toggle: false,
+      default_mode: "enabled",
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+      default_effort: "medium",
+      effort_type: "enum",
+      adapter: "openai_reasoning_effort",
+    },
+  };
+
+  it("shows always-on reasoning with effort choices only", () => {
+    const onReasoningChange = vi.fn();
+    render(
+      <MemoryRouter>
+        <ChatInputActionsRow
+          {...baseProps}
+          availableModels={[alwaysOnModel]}
+          reasoningMode="enabled"
+          reasoningEffort="medium"
+          onReasoningChange={onReasoningChange}
+        />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByTestId("composer-plus"));
+    fireEvent.click(screen.getByText("Model"));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /MiniMax M3\.1 Flash 思考模式/,
+      }),
+    );
+
+    expect(screen.getByText("始终推理")).toBeInTheDocument();
+    expect(screen.queryByText("自动")).not.toBeInTheDocument();
+    expect(screen.queryByText("开启")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("low"));
+    expect(onReasoningChange).toHaveBeenCalledWith("enabled", "low");
+  });
+});
+
 describe("ChatInputActionsRow voice button", () => {
   it("dictates while held down when realtime STT is on", () => {
     const { mic, onVoiceStart, onVoiceStop, onToggleVoice } = renderRow({

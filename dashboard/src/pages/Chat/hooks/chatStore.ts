@@ -7,6 +7,7 @@
  * any in-flight streaming content) are still available.
  */
 
+import i18n from "../../../i18n";
 import { getApiUrl } from "../../../api/config";
 import { getAuthToken } from "../../../api/request";
 import type { TokenUsage } from "../../../api/types";
@@ -285,7 +286,11 @@ export interface ToolEvent {
   toolName: string;
   toolId: string;
 }
-export type StreamEventKind = "streamStart" | "streamEnd" | "streamResume";
+export type StreamEventKind =
+  | "streamStart"
+  | "streamEnd"
+  | "streamResume"
+  | "turnQueued";
 export interface StreamEvent {
   kind: StreamEventKind;
   sessionId: string;
@@ -544,6 +549,10 @@ type LiveSocket = {
   userCancelled: boolean;
   /** Subscribe-only socket — replacing it must not send `cancel` to the host. */
   listenOnly?: boolean;
+  /** Web turn delivered through an IM channel: only lifecycle frames arrive. */
+  bridgeTurn?: boolean;
+  /** Server id for a queued bridge turn, used when the user stops it. */
+  bridgeTurnId?: string;
   pingTimer?: ReturnType<typeof setInterval>;
 };
 
@@ -607,6 +616,8 @@ function clearStreamActivity(sessionId: string): void {
  * If isStreaming sticks without a live socket past the grace window, seal so
  * overscroll-refresh / free-scroll UX recover. Open sockets (long tools) skip.
  */
+const BRIDGE_IDLE_SEAL_MS = 30 * 60_000;
+
 function armStreamWatchdog(sessionId: string): void {
   clearStreamWatchdog(sessionId);
   streamWatchdogs.set(
@@ -615,7 +626,15 @@ function armStreamWatchdog(sessionId: string): void {
       streamWatchdogs.delete(sessionId);
       const state = sessionStates.get(sessionId);
       if (!state) return;
+      const live = liveSockets.get(sessionId);
+      const lastActivity = streamActivityAt.get(sessionId) ?? 0;
+      const bridgeIdle =
+        state.isStreaming &&
+        Boolean(live?.bridgeTurn) &&
+        lastActivity > 0 &&
+        Date.now() - lastActivity >= BRIDGE_IDLE_SEAL_MS;
       if (
+        !bridgeIdle &&
         !shouldForceSealStream({
           isStreaming: state.isStreaming,
           hasLiveSocket: isLiveSocketOpen(sessionId),
@@ -628,6 +647,28 @@ function armStreamWatchdog(sessionId: string): void {
         // Still streaming with a socket, within grace, or unfocused — re-check later.
         if (state.isStreaming && isSessionFocused(sessionId)) {
           armStreamWatchdog(sessionId);
+        }
+        return;
+      }
+      if (bridgeIdle && live) {
+        // A bridge turn only receives turn.started / turn.ended. If neither a
+        // completion nor a new frame arrives, surface an error instead of
+        // leaving the Dashboard generating forever.
+        appendErrorBubble(
+          state,
+          i18n.t("chat.bridge.timeout"),
+          "im_turn_timeout",
+        );
+        notify(state);
+        // Best-effort cancel + close; onclose completes the stream bookkeeping
+        // and settles the pending sendTurn.
+        sendCancelFrame(live.ws, live.threadId, live.bridgeTurnId);
+        live.intentionalClose = true;
+        live.userCancelled = true;
+        try {
+          live.ws.close();
+        } catch {
+          // ignore
         }
         return;
       }
@@ -709,10 +750,13 @@ export function setHistoryPage(
  * Messages and the hydration flag stay put: the reload replaces them once it
  * lands, which keeps the view from flashing an empty loading state.
  */
-export function invalidateHistory(sessionId: string) {
+export function invalidateHistory(
+  sessionId: string,
+  { force = false }: { force?: boolean } = {},
+) {
   const state = sessionStates.get(sessionId);
   if (!state || !state.historyHydrated) return;
-  if (state.isStreaming) return;
+  if (state.isStreaming && !force) return;
   state.historyStale = true;
 }
 
@@ -852,10 +896,19 @@ function clearLiveSocket(sessionId: string, ws?: WebSocket): void {
   liveSockets.delete(sessionId);
 }
 
-function sendCancelFrame(ws: WebSocket, threadId: string): void {
+function sendCancelFrame(
+  ws: WebSocket,
+  threadId: string,
+  turnId?: string,
+): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   try {
-    ws.send(JSON.stringify({ type: "cancel", thread_id: threadId }));
+    const payload: Record<string, unknown> = {
+      type: "cancel",
+      thread_id: threadId,
+    };
+    if (turnId) payload.turn_id = turnId;
+    ws.send(JSON.stringify(payload));
   } catch {
     // ignore
   }
@@ -887,7 +940,7 @@ export function cancelStream(sessionId: string) {
   if (live) {
     live.intentionalClose = true;
     live.userCancelled = true;
-    sendCancelFrame(live.ws, live.threadId || sessionId);
+    sendCancelFrame(live.ws, live.threadId || sessionId, live.bridgeTurnId);
   }
   const hadAbort = Boolean(state.abortController);
   const hadStreaming = state.isStreaming;
@@ -1297,7 +1350,7 @@ function handleHarnessChunk(
             : "";
         state.pendingPlanPath = pending || null;
       }
-      if (Boolean(chunk.team_wrapup)) {
+      if (chunk.team_wrapup) {
         finalizeWrapupMessages(state, speaker);
         clearSpeakerLive(state, speaker);
         // Wrap-up means members already finished — drop stale live bits
@@ -2570,7 +2623,7 @@ export async function attachThread(
     const onAbort = () => {
       live.intentionalClose = true;
       live.userCancelled = true;
-      sendCancelFrame(ws, threadId);
+      sendCancelFrame(ws, threadId, live.bridgeTurnId);
       try {
         ws.close();
       } catch {
@@ -2780,6 +2833,7 @@ async function sendTurnWebSocket(
   reasoningEffort?: string | null,
   conversationMode?: "ask" | "plan" | "craft" | null,
   hitlPolicy?: { mode: string; tools?: string[] } | null,
+  replyVia?: "im" | "web",
 ): Promise<boolean> {
   const state = getOrCreate(sessionId);
   const resolvedThreadId = (threadId || sessionId).trim();
@@ -2803,6 +2857,7 @@ async function sendTurnWebSocket(
       intentionalClose: false,
       userCancelled: false,
       listenOnly: false,
+      bridgeTurn: replyVia === "im",
     };
     liveSockets.set(sessionId, live);
 
@@ -2817,7 +2872,7 @@ async function sendTurnWebSocket(
     const onAbort = () => {
       live.intentionalClose = true;
       live.userCancelled = true;
-      sendCancelFrame(ws, resolvedThreadId);
+      sendCancelFrame(ws, resolvedThreadId, live.bridgeTurnId);
       try {
         ws.close();
       } catch {
@@ -2861,6 +2916,7 @@ async function sendTurnWebSocket(
       if (reasoningEffort) payload.reasoning_effort = reasoningEffort;
       if (conversationMode) payload.conversation_mode = conversationMode;
       if (hitlPolicy) payload.hitl_policy = hitlPolicy;
+      if (replyVia) payload.reply_via = replyVia;
       ws.send(JSON.stringify(payload));
     };
 
@@ -2870,6 +2926,13 @@ async function sendTurnWebSocket(
         if (!data || typeof data !== "object") return;
         if (!frameBelongsToThread(data, live.threadId)) return;
         if ((data as { type?: string }).type === "turn_status") return;
+        if ((data as { type?: string }).type === "turn.queued") {
+          live.bridgeTurnId = String(
+            (data as { turn_id?: unknown }).turn_id || "",
+          ).trim();
+          emitStreamEvent({ kind: "turnQueued", sessionId });
+          return;
+        }
         if (
           applySteerProtocolFrame(
             state,
@@ -3036,6 +3099,7 @@ export async function sendTurn(
   reasoningEffort?: string | null,
   conversationMode?: "ask" | "plan" | "craft" | null,
   hitlPolicy?: { mode: string; tools?: string[] } | null,
+  replyVia?: "im" | "web",
 ): Promise<void> {
   const state = getOrCreate(sessionId);
   rememberRoomAgent(state, agentId);
@@ -3124,6 +3188,7 @@ export async function sendTurn(
     reasoningEffort,
     conversationMode,
     hitlPolicy,
+    replyVia,
   );
   if (!wsOk) {
     state.messages = [
@@ -3547,6 +3612,7 @@ function applySteerProtocolFrame(
   if (type === "turn.started" || type === "turn.resumed") {
     const turnId = String(data.turn_id || "").trim();
     if (turnId) state.activeTurnId = turnId;
+    if (sessionId) touchStreamActivity(sessionId);
     // Idle commit becomes a normal turn. Keep the optimistic user row —
     // it is the live bubble until history returns the same text. Stop
     // tracking it so a later turn.ended does not delete it.

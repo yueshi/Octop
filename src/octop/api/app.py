@@ -117,17 +117,28 @@ def build_app(server: OctopServer) -> FastAPI:
     app.state.octop_server = server
     _install_exception_handlers(app)
 
-    if cfg and cfg.cors_origins:
+    if cfg and (cfg.cors_origins or cfg.games):
         from octop.api.deps import ACCESS_TOKEN_RESPONSE_HEADER
 
+        allow_origins = list(cfg.cors_origins)
+        allow_origins.extend(game.origin for game in cfg.games if game.origin not in allow_origins)
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=cfg.cors_origins,
+            allow_origins=allow_origins,
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
             expose_headers=[ACCESS_TOKEN_RESPONSE_HEADER],
         )
+
+    from octop.api.middleware.gzip import SelectiveGZipMiddleware
+
+    # Compress only dashboard text assets; API/SSE/downloads keep raw responses.
+    app.add_middleware(
+        SelectiveGZipMiddleware,
+        minimum_size=1024,
+        compresslevel=6,
+    )
 
     from octop.api.middleware.bridge_proxy import install as install_bridge_proxy
 
@@ -180,6 +191,7 @@ def build_app(server: OctopServer) -> FastAPI:
         envs,
         experts,
         external_events,
+        game_sessions,
         goals,
         health,
         hooks,
@@ -246,6 +258,7 @@ def build_app(server: OctopServer) -> FastAPI:
             _RouterMount(agents.router, "/api/agents", ["agents"]),
             _RouterMount(agent_tools.router, "/api", ["agents"]),
             _RouterMount(apps.router, "/api", ["apps"]),
+            _RouterMount(game_sessions.router, "/api", ["apps"]),
             _RouterMount(public_apps.router, "/api", ["apps"]),
             _RouterMount(public_apps.page_router, "", []),
             _RouterMount(acp.router, "/api", ["agents"]),

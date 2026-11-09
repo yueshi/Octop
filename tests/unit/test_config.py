@@ -430,3 +430,66 @@ def test_non_object_config_raises(tmp_path: Path):
     with pytest.raises(ValueError, match="JSON object"):
         load_config(cfg_path)
     assert cfg_path.read_text(encoding="utf-8") == "[1, 2]"
+
+
+def test_games_section_defaults_to_empty(tmp_path: Path):
+    assert load_config(tmp_path / "config.json").games == []
+
+
+def test_games_section_derives_origin_and_sandbox(tmp_path: Path):
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(
+        json.dumps(
+            {
+                "games": [
+                    {
+                        "id": "duck",
+                        "name": "小鸭养成",
+                        "url": "https://games.example.com/duck/index.html",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    assert len(cfg.games) == 1
+    game = cfg.games[0]
+    assert game.id == "duck"
+    assert game.name == "小鸭养成"
+    assert game.url == "https://games.example.com/duck/index.html"
+    assert game.origin == "https://games.example.com"
+    assert "allow-scripts" in game.sandbox
+    assert "allow-same-origin" in game.sandbox
+
+
+def test_games_section_rejects_bad_entries(tmp_path: Path):
+    cfg_path = tmp_path / "config.json"
+
+    def load(games: object) -> None:
+        cfg_path.write_text(json.dumps({"games": games}), encoding="utf-8")
+        load_config(cfg_path)
+
+    with pytest.raises(ValueError, match="must be a list"):
+        load({"id": "duck"})
+    with pytest.raises(ValueError, match="invalid game id"):
+        load([{"id": "Duck!", "url": "https://games.example.com/"}])
+    with pytest.raises(ValueError, match="duplicate game id"):
+        load(
+            [
+                {"id": "duck", "url": "https://games.example.com/"},
+                {"id": "duck", "url": "https://other.example.com/"},
+            ]
+        )
+    with pytest.raises(ValueError, match="http\\(s\\) URL"):
+        load([{"id": "duck", "url": "ftp://games.example.com/"}])
+    with pytest.raises(ValueError, match="origin must match"):
+        load(
+            [
+                {
+                    "id": "duck",
+                    "url": "https://games.example.com/",
+                    "origin": "https://evil.example.com",
+                }
+            ]
+        )

@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>库存盘点表</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --line:#e5e7eb; --text:#1f2937; --muted:#6b7280; --brand:#0f766e; --brand-dark:#115e59; --danger:#dc2626; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:20px; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; font-size:14px; }
+  .page { max-width:1120px; margin:0 auto; }
+  .head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  h1 { margin:0; font-size:22px; }
+  .sub { margin:6px 0 0; color:var(--muted); font-size:13px; }
+  .badge { flex:none; padding:4px 10px; border-radius:999px; background:#ccfbf1; color:#115e59; font-size:12px; }
+  .stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:18px 0; }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:6px; }
+  .stat span { color:var(--muted); font-size:12px; }
+  .stat strong { font-size:23px; font-variant-numeric:tabular-nums; }
+  .toolbar { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; align-items:center; }
+  input, select { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 10px; outline:none; }
+  input:focus, select:focus { border-color:var(--brand); }
+  .toolbar input { flex:1 1 200px; }
+  .toolbar select { flex:0 0 140px; }
+  .check { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:13px; white-space:nowrap; }
+  button { font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--card); color:var(--text); border-radius:8px; padding:8px 14px; }
+  button.primary { background:var(--brand); border-color:var(--brand); color:#fff; }
+  button.primary:hover { background:var(--brand-dark); }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:14px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+  .panel label { display:flex; flex-direction:column; gap:6px; color:var(--muted); font-size:12px; }
+  .panel label.wide { grid-column:span 2; }
+  .actions { grid-column:1/-1; display:flex; gap:8px; }
+  .table-wrap { background:var(--card); border:1px solid var(--line); border-radius:10px; overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; min-width:820px; }
+  th, td { padding:10px 12px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { background:#fafafa; color:var(--muted); font-size:12px; font-weight:600; white-space:nowrap; }
+  tbody tr:last-child td { border-bottom:0; }
+  tbody tr:hover { background:#f7fdfc; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .low { background:#fff7f7; }
+  .low td { color:var(--danger); }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#f1f5f9; font-size:12px; white-space:nowrap; }
+  .muted { color:var(--muted); }
+  .empty { text-align:center; color:var(--muted); padding:32px 0; }
+  .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); margin:0; padding:9px 18px; border-radius:999px; background:#111827; color:#fff; font-size:13px; box-shadow:0 6px 20px rgba(0,0,0,.18); }
+  .toast.error { background:var(--danger); }
+  @media (max-width:820px) { .stats { grid-template-columns:repeat(2,minmax(0,1fr)); } .panel { grid-template-columns:repeat(2,minmax(0,1fr)); } body { padding:12px; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="head">
+    <div><h1>库存盘点表</h1><p class="sub">按库位记录库存，低于安全库存的物品会自动标红。</p></div>
+    <span class="badge" id="readonly" hidden>只读</span>
+  </header>
+  <section class="stats">
+    <div class="stat"><span>物品种类</span><strong id="stat-items">0</strong></div>
+    <div class="stat"><span>库存总量</span><strong id="stat-qty">0</strong></div>
+    <div class="stat"><span>低于安全库存</span><strong id="stat-low">0</strong></div>
+    <div class="stat"><span>最近盘点</span><strong id="stat-date">—</strong></div>
+  </section>
+  <section class="toolbar">
+    <input id="search" placeholder="搜索物品、SKU 或库位">
+    <select id="filter-location"><option value="">全部库位</option></select>
+    <label class="check"><input type="checkbox" id="only-low"> 只看低库存</label>
+    <button id="toggle-add" class="primary" type="button">新增物品</button>
+  </section>
+  <form id="add-form" class="panel" hidden>
+    <label>物品 *<input name="item" maxlength="100" required></label>
+    <label>SKU<input name="sku" maxlength="50"></label>
+    <label>库位<input name="location" maxlength="50"></label>
+    <label>单位<input name="unit" maxlength="20" placeholder="件 / 箱 / 瓶"></label>
+    <label>库存数量 *<input type="number" name="quantity" min="0" required></label>
+    <label>安全库存<input type="number" name="min_stock" min="0" placeholder="0"></label>
+    <label>盘点日期<input type="date" name="counted_at"></label>
+    <label class="wide">备注<input name="note" maxlength="200"></label>
+    <div class="actions"><button type="submit" class="primary">保存</button><button type="button" id="cancel-add">取消</button></div>
+  </form>
+  <p id="empty" class="empty" hidden>还没有库存记录，点击「新增物品」开始。</p>
+  <div class="table-wrap" id="table-wrap">
+    <table>
+      <thead><tr><th>物品</th><th>SKU</th><th>库位</th><th class="num">库存</th><th class="num">安全库存</th><th>单位</th><th>盘点日期</th><th>备注</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</div>
+<p id="toast" class="toast" hidden></p>
+<script>
+(function () {
+  "use strict";
+  var rows = [];
+  var canEdit = true;
+  function $(s) { return document.querySelector(s); }
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function today() { var d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function escapeHtml(v) { return String(v == null ? "" : v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+  function num(v) { var n = Number(v); return isFinite(n) ? n : 0; }
+  function fmt(v) { return num(v).toLocaleString("zh-CN"); }
+  function isLow(row) { return num(row.min_stock) > 0 && num(row.quantity) < num(row.min_stock); }
+  function toast(message, isError) {
+    var el = $("#toast"); el.textContent = message; el.classList.toggle("error", Boolean(isError)); el.hidden = false;
+    clearTimeout(toast.timer); toast.timer = setTimeout(function () { el.hidden = true; }, 2600);
+  }
+  function renderFilters() {
+    var locations = {};
+    rows.forEach(function (row) { if (row.location) locations[row.location] = true; });
+    var values = Object.keys(locations).sort();
+    $("#filter-location").innerHTML = '<option value="">全部库位</option>' + values.map(function (value) {
+      return '<option value="' + escapeHtml(value) + '">' + escapeHtml(value) + "</option>";
+    }).join("");
+  }
+  function render() {
+    var q = $("#search").value.trim().toLowerCase();
+    var location = $("#filter-location").value;
+    var onlyLow = $("#only-low").checked;
+    var list = rows.filter(function (row) {
+      if (location && row.location !== location) return false;
+      if (onlyLow && !isLow(row)) return false;
+      if (!q) return true;
+      return [row.item, row.sku, row.location, row.note].join(" ").toLowerCase().indexOf(q) >= 0;
+    }).sort(function (a, b) {
+      if (isLow(a) !== isLow(b)) return isLow(a) ? -1 : 1;
+      return String(a.item).localeCompare(String(b.item), "zh-CN");
+    });
+    var totalQty = rows.reduce(function (sum, row) { return sum + num(row.quantity); }, 0);
+    var lowCount = rows.filter(isLow).length;
+    var latest = rows.reduce(function (max, row) { return row.counted_at && row.counted_at > max ? row.counted_at : max; }, "");
+    $("#stat-items").textContent = String(rows.length);
+    $("#stat-qty").textContent = fmt(totalQty);
+    $("#stat-low").textContent = String(lowCount);
+    $("#stat-date").textContent = latest || "—";
+    $("#empty").hidden = list.length > 0;
+    $("#empty").textContent = rows.length ? "没有符合筛选条件的物品。" : "还没有库存记录，点击「新增物品」开始。";
+    $("#rows").innerHTML = list.map(function (row) {
+      var low = isLow(row);
+      return '<tr class="' + (low ? "low" : "") + '">' +
+        "<td><strong>" + escapeHtml(row.item) + "</strong></td>" +
+        '<td class="muted">' + escapeHtml(row.sku) + "</td>" +
+        "<td>" + escapeHtml(row.location) + "</td>" +
+        '<td class="num">' + fmt(row.quantity) + "</td>" +
+        '<td class="num muted">' + (row.min_stock ? fmt(row.min_stock) : "—") + "</td>" +
+        '<td class="muted">' + escapeHtml(row.unit) + "</td>" +
+        '<td class="muted">' + escapeHtml(row.counted_at) + "</td>" +
+        '<td class="muted">' + escapeHtml(row.note) + "</td>" +
+        "</tr>";
+    }).join("");
+  }
+  async function refresh() {
+    try {
+      var result = await octopApp.listRows({ limit: 500 });
+      rows = (result && result.rows) || [];
+      renderFilters();
+      render();
+    } catch (error) {
+      toast("加载失败：" + (error && error.message ? error.message : "未知错误"), true);
+    }
+  }
+  async function detectReadonly() {
+    if (typeof octopApp.me !== "function") return false;
+    try { var me = await octopApp.me(); return Boolean(me) && me.permission === "view"; } catch (e) { return false; }
+  }
+  function openForm(open) {
+    $("#add-form").hidden = !open;
+    $("#toggle-add").textContent = open ? "收起" : "新增物品";
+    if (open) $("#add-form input[name=item]").focus();
+  }
+  $("#toggle-add").addEventListener("click", function () { openForm($("#add-form").hidden); });
+  $("#cancel-add").addEventListener("click", function () { $("#add-form").reset(); openForm(false); });
+  $("#search").addEventListener("input", render);
+  $("#filter-location").addEventListener("change", render);
+  $("#only-low").addEventListener("change", render);
+  $("#add-form").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var form = event.target, data = new FormData(form);
+    var item = String(data.get("item") || "").trim();
+    if (!item) { toast("请填写物品名称", true); return; }
+    var qtyText = String(data.get("quantity") || "").trim();
+    if (qtyText === "") { toast("请填写库存数量", true); return; }
+    var minText = String(data.get("min_stock") || "").trim();
+    try {
+      await octopApp.appendRow({
+        item: item,
+        sku: String(data.get("sku") || "").trim(),
+        location: String(data.get("location") || "").trim(),
+        quantity: Number(qtyText),
+        min_stock: minText === "" ? "" : Number(minText),
+        unit: String(data.get("unit") || "").trim(),
+        counted_at: String(data.get("counted_at") || "") || today(),
+        note: String(data.get("note") || "").trim()
+      });
+      form.reset();
+      $("#add-form input[name=counted_at]").value = today();
+      openForm(false);
+      await refresh();
+      toast("已添加库存记录");
+    } catch (error) {
+      toast("保存失败：" + (error && error.message ? error.message : "未知错误"), true);
+    }
+  });
+  async function boot() {
+    $("#add-form input[name=counted_at]").value = today();
+    canEdit = !(await detectReadonly());
+    if (!canEdit) { $("#readonly").hidden = false; $("#toggle-add").hidden = true; openForm(false); }
+    await refresh();
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "columns": [
+    { "name": "item", "label": "物品", "type": "string", "required": true },
+    { "name": "sku", "label": "SKU", "type": "string" },
+    { "name": "location", "label": "库位", "type": "string" },
+    { "name": "quantity", "label": "库存数量", "type": "integer", "required": true },
+    { "name": "min_stock", "label": "安全库存", "type": "integer" },
+    { "name": "unit", "label": "单位", "type": "string" },
+    { "name": "counted_at", "label": "盘点日期", "type": "date" },
+    { "name": "note", "label": "备注", "type": "string" }
+  ]
+}

@@ -15,7 +15,7 @@ from octop_gateway.models import (
 )
 from octop_gateway.utils import close_event_stream
 
-from octop.infra.utils.llm_text import strip_thinking
+from octop.infra.utils.llm_text import strip_internal_payloads, strip_thinking
 
 ChannelResponseMode = Literal["invoke", "stream"]
 
@@ -104,7 +104,7 @@ async def collapse_to_invoke_response(
 
             if event.type == MessageEventType.COMPLETED:
                 content: list[ContentPart] = []
-                final_text = strip_thinking(text_buffer)
+                final_text = strip_internal_payloads(strip_thinking(text_buffer))
                 if final_text:
                     content.append(TextContent(text=final_text))
                 content.extend(media_buffer)
@@ -139,6 +139,12 @@ def _drops_weixin_preamble(event: MessageEvent) -> bool:
     return event.type == MessageEventType.TOOL_START and _weixin_tool_key(event) != "ask_agent"
 
 
+def _message_has_text(event: MessageEvent) -> bool:
+    return event.type == MessageEventType.MESSAGE and any(
+        isinstance(part, TextContent) and part.text.strip() for part in event.content
+    )
+
+
 async def withhold_weixin_stream_preamble(
     events: AsyncIterator[MessageEvent],
 ) -> AsyncIterator[MessageEvent]:
@@ -154,10 +160,16 @@ async def withhold_weixin_stream_preamble(
             if event.type in _WEIXIN_PREAMBLE_TYPES:
                 held.append(event)
                 continue
-            if not _drops_weixin_preamble(event):
+            if _message_has_text(event):
+                # A complete text block follows: the held deltas are lead-in
+                # narration ("Let me verify…"), not part of the answer.
+                held.clear()
+            elif not _drops_weixin_preamble(event):
                 for item in held:
                     yield item
-            held.clear()
+                held.clear()
+            else:
+                held.clear()
             yield event
             if event.type == MessageEventType.ERROR:
                 return

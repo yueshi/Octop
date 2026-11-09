@@ -23,6 +23,14 @@ interface ApprovalRequiredFrame {
   deep_link?: string;
 }
 
+interface ThreadUpdatedFrame {
+  type: "thread.updated";
+  agent_id: string;
+  thread_id: string;
+  turn_active?: boolean;
+  unread_count?: number;
+}
+
 function PushToastIcon({
   iconUrl,
   iconName,
@@ -59,9 +67,35 @@ export function useDashboardPushToast(): void {
   refreshRef.current = refresh;
 
   useDashboardNotifySocket((raw) => {
-    const frame = raw as Partial<ApprovalRequiredFrame>;
+    const frame = raw as Partial<ApprovalRequiredFrame | ThreadUpdatedFrame>;
     if (frame?.type === "approval_required") {
       showApprovalToast(frame as ApprovalRequiredFrame);
+      return;
+    }
+    if (frame?.type === "thread.updated") {
+      const updated = frame as ThreadUpdatedFrame;
+      const threadId = String(updated.thread_id || "").trim();
+      if (!threadId) return;
+      if (updated.turn_active) {
+        // Keep the optimistic Web bubble intact while the turn is running;
+        // refresh only the sidebar's active/unread state.
+        emitSessionEvent({
+          kind: "sessionsChanged",
+          sessionId: "",
+          agentId: updated.agent_id,
+        });
+        return;
+      }
+      void refreshRef.current({ silent: true });
+      // The chat socket's turn.ended frame may still be in flight on another
+      // WebSocket; force the stale marker so an open thread refetches even if
+      // its local streaming flag has not cleared yet.
+      invalidateHistory(threadId, { force: true });
+      emitSessionEvent({
+        kind: "sessionsChanged",
+        sessionId: threadId,
+        agentId: updated.agent_id,
+      });
       return;
     }
     const parsed = parseDashboardPushFrame(raw);

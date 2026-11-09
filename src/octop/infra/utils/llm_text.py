@@ -7,6 +7,7 @@ manifest generation so text extraction and invoke timing stay consistent.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from typing import Any
 
@@ -49,6 +50,56 @@ def strip_thinking(text: str) -> str:
     return cleaned.strip()
 
 
+_INTERNAL_PAYLOAD_KEYS = frozenset({"matches"})
+
+
+def _leading_json_end(text: str) -> int:
+    """Return the index just past a leading balanced JSON object, or -1."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return -1
+
+
+def strip_internal_payloads(text: str) -> str:
+    """Drop internal JSON envelopes that must never reach an end user.
+
+    Memory retention compares a saved atom with USER.md/MEMORY.md through an
+    auxiliary LLM. Its ``{"matches": [...]}`` output can leak into the main
+    stream; strip a leading envelope before channel delivery.
+    """
+    stripped = (text or "").lstrip()
+    if not stripped.startswith("{"):
+        return text
+    end = _leading_json_end(stripped)
+    if end < 0:
+        return text
+    try:
+        payload = json.loads(stripped[:end])
+    except (ValueError, TypeError):
+        return text
+    if not isinstance(payload, dict) or not (_INTERNAL_PAYLOAD_KEYS & payload.keys()):
+        return text
+    return stripped[end:].lstrip()
+
+
 def prepare_channel_text(
     text: str,
     *,
@@ -64,7 +115,7 @@ def prepare_channel_text(
     if not text:
         return ""
     if not show_thinking:
-        return strip_thinking(text)
+        return strip_internal_payloads(strip_thinking(text))
 
     def _format_block(match: re.Match[str]) -> str:
         content = match.group(1).strip()
@@ -78,7 +129,49 @@ def prepare_channel_text(
 
     formatted = _THINKING_CAPTURE_RE.sub(_format_block, text)
     # Drop malformed leftovers so raw tags never reach the user.
-    return strip_thinking(formatted)
+    return strip_internal_payloads(strip_thinking(formatted))
+
+
+_MD_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s*")
+_MD_QUOTE_RE = re.compile(r"^\s{0,3}>\s?")
+_MD_TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)+\|?\s*$")
+_MD_RULE_RE = re.compile(r"^\s*[-*_]{3,}\s*$")
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
+_PLAIN_TEXT_CHANNELS = frozenset({"weixin", "qq"})
+
+
+def format_channel_text(text: str, channel_type: str) -> str:
+    """Make model Markdown readable on plain-text IM transports.
+
+    WeChat iLink and QQ send text items verbatim, so ``##``/``**``/tables
+    otherwise reach the user as raw markup. Other channels keep Markdown.
+    """
+    text = strip_internal_payloads(text)
+    if not text or channel_type.strip().lower() not in _PLAIN_TEXT_CHANNELS:
+        return text
+
+    lines: list[str] = []
+    in_code = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code = not in_code
+            continue
+        if in_code:
+            lines.append(line.rstrip())
+            continue
+        if _MD_TABLE_SEPARATOR_RE.match(stripped) or _MD_RULE_RE.match(stripped):
+            continue
+        cleaned = _MD_HEADING_RE.sub("", line)
+        cleaned = _MD_QUOTE_RE.sub("", cleaned)
+        if cleaned.strip().startswith("|") and cleaned.strip().endswith("|"):
+            cells = [cell.strip() for cell in cleaned.strip().strip("|").split("|")]
+            cleaned = " · ".join(cell for cell in cells if cell)
+        cleaned = _MD_LINK_RE.sub(lambda match: f"{match.group(1)} ({match.group(2)})", cleaned)
+        cleaned = cleaned.replace("**", "").replace("__", "").replace("`", "")
+        lines.append(cleaned.rstrip())
+
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 def llm_text_content(result: Any) -> str:

@@ -1,0 +1,13 @@
+{
+  "id": "inventory-count",
+  "version": 1,
+  "name": { "zh": "库存盘点表", "en": "Inventory Count" },
+  "description": {
+    "zh": "按库位记录库存，自动标出低于安全库存的物品。",
+    "en": "Track stock by location and highlight items below their safety level."
+  },
+  "category": "operations",
+  "tags": ["inventory", "warehouse", "operations"],
+  "schema": "schema.json",
+  "html": "app.html"
+}

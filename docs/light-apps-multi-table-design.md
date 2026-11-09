@@ -1,21 +1,21 @@
-# 小程序多 CSV（多数据表）设计
+# MiniApp 多 CSV（多数据表）设计
 
 > 状态：已实施（2026-10-23）
 >
-> 范围：`feature/light-apps` 分支上的小程序能力
+> 范围：`feature/light-apps` 分支上的 MiniApp 能力
 >
-> 关系：[小程序数据与协作架构方案](./light-apps-architecture.md) 描述的是「行数据整体入库」的 P0 阶段；
+> 关系：[MiniApp 数据与协作架构方案](./light-apps-architecture.md) 描述的是「行数据整体入库」的 P0 阶段；
 > 本文是**先行的、可独立交付的增量**，两者不冲突：本文的表（table）维度在 P0 落地时映射为
 > `light_app_rows.table_key`，服务层接口与前端契约不变。
 >
-> 另见：[小程序默认 AI 助手与外部数据导入设计](./light-apps-assistant-and-import-design.md)
+> 另见：[MiniApp 默认 AI 助手与外部数据导入设计](./light-apps-assistant-and-import-design.md)
 > （助手读表、导入写表，都建立在本文的多表模型之上）。
 
 ---
 
 ## 1. 目标与范围
 
-一个小程序目前只有一张数据表（`schema.json` + `data.csv`）。本设计让**一个小程序支持多个 CSV**：
+一个 MiniApp 目前只有一张数据表（`schema.json` + `data.csv`）。本设计让**一个 MiniApp 支持多个 CSV**：
 
 - 每个应用下有若干**表**（table），每张表有自己的列定义和自己的 CSV 文件；
 - Agent 可以在同一个应用里建多张表，并分别往不同表写数据；

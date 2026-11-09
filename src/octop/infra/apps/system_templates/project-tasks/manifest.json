@@ -1,0 +1,13 @@
+{
+  "id": "project-tasks",
+  "version": 1,
+  "name": { "zh": "项目任务看板", "en": "Project Tasks" },
+  "description": {
+    "zh": "按状态分列管理任务，跟踪负责人、优先级、截止日期和进度。",
+    "en": "Plan tasks by status and track owners, priorities, due dates and progress."
+  },
+  "category": "project",
+  "tags": ["project", "tasks", "board"],
+  "schema": "schema.json",
+  "html": "app.html"
+}

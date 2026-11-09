@@ -143,17 +143,36 @@ interface AssistantProcessSummaryProps {
    */
   statsSplit?: AssistantTurnSplit;
   isStreaming?: boolean;
-  /** Team rooms default to collapsed thinking; solo stays expanded. */
+  /** Turn start timestamp, shown as elapsed time in the live status line. */
+  startedAt?: number | null;
+  /** Team rooms default to collapsed thinking; solo does too. */
   isTeam?: boolean;
   onAcpPermissionSelect?: (message: string) => void;
   hideToolMedia?: boolean;
   agentId?: string | null;
 }
 
+function useElapsedSeconds(
+  startedAt: number | null | undefined,
+  active: boolean,
+): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active || !startedAt) return;
+    const tick = () => setNow(Date.now());
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [active, startedAt]);
+  if (!active || !startedAt) return null;
+  return Math.max(0, Math.floor((now - startedAt) / 1000));
+}
+
 function resolveLiveProcessHint(
   split: AssistantTurnSplit,
   isStreaming: boolean,
   t: (key: string, opts?: Record<string, unknown>) => string,
+  elapsedSeconds: number | null = null,
 ): string | null {
   if (!isStreaming) return null;
 
@@ -173,6 +192,12 @@ function resolveLiveProcessHint(
     (step) => step.kind === "thinking" && step.item.isStreaming,
   );
   if (thinkingLive) {
+    if (elapsedSeconds != null && elapsedSeconds >= 1) {
+      return t("chat.processThinkingLiveElapsed", {
+        seconds: elapsedSeconds,
+        defaultValue: "深度思考中 · {{seconds}}s",
+      });
+    }
     return t("chat.processThinkingLive", { defaultValue: "深度思考中" });
   }
 
@@ -194,6 +219,7 @@ function AssistantProcessSummary({
   split,
   statsSplit,
   isStreaming = false,
+  startedAt = null,
   isTeam = false,
   onAcpPermissionSelect,
   hideToolMedia = false,
@@ -204,13 +230,14 @@ function AssistantProcessSummary({
   const [expanded, setExpanded] = useState(isStreaming && !collapseThinking);
   const prevStreaming = useRef(isStreaming);
   const prevCollapseThinking = useRef(collapseThinking);
+  const elapsedSeconds = useElapsedSeconds(startedAt, isStreaming);
   const { toolCount, thinkingCount } = useMemo(
     () => countProcessStats(statsSplit ?? split),
     [statsSplit, split],
   );
   const liveHint = useMemo(
-    () => resolveLiveProcessHint(split, isStreaming, t),
-    [split, isStreaming, t],
+    () => resolveLiveProcessHint(split, isStreaming, t, elapsedSeconds),
+    [split, isStreaming, t, elapsedSeconds],
   );
   const decisionOnly =
     toolCount === 0 && thinkingCount === 0

@@ -10,7 +10,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from octop.i18n import tr
-from octop.infra.apps.assistant import AppAssistant
+from octop.infra.apps.assistant import MAX_ASSISTANT_ROUNDS, AppAssistant
 from octop.infra.db.repos.apps import (
     ASSISTANT_HISTORY_KEEP,
     ASSISTANT_ROLE_ASSISTANT,
@@ -189,11 +189,84 @@ async def test_stream_tool_loop_queries_rows(world: World) -> None:  # noqa: F81
     assert "Cup" in tool_messages[0].content
 
 
-async def test_stream_reports_round_limit(world: World) -> None:  # noqa: F811
+async def test_stream_chart_tool_emits_chart_and_persists(world: World) -> None:  # noqa: F811
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    await world.service.append_row(row, {"title": "Cup", "qty": 2, "status": "new"})
+    await world.service.append_row(row, {"title": "Pen", "qty": 3, "status": "new"})
+    await world.service.append_row(row, {"title": "Book", "qty": 1, "status": "done"})
+    tool_call = {
+        "name": "app_chart",
+        "args": {
+            "chart_type": "bar",
+            "x": "status",
+            "y": "qty",
+            "agg": "sum",
+        },
+        "id": "chart-1",
+        "type": "tool_call",
+    }
+    model = _FakeModel([AIMessage(content="", tool_calls=[tool_call]), _final("Chart ready")])
+    assistant = _assistant(world, model)
+    prepared = assistant.prepare(row, user_id=world.alice_id, question="chart it")
+    events = await _collect(assistant.stream(prepared))
+
+    assert [event["type"] for event in events] == [
+        "tool",
+        "chart",
+        "token",
+        "done",
+    ]
+    chart = events[1]["chart"]
+    assert chart["type"] == "bar"
+    assert chart["series"] == [{"key": "qty", "label": "qty"}]
+    assert chart["data"] == [
+        {"x": "new", "qty": 5.0},
+        {"x": "done", "qty": 1.0},
+    ]
+    assert events[-1]["charts"] == [chart]
+
+    turns = assistant.history(row, world.alice_id)
+    assert turns[-1].content == "Chart ready"
+    assert turns[-1].charts == (chart,)
+
+    # The marker must never leak back into the model context.
+    follow_up_model = _FakeModel([_final("again")])
+    follow_up = _assistant(world, follow_up_model)
+    follow_up_prepared = follow_up.prepare(row, user_id=world.alice_id, question="and now?")
+    await _collect(follow_up.stream(follow_up_prepared))
+    assert all(
+        "octop-charts:v1" not in str(message.content) for message in follow_up_model.calls[-1]
+    )
+
+
+async def test_stream_finalizes_after_tool_round_limit(world: World) -> None:  # noqa: F811
     app_id = await _create(world)
     row = world.service.get(app_id)
     call = {"name": "app_tables", "args": {}, "id": "c1", "type": "tool_call"}
-    model = _FakeModel([AIMessage(content="", tool_calls=[call]) for _ in range(4)])
+    model = _FakeModel(
+        [AIMessage(content="", tool_calls=[call]) for _ in range(MAX_ASSISTANT_ROUNDS)]
+        + [_final("Based on the data already returned.")]
+    )
+    assistant = _assistant(world, model)
+    prepared = assistant.prepare(row, user_id=world.alice_id, question="loop forever")
+    events = await _collect(assistant.stream(prepared))
+
+    assert events[-2]["type"] == "token"
+    assert events[-1]["type"] == "done"
+    assert events[-1]["rounds"] == MAX_ASSISTANT_ROUNDS
+    turns = assistant.history(row, world.alice_id)
+    assert turns[-1].content == "Based on the data already returned."
+
+
+async def test_stream_reports_round_limit_without_final_answer(world: World) -> None:  # noqa: F811
+    app_id = await _create(world)
+    row = world.service.get(app_id)
+    call = {"name": "app_tables", "args": {}, "id": "c1", "type": "tool_call"}
+    model = _FakeModel(
+        [AIMessage(content="", tool_calls=[call]) for _ in range(MAX_ASSISTANT_ROUNDS)]
+        + [_final("")]
+    )
     assistant = _assistant(world, model)
     prepared = assistant.prepare(row, user_id=world.alice_id, question="loop forever")
     events = await _collect(assistant.stream(prepared))

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import httpx
 import pytest
 from langchain_core.messages import AIMessage
 
+from octop.config import GameConfig
+from octop.infra.apps.game_sessions import create_game_token
 from octop.infra.apps.service import AppService
 from octop.infra.server import OctopServer
 
@@ -365,6 +368,46 @@ async def test_assistant_history_acl_and_guards(
         "3 rows",
     ]
     assert all(m["created_at"] > 0 for m in messages)
+
+
+async def test_generate_acl_and_output(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+
+    # Generation follows the app's view permission.
+    r = await client.post(f"/api/apps/{app_id}/generate", headers=bob_auth, json={"prompt": "hi"})
+    assert r.status_code == 403
+    assert r.json()["error"]["code"] == "APP_FORBIDDEN"
+
+    # Whitespace-only prompts are rejected before the model is called.
+    r = await client.post(
+        f"/api/apps/{app_id}/generate", headers=alice_auth, json={"prompt": "   "}
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "APP_PROMPT_INVALID"
+
+    # A valid prompt returns one non-streaming JSON body and bills usage.
+    assert srv.app_runtime is not None
+    agent = srv.app_runtime.agent_registry.get_agent(agent_id)
+    agent._assistant_llm.script = [
+        AIMessage(
+            content="A concise answer.",
+            usage_metadata={"input_tokens": 10, "output_tokens": 4, "total_tokens": 14},
+        )
+    ]
+    r = await client.post(
+        f"/api/apps/{app_id}/generate",
+        headers=alice_auth,
+        json={"prompt": "summarize", "system": "Be terse"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["text"] == "A concise answer."
+    assert body["model"] == "fake-model"
+    assert body["input_tokens"] == 10
+    assert body["output_tokens"] == 4
 
 
 async def _upload_import_file(
@@ -1313,3 +1356,279 @@ async def test_preview_written_into_the_workspace_is_not_served_when_unsafe(
 
     r = await client.get(f"/api/apps/{app_id}/preview", headers=alice_auth)
     assert r.status_code == 404
+
+
+async def test_quick_multi_sheet_create_flow(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    import io
+
+    from openpyxl import Workbook
+
+    client, _srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    for name, rows in {
+        "orders": [
+            ["订单号", "区域", "金额"],
+            ["A-1", "华东", 120],
+            ["A-2", "华南", 80],
+        ],
+        "details": [
+            ["订单号", "商品", "数量"],
+            ["A-1", "纸杯", 10],
+            ["A-1", "吸管", 20],
+            ["A-2", "纸杯", 5],
+        ],
+    }.items():
+        sheet = workbook.create_sheet(title=name)
+        for row in rows:
+            sheet.append(row)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+
+    r = await client.post(
+        "/api/apps/quick/inspect",
+        headers=alice_auth,
+        data={"agent_id": agent_id},
+        files={
+            "file": (
+                "orders.xlsx",
+                buffer.getvalue(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+    assert r.status_code == 200, r.text
+    inspected = r.json()
+    sheets = []
+    for sheet in inspected["report"]["sheets"]:
+        columns = [
+            {
+                "name": column["name_suggestion"],
+                "label": column["source"],
+                "type": "string" if column["type"] == "enum" else column["type"],
+                "required": False,
+            }
+            for column in sheet["columns"]
+        ]
+        sheets.append(
+            {
+                "sheet": sheet["name"],
+                "columns": columns,
+                "mapping": {
+                    column["source"]: column["name_suggestion"] for column in sheet["columns"]
+                },
+                "view": "ledger",
+            }
+        )
+
+    r = await client.post(
+        "/api/apps/quick/create",
+        headers=alice_auth,
+        json={
+            "agent_id": agent_id,
+            "path": inspected["upload_path"],
+            "sheets": sheets,
+            "name": "多表订单",
+        },
+    )
+    assert r.status_code == 201, r.text
+    created = r.json()
+    assert created["imported"] == 5
+    app_id = created["app"]["app_id"]
+    table_keys = [item["table_key"] for item in created["app"]["tables"]]
+    assert table_keys == ["main", "table_2"]
+
+    r = await client.get(f"/api/apps/{app_id}/tables", headers=alice_auth)
+    assert r.status_code == 200
+    assert [item["table_key"] for item in r.json()["tables"]] == ["main", "table_2"]
+
+    r = await client.get(
+        f"/api/apps/{app_id}/rows?table=table_2&limit=10&offset=0",
+        headers=alice_auth,
+    )
+    assert r.status_code == 200
+    assert r.json()["total"] == 3
+
+
+async def test_external_game_session_and_result_flow(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+    assert srv.services is not None
+
+    # Games live in config.json; the endpoint reads them from services.
+    object.__setattr__(
+        srv.services,
+        "config",
+        replace(
+            srv.services.config,
+            games=[
+                GameConfig(
+                    id="duck",
+                    name="小鸭养成",
+                    url="https://games.example.com/duck/index.html",
+                    origin="https://games.example.com",
+                )
+            ],
+        ),
+    )
+
+    r = await client.post(
+        f"/api/apps/{app_id}/game-sessions",
+        headers=alice_auth,
+        json={"game_id": "duck"},
+    )
+    assert r.status_code == 201, r.text
+    session = r.json()
+    assert session["game_id"] == "duck"
+    assert session["name"] == "小鸭养成"
+    assert session["url"] == "https://games.example.com/duck/index.html"
+    assert session["sandbox"].startswith("allow-scripts")
+    assert session["session_id"].startswith("game_")
+    assert session["expires_at"] > 0
+
+    # The game token is the only credential on the result endpoint.
+    body = {
+        "session_id": session["session_id"],
+        "operations": [
+            {
+                "table": "main",
+                "mode": "append",
+                "rows": [{"title": "duck", "status": "new"}],
+            }
+        ],
+    }
+    r = await client.post(f"/api/game-sessions/{session['token']}/results", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["imported"] == 1
+
+    # A retry with the same session/row must not duplicate the row.
+    r = await client.post(f"/api/game-sessions/{session['token']}/results", json=body)
+    assert r.status_code == 200, r.text
+    r = await client.get(f"/api/apps/{app_id}/rows?limit=10", headers=alice_auth)
+    assert r.json()["total"] == 1
+
+    # Upsert updates the existing row by key.
+    r = await client.post(
+        f"/api/game-sessions/{session['token']}/results",
+        json={
+            "session_id": session["session_id"],
+            "operations": [
+                {
+                    "table": "main",
+                    "mode": "upsert",
+                    "upsert_key": ["title"],
+                    "rows": [{"title": "duck", "status": "done"}],
+                }
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["updated"] == 1
+    r = await client.get(f"/api/apps/{app_id}/rows?limit=10", headers=alice_auth)
+    assert r.json()["rows"] == [{"title": "duck", "status": "done"}]
+
+    # A different session id inside the body cannot reuse the token.
+    r = await client.post(
+        f"/api/game-sessions/{session['token']}/results",
+        json={"session_id": "game_other", "operations": []},
+    )
+    assert r.status_code == 401
+
+    # No write access -> no game session.
+    r = await client.post(
+        f"/api/apps/{app_id}/game-sessions",
+        headers=bob_auth,
+        json={"game_id": "duck"},
+    )
+    assert r.status_code == 403
+
+    # Even a well-formed token cannot bypass the app ACL at write time.
+    secret = srv.services.secret_repo.get("jwt")
+    assert secret is not None
+    bob = srv.services.user_repo.get_by_username("bob")
+    assert bob is not None
+    bob_token, _ = create_game_token(
+        secret,
+        app_id=app_id,
+        user_id=bob.id,
+        game_id="duck",
+        session_id="game_bob",
+    )
+    r = await client.post(
+        f"/api/game-sessions/{bob_token}/results",
+        json={"session_id": "game_bob", "operations": []},
+    )
+    assert r.status_code == 403
+
+    # Unknown games are rejected before a token is issued.
+    r = await client.post(
+        f"/api/apps/{app_id}/game-sessions",
+        headers=alice_auth,
+        json={"game_id": "nope"},
+    )
+    assert r.status_code == 404
+
+
+async def test_public_link_only_exposes_public_tables(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+    service = _service(srv)
+    row = service.get(app_id)
+    await service.create_table(
+        row,
+        table_key="members",
+        columns=[{"name": "name", "type": "string"}],
+    )
+
+    r = await client.post(
+        f"/api/apps/{app_id}/publication",
+        headers=alice_auth,
+        json={"ttl_days": 0},
+    )
+    assert r.status_code == 200, r.text
+    token = r.json()["token"]
+
+    r = await client.get(f"/api/public/apps/{token}")
+    assert r.status_code == 200, r.text
+    assert [item["table_key"] for item in r.json()["tables"]] == ["main"]
+
+    r = await client.get(f"/api/public/apps/{token}/rows?table=members")
+    assert r.status_code == 404, r.text
+
+    r = await client.patch(
+        f"/api/apps/{app_id}/tables/members",
+        headers=alice_auth,
+        json={"public_visible": True},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["public_visible"] is True
+
+    r = await client.get(f"/api/public/apps/{token}")
+    assert r.status_code == 200, r.text
+    assert [item["table_key"] for item in r.json()["tables"]] == ["main", "members"]
+
+    r = await client.get(f"/api/public/apps/{token}/rows?table=members")
+    assert r.status_code == 200, r.text
+    assert r.json()["rows"] == []
+
+
+async def test_alter_schema_can_mark_existing_columns_as_pii(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+
+    r = await client.patch(
+        f"/api/apps/{app_id}/schema",
+        headers=alice_auth,
+        json={"pii": {"title": "phone"}},
+    )
+    assert r.status_code == 200, r.text
+    columns = {item["name"]: item for item in r.json()["columns"]}
+    assert columns["title"]["pii"] == "phone"

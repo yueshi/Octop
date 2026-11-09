@@ -118,6 +118,36 @@ async def test_rebind(registry: ThreadRegistry) -> None:
 
 
 @pytest.mark.asyncio
+async def test_rebind_new_dashboard_session_keeps_virtual_identity(
+    registry: ThreadRegistry,
+) -> None:
+    tid = await registry.get_or_create(
+        agent_id="a1",
+        user_id=1,
+        channel_type="feishu",
+        channel_subject_id="ou_x",
+        channel_chat_type="dm",
+        channel_id="ch-feishu",
+    )
+    sk = ThreadRegistry.dashboard_key(agent_id="a1", user_id=1)
+    assert registry.get_session(sk) is None
+
+    await registry.rebind(session_key=sk, thread_id=tid, agent_id="a1")
+
+    row = registry.get_session(sk)
+    assert row is not None
+    assert row.thread_id == tid
+    assert row.channel_type == ThreadRegistry.CHANNEL_DASHBOARD
+    assert row.chat_type == "dm"
+    # A dashboard session must not inherit the IM provider's send identity.
+    assert row.channel_id is None
+    assert row.channel_metadata == {
+        "channel_type": ThreadRegistry.CHANNEL_DASHBOARD,
+        "user_id": 1,
+    }
+
+
+@pytest.mark.asyncio
 async def test_rebind_rejects_foreign_thread(registry: ThreadRegistry) -> None:
     sk = ThreadRegistry.dashboard_key(agent_id="a1", user_id=1)
     tid = await registry.get_or_create(

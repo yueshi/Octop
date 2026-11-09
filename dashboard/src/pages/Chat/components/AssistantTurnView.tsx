@@ -35,6 +35,8 @@ interface AssistantTurnViewProps {
   messages: ChatMessage[];
   agentId?: string | null;
   isStreaming?: boolean;
+  /** Turn start timestamp, forwarded to the live process status line. */
+  startedAt?: number | null;
   /** True while this assistant turn is still being generated (incl. between tool calls). */
   isTurnInProgress?: boolean;
   /**
@@ -133,6 +135,7 @@ function turnHasLiveSpeaker(
 export default function AssistantTurnView({
   messages,
   agentId: agentIdProp,
+  startedAt = null,
   isTurnInProgress = false,
   liveSpeakers = [],
   onRegenerate,
@@ -272,6 +275,7 @@ export default function AssistantTurnView({
           <TurnProcessBlocks
             split={trailingSplit}
             isStreaming={turnStreaming && !hasPendingHitl}
+            startedAt={startedAt}
             onAcpPermissionSelect={onAcpPermissionSelect}
             hideToolMedia={hasToolMedia}
             agentId={speakerAgentId}
@@ -413,6 +417,7 @@ export default function AssistantTurnView({
                 <TurnProcessBlocks
                   split={split}
                   isStreaming={processStreaming}
+                  startedAt={startedAt}
                   onAcpPermissionSelect={onAcpPermissionSelect}
                   hideToolMedia={hasToolMedia}
                   agentId={speakerAgentId}

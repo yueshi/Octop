@@ -215,3 +215,39 @@
     }
   }
 }
+
+/* Composer transport switch (IM thread: reply via IM vs Web-only). */
+.replyViaBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.replyViaOption {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fn-text-tertiary, #94a3b8);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+
+  &:hover {
+    color: var(--fn-text-secondary, #64748b);
+    background: var(--fn-bg-subtle, rgba(0, 0, 0, 0.025));
+  }
+}
+
+.replyViaOptionActive {
+  color: var(--fn-color-brand, #6366f1);
+  background: var(--fn-color-brand-bg, rgba(99, 102, 241, 0.1));
+  border-color: var(--fn-color-brand, #6366f1);
+  font-weight: 600;
+}

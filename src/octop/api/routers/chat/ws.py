@@ -19,12 +19,14 @@ from octop.api.routers.chat.models import UserTurnWsFrame
 from octop.api.routers.chat.sse import json_chunk_default
 from octop.api.routers.chat.turn import (
     build_dashboard_inbound,
+    build_im_bridge_inbound,
     prepare_dashboard_turn,
+    resolve_im_bridge_session,
     turn_has_content,
 )
 from octop.infra.agents.teams.team_manager import subscribe_with_member_catchup
 from octop.infra.bridge.ids import parse_bridge_agent_id
-from octop.infra.errors import OctopError
+from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.gateway.steer import SteerAdmitOk, SteerAdmitReject, SteerCoordinator
 from octop.infra.gateway.steer.types import preview_text
 from octop.infra.gateway.ws import WS_CHANNEL_ID
@@ -68,8 +70,6 @@ async def dashboard_chat_ws(
     try:
         assert_agent_access(server, agent_id, user)
     except OctopError as exc:
-        from octop.infra.errors import ErrorCode  # noqa: PLC0415
-
         code = 4003 if exc.code == ErrorCode.FORBIDDEN else 4404
         await websocket.close(code=code, reason=str(exc.code.value))
         return
@@ -158,6 +158,9 @@ async def dashboard_chat_ws(
                         {"type": "error", "message": f"thread {thread_id!r} not found"},
                     )
                     continue
+                bridge_turn_id = str(payload.get("turn_id") or "").strip()
+                if bridge_turn_id.startswith("bridge_"):
+                    gateway.cancel_im_bridge_turn(bridge_turn_id)
                 gateway.steer.mark_cancelling(thread_id)
                 discarded = gateway.steer.discard(thread_id, reason="turn_cancelled")
                 if discarded is not None:
@@ -212,6 +215,68 @@ async def dashboard_chat_ws(
                 await send_frame({"type": "done"})
                 continue
 
+            if not turn_has_content(turn):
+                await send_frame({"type": "error", "message": "empty message"})
+                await send_frame({"type": "done"})
+                continue
+
+            if frame.reply_via == "im":
+                # Design B: a Web reply on an IM thread is delivered through
+                # the primary IM session, so the other side receives the same
+                # assistant reply. The Web socket stays subscribed for lifecycle
+                # frames and history reload; it never impersonates the user in IM.
+                locale = getattr(user, "locale", None) or "zh"
+                try:
+                    session = resolve_im_bridge_session(
+                        server,
+                        agent_id=agent_id,
+                        user_id=user.id,
+                        thread_id=prepared_early.thread_id,
+                    )
+                except OctopError as exc:
+                    await send_frame({"type": "error", "message": exc.localized_message(locale)})
+                    await send_frame({"type": "done"})
+                    continue
+                inbound = build_im_bridge_inbound(
+                    agent_id=agent_id,
+                    user_id=user.id,
+                    prepared=prepared_early,
+                    turn=turn,
+                    session=session,
+                    ws_connection_id=connection_id,
+                    user_is_admin=bool(getattr(user, "is_admin", False)),
+                )
+                bridge_turn_id = f"bridge_{uuid.uuid4().hex}"
+                inbound.metadata["bridge_turn_id"] = bridge_turn_id
+                hub.subscribe(prepared_early.thread_id, connection_id)
+                waiting = gateway.im_turn_waiting(
+                    session.channel_id,
+                    session.channel_subject_id,
+                )
+                if not gateway.enqueue_im_turn(session.channel_id, inbound):
+                    unavailable = OctopError.localized(ErrorCode.CHAT_IM_UNAVAILABLE, locale)
+                    await send_frame(
+                        {
+                            "type": "error",
+                            "message": unavailable.localized_message(locale),
+                        }
+                    )
+                    await send_frame({"type": "done"})
+                elif waiting:
+                    # The IM session is busy; tell the Web client immediately
+                    # instead of leaving it on a silent spinner until the
+                    # channel worker picks the turn up.
+                    await send_frame(
+                        {
+                            "type": "turn.queued",
+                            "turn_id": bridge_turn_id,
+                            "agent_id": agent_id,
+                            "thread_id": prepared_early.thread_id,
+                            "channel_type": session.channel_type,
+                        }
+                    )
+                continue
+
             steered = await _maybe_admit_steer(
                 text=(turn.text or "").strip() or _plain_text_from_turn(turn),
                 thread_id=prepared_early.thread_id,
@@ -225,11 +290,6 @@ async def dashboard_chat_ws(
                 content_blocks=_steer_blocks_from_turn(turn),
             )
             if steered:
-                continue
-
-            if not turn_has_content(turn):
-                await send_frame({"type": "error", "message": "empty message"})
-                await send_frame({"type": "done"})
                 continue
 
             inbound = build_dashboard_inbound(

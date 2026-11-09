@@ -208,6 +208,33 @@ async def test_weixin_stream_drops_preamble_but_keeps_ask_agent() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_weixin_stream_drops_held_delta_before_final_text_message() -> None:
+    source = _events(
+        MessageEvent.delta("Public link works. Let me verify it."),
+        MessageEvent.text("最终答案"),
+        MessageEvent.completed(),
+    )
+    result = [event async for event in withhold_weixin_stream_preamble(source)]
+
+    texts = [
+        part.text
+        for event in result
+        if event.type == MessageEventType.MESSAGE
+        for part in event.content
+        if isinstance(part, TextContent)
+    ]
+    deltas = [
+        part.text
+        for event in result
+        if event.type == MessageEventType.DELTA
+        for part in event.content
+        if isinstance(part, TextContent)
+    ]
+    assert deltas == []
+    assert texts == ["最终答案"]
+
+
 def test_newer_weixin_token_is_kept() -> None:
     from octop.infra.utils.weixin_context import (
         WEIXIN_CONTEXT_TOKEN_KEY,
@@ -236,3 +263,25 @@ def test_qq_channel_streams_by_default() -> None:
     assert qq_channel_response_mode({"c2c_streaming": True}) == "stream"
     assert qq_channel_response_mode({"c2c_streaming": False}) == "invoke"
     assert qq_channel_response_mode({"c2c_streaming": "false"}) == "invoke"
+
+
+@pytest.mark.asyncio
+async def test_invoke_strips_internal_retention_json() -> None:
+    source = _events(
+        MessageEvent.tool_start("memory_save"),
+        MessageEvent.tool_end("memory_save"),
+        MessageEvent.delta(
+            '{"matches":[{"atom_id":"a","relation":"unrelated","document":"USER.md"}]}'
+        ),
+        MessageEvent.delta("最终答案"),
+        MessageEvent.completed(),
+    )
+    result = [event async for event in collapse_to_invoke_response(source)]
+    text = next(
+        part.text
+        for event in result
+        if event.type == MessageEventType.MESSAGE
+        for part in event.content
+        if isinstance(part, TextContent)
+    )
+    assert text == "最终答案"

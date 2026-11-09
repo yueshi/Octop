@@ -18,6 +18,8 @@ export interface Session {
   threadId: string;
   updatedAt: string | null;
   channelType: string;
+  /** IM conversation shape (dm / group); dashboard sessions are ``dm``. */
+  channelChatType?: string;
   isActive?: boolean;
   hasActivity?: boolean;
   pinned?: boolean;
@@ -41,6 +43,7 @@ export function toSession(row: {
   last_active: number;
   created_at?: number;
   channel_type?: string;
+  channel_chat_type?: string;
   is_active?: boolean;
   has_messages?: boolean;
   pinned?: boolean;
@@ -71,6 +74,7 @@ export function toSession(row: {
     threadId: row.thread_id,
     updatedAt: sortTs > 0 ? new Date(sortTs * 1000).toISOString() : null,
     channelType: row.channel_type ?? "dashboard",
+    channelChatType: row.channel_chat_type ?? "dm",
     isActive: row.is_active ?? false,
     hasActivity,
     pinned: Boolean(row.pinned),

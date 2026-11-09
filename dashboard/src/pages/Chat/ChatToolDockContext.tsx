@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
+import type { AppGameSession } from "../../api/modules/apps";
 import { dockToolUiTabId } from "./utils/dockToolUiTabId";
 import type { DockTab, DockTabId } from "./hooks/useChatDockPanel";
 
@@ -8,10 +9,16 @@ export interface OpenToolUiPanelOptions {
   toolName?: string;
 }
 
+export interface OpenGamePanelOptions {
+  appId: string;
+  session: AppGameSession;
+}
+
 interface ChatToolDockContextValue {
   openToolUiPanel: (opts: OpenToolUiPanelOptions) => void;
   closeToolUiPanel: (callId: string) => void;
   focusToolUiPanel: (callId: string) => void;
+  openGamePanel: (opts: OpenGamePanelOptions) => void;
   isToolUiDocked: (callId: string | undefined) => boolean;
 }
 
@@ -26,6 +33,7 @@ export function ChatToolDockProvider({
   openToolUiPanel,
   closeToolUiPanel,
   focusToolUiPanel,
+  openGamePanel,
   children,
 }: {
   dockOpen: boolean;
@@ -34,6 +42,7 @@ export function ChatToolDockProvider({
   openToolUiPanel: (opts: OpenToolUiPanelOptions) => void;
   closeToolUiPanel: (callId: string) => void;
   focusToolUiPanel: (callId: string) => void;
+  openGamePanel: (opts: OpenGamePanelOptions) => void;
   children: ReactNode;
 }) {
   const activeToolUiCallId = useMemo(() => {
@@ -47,11 +56,18 @@ export function ChatToolDockProvider({
       openToolUiPanel,
       closeToolUiPanel,
       focusToolUiPanel,
+      openGamePanel,
       // Placeholder only while this tool's tab is the visible dock surface.
       // Closing the dock, the tab, or switching away restores the chat card.
       isToolUiDocked: (callId) => !!callId && activeToolUiCallId === callId,
     }),
-    [activeToolUiCallId, openToolUiPanel, closeToolUiPanel, focusToolUiPanel],
+    [
+      activeToolUiCallId,
+      openToolUiPanel,
+      closeToolUiPanel,
+      focusToolUiPanel,
+      openGamePanel,
+    ],
   );
 
   return (

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { AppGameSession } from "../../../api/modules/apps";
 import type { PanelMode } from "../../../components/BrowserWorkspace";
 import {
   canonicalizeDockFilePath,
@@ -36,6 +37,12 @@ export type DockTab =
       callId: string;
       title?: string;
       toolName?: string;
+    }
+  | {
+      id: string;
+      kind: "game";
+      appId: string;
+      session: AppGameSession;
     };
 
 export type DockTabId = DockTab["id"];
@@ -278,6 +285,37 @@ export function useChatDockPanel(isMobile: boolean, agentId?: string | null) {
     [openDock],
   );
 
+  /**
+   * Open (or restart) the external game for one app. One tab per app/game:
+   * launching again replaces the session so stale tokens are not reused.
+   */
+  const openGameTab = useCallback(
+    (opts: { appId: string; session: AppGameSession }) => {
+      const id = `game:${opts.appId}:${opts.session.game_id}`;
+      setOpenTabs((prev) => {
+        const existing = prev.find((tab) => tab.id === id);
+        if (existing?.kind === "game") {
+          return prev.map((tab) =>
+            tab.id === id ? { ...tab, session: opts.session } : tab,
+          );
+        }
+        if (existing) return prev;
+        return [
+          ...prev,
+          {
+            id,
+            kind: "game" as const,
+            appId: opts.appId,
+            session: opts.session,
+          },
+        ];
+      });
+      setActiveTabId(id);
+      openDock();
+    },
+    [openDock],
+  );
+
   /** Toggle dock open/closed around a dedicated tab. */
   const toggleDockTab = useCallback(
     (tab: Extract<DockTab, { kind: "browser" | "terminal" | "workspace" }>) => {
@@ -376,6 +414,7 @@ export function useChatDockPanel(isMobile: boolean, agentId?: string | null) {
     toggleTerminalPanel,
     openToolUiTab,
     focusToolUiTab,
+    openGameTab,
     closeTab,
     setActiveTab,
   };

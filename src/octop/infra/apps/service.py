@@ -58,6 +58,7 @@ from octop.infra.apps.models import (
     validate_row,
     validate_table_key,
 )
+from octop.infra.apps.pii import find_unmarked_pii
 from octop.infra.apps.preview import PREVIEW_FILENAME, validate_preview_svg
 from octop.infra.apps.templates import (
     AGENT_SOURCE,
@@ -70,7 +71,7 @@ from octop.infra.apps.templates import (
     read_system_template,
 )
 from octop.infra.apps.viewgen import render_html as render_view_html
-from octop.infra.apps.viewgen import suggest_view
+from octop.infra.apps.viewgen import render_multi_html, suggest_view
 from octop.infra.db.repos.agents import AgentRepo
 from octop.infra.db.repos.apps import (
     PERMISSION_RANK,
@@ -81,6 +82,7 @@ from octop.infra.db.repos.apps import (
     LightAppRow,
     LightAppSourceRow,
 )
+from octop.infra.db.repos.secrets import SecretRepo
 from octop.infra.db.repos.users import UserRepo, UserRow
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.utils.ulid import new_short_id
@@ -272,6 +274,7 @@ class AppTableView:
     label: str
     row_count: int
     is_main: bool
+    public_visible: bool
 
 
 IMPORT_MODE_APPEND = "append"
@@ -615,7 +618,33 @@ def _apply_pii(
     redact_pii: bool,
 ) -> tuple[Schema, list[dict[str, str]]]:
     schema = _with_detected_pii(schema, rows)
-    return schema, (redact_rows(schema, rows) if redact_pii else rows)
+    return schema, (redact_rows(schema, rows, redact_text=True) if redact_pii else rows)
+
+
+def _reject_unmarked_pii(
+    schema: Schema,
+    values: Mapping[str, object],
+    *,
+    table: str,
+) -> None:
+    """Refuse a write that would put PII into an unclassified free-text column."""
+    hits = find_unmarked_pii(
+        ((column.name, column.pii, column.type) for column in schema.columns),
+        values,
+    )
+    if not hits:
+        return
+    column, hit = hits[0]
+    raise _invalid(
+        ErrorCode.APP_PII_UNMARKED,
+        (
+            f"column {column!r} contains {hit.kind} data; mark it with pii "
+            "or move the value to a column marked as sensitive"
+        ),
+        table=table,
+        column=column,
+        kind=hit.kind,
+    )
 
 
 def _sniff_asset_mime(data: bytes) -> str | None:
@@ -641,12 +670,14 @@ class AppService:
         user_repo: UserRepo,
         workspaces: WorkspaceSource,
         external_tool_runner: ExternalToolRunner | None = None,
+        secret_repo: SecretRepo | None = None,
     ) -> None:
         self._app_repo = app_repo
         self._agent_repo = agent_repo
         self._user_repo = user_repo
         self._workspaces = workspaces
         self._external_tool_runner = external_tool_runner
+        self._secret_repo = secret_repo
 
     # ----- lookup / ACL -----
 
@@ -1108,6 +1139,7 @@ class AppService:
                     "row_count": table.row_count,
                     "schema_version": version,
                     "is_main": table.is_main,
+                    "public_visible": table.public_visible,
                 }
             )
         try:
@@ -1265,7 +1297,11 @@ class AppService:
             await ws.awrite_text(app_path(app_id, FILE_SCHEMA), schema.to_json())
             await ws.awrite_text(app_path(app_id, FILE_DATA), empty_csv)
             data_bytes = len(empty_csv.encode("utf-8"))
-            self._app_repo.create_table(app_id, MAIN_TABLE_KEY)
+            self._app_repo.create_table(
+                app_id,
+                MAIN_TABLE_KEY,
+                public_visible=True,
+            )
             self._app_repo.set_table_schema(
                 app_id,
                 MAIN_TABLE_KEY,
@@ -1319,6 +1355,7 @@ class AppService:
                 label=main.label if main is not None else "",
                 row_count=main.row_count if main is not None else row.row_count,
                 is_main=True,
+                public_visible=main.public_visible if main is not None else True,
             )
         ]
         for item in registered:
@@ -1330,6 +1367,7 @@ class AppService:
                     label=item.label,
                     row_count=item.row_count,
                     is_main=False,
+                    public_visible=item.public_visible,
                 )
             )
         return views
@@ -1342,7 +1380,7 @@ class AppService:
         """
         if self._app_repo.get_table(row.app_id, MAIN_TABLE_KEY) is not None:
             return
-        self._app_repo.create_table(row.app_id, MAIN_TABLE_KEY)
+        self._app_repo.create_table(row.app_id, MAIN_TABLE_KEY, public_visible=True)
         self._app_repo.set_table_stats(
             row.app_id,
             MAIN_TABLE_KEY,
@@ -1370,6 +1408,7 @@ class AppService:
         table_key: str,
         label: str = "",
         columns: object,
+        public_visible: bool = False,
     ) -> AppTableView:
         """Add a table with its own columns and an empty CSV."""
         key = validate_table_key(table_key)
@@ -1404,7 +1443,12 @@ class AppService:
                 row.app_id,
                 {schema_file: schema.to_json(), data_file: empty_csv},
             )
-            self._app_repo.create_table(row.app_id, key, clean_label)
+            self._app_repo.create_table(
+                row.app_id,
+                key,
+                clean_label,
+                public_visible=public_visible,
+            )
             self._app_repo.set_table_schema(row.app_id, key, schema.to_json(), schema.version)
             self._app_repo.set_table_stats(
                 row.app_id,
@@ -1418,7 +1462,42 @@ class AppService:
             label=clean_label,
             row_count=0,
             is_main=False,
+            public_visible=public_visible,
         )
+
+    async def set_table_visibility(
+        self,
+        row: AppRecord,
+        *,
+        table: str,
+        public_visible: bool,
+    ) -> AppTableView:
+        """Expose or hide one table on the app's public read-only link."""
+        key = self._require_table(row, table)
+        async with _lock_for(row.app_id):
+            self._require_live(row.app_id)
+            current = self._app_repo.get(row.app_id) or row
+            self._ensure_main_table(current)
+            self._app_repo.set_table_visibility(
+                current.app_id,
+                key,
+                public_visible=public_visible,
+            )
+            ws = await self._workspace(current.agent_id)
+            await self._refresh_manifest(ws, current.app_id)
+        view = next(item for item in self.list_tables(current) if item.table_key == key)
+        return view
+
+    def is_table_public(self, row: AppRecord, table: str) -> bool:
+        """Return whether *table* is exposed on the public link."""
+        try:
+            key = validate_table_key(table)
+        except OctopError:
+            return False
+        for view in self.list_tables(row):
+            if view.table_key == key:
+                return view.public_visible
+        return False
 
     async def update_metadata(
         self,
@@ -1448,6 +1527,8 @@ class AppService:
                 # ON DELETE CASCADE covers this, but the explicit delete keeps
                 # history cleanup working on databases without FK enforcement.
                 self._app_repo.delete_assistant_messages(row.app_id)
+                if self._secret_repo is not None:
+                    self._secret_repo.delete(self._publication_secret_key(row.app_id))
                 if ws is None:
                     return
                 try:
@@ -1843,6 +1924,7 @@ class AppService:
                         limit=MAX_ROWS,
                     )
                 normalized = validate_row(schema, values)
+                _reject_unmarked_pii(schema, normalized, table=key)
                 table_view = self._app_repo.get_table(current.app_id, key)
                 current_bytes = table_view.data_bytes if table_view is not None else 0
                 payload_bytes = len(json.dumps(normalized, ensure_ascii=False).encode("utf-8"))
@@ -1872,6 +1954,7 @@ class AppService:
                     limit=MAX_ROWS,
                 )
             normalized = validate_row(schema, values)
+            _reject_unmarked_pii(schema, normalized, table=key)
             rows.append(normalized)
             await self._persist_rows(ws, current, key, schema, rows)
             ts = int(time.time())
@@ -1973,6 +2056,8 @@ class AppService:
         sheet: str | None = None,
         header_row: int | None = None,
         mapping: Mapping[str, str] | None = None,
+        metric_column: str | None = None,
+        group_column: str | None = None,
         include_pii: bool = False,
         upsert_key: list[str] | None = None,
     ) -> tuple[LightAppRow, ImportResult]:
@@ -2008,7 +2093,14 @@ class AppService:
             data = await self.read_workspace_file(agent_id, clean_path)
             report = inspect_file(clean_path, data)
             selected = _select_sheet_report(report, sheet)
-            spec = suggest_view(selected, schema, view=view, title=clean_name)
+            spec = suggest_view(
+                selected,
+                schema,
+                view=view,
+                title=clean_name,
+                metric=metric_column,
+                group=group_column,
+            )
             html = render_view_html(schema, spec, title=clean_name, description=clean_description)
             await self.write_html(row, html)
         except Exception:
@@ -2018,6 +2110,144 @@ class AppService:
                 logger.warning("failed to roll back quick-create app %s", row.app_id, exc_info=True)
             raise
         return row, result
+
+    async def quick_create_multi(
+        self,
+        *,
+        agent_id: str,
+        owner_user_id: int,
+        path: str,
+        sheets: Sequence[Mapping[str, Any]],
+        name: str,
+        description: str = "",
+        include_pii: bool = False,
+    ) -> tuple[LightAppRow, ImportResult]:
+        """Create one app from several sheets, each landing in its own table."""
+        clean_path = _safe_import_path(path)
+        if not clean_path.startswith(f"{IMPORT_DIR}/"):
+            raise _invalid(
+                ErrorCode.APP_ROW_INVALID,
+                f"quick import path must live under {IMPORT_DIR}/",
+            )
+        if not sheets:
+            raise _invalid(ErrorCode.APP_ROW_INVALID, "at least one sheet is required")
+        if len(sheets) > MAX_TABLES_PER_APP:
+            raise _invalid(
+                ErrorCode.APP_LIMIT_EXCEEDED,
+                f"at most {MAX_TABLES_PER_APP} sheets can be imported at once",
+            )
+        clean_name = validate_name(name)
+        clean_description = validate_description(description)
+        parsed: list[dict[str, Any]] = []
+        seen_sheets: set[str] = set()
+        for index, item in enumerate(sheets):
+            sheet_name = str(item.get("sheet") or "").strip()
+            if not sheet_name:
+                raise _invalid(ErrorCode.APP_ROW_INVALID, "sheet name is required")
+            if sheet_name in seen_sheets:
+                raise _invalid(
+                    ErrorCode.APP_ROW_INVALID,
+                    f"sheet selected more than once: {sheet_name!r}",
+                )
+            seen_sheets.add(sheet_name)
+            columns = item.get("columns")
+            schema = parse_schema_payload({"columns": columns})
+            key = MAIN_TABLE_KEY if index == 0 else f"table_{index + 1}"
+            parsed.append(
+                {
+                    "sheet": sheet_name,
+                    "key": key,
+                    "label": sheet_name[:MAX_LABEL_LEN],
+                    "schema": schema,
+                    "columns": list(columns or []),
+                    "header_row": item.get("header_row"),
+                    "mapping": item.get("mapping"),
+                    "metric": item.get("metric_column"),
+                    "group": item.get("group_column"),
+                    "view": str(item.get("view") or "dashboard"),
+                }
+            )
+        row = await self.create(
+            agent_id=agent_id,
+            owner_user_id=owner_user_id,
+            name=clean_name,
+            description=clean_description,
+            columns={"columns": parsed[0]["columns"]},
+        )
+        imported = updated = skipped = 0
+        errors: list[str] = []
+        warnings: list[str] = []
+        pii_columns: list[str] = []
+        blocked_pii: list[str] = []
+        failed_rows: list[dict[str, Any]] = []
+        try:
+            for item in parsed[1:]:
+                await self.create_table(
+                    row,
+                    table_key=item["key"],
+                    label=item["label"],
+                    columns={"columns": item["columns"]},
+                )
+            for item in parsed:
+                result = await self.import_from_file(
+                    row,
+                    path=clean_path,
+                    table=item["key"],
+                    sheet=item["sheet"],
+                    header_row=item["header_row"],
+                    mapping=item["mapping"],
+                    include_pii=include_pii,
+                )
+                imported += result.imported
+                updated += result.updated
+                skipped += result.skipped
+                errors.extend(result.errors)
+                warnings.extend(result.warnings)
+                pii_columns.extend(result.pii_columns)
+                blocked_pii.extend(result.blocked_pii)
+                failed_rows.extend(result.failed_rows)
+            if imported == 0 and updated == 0 and errors:
+                raise _invalid(ErrorCode.APP_ROW_INVALID, errors[0])
+            data = await self.read_workspace_file(agent_id, clean_path)
+            report = inspect_file(clean_path, data)
+            tables: list[dict[str, Any]] = []
+            for item in parsed:
+                selected = _select_sheet_report(report, item["sheet"])
+                schema = await self.read_schema(row, item["key"])
+                spec = suggest_view(
+                    selected,
+                    schema,
+                    view=item["view"],
+                    title=clean_name,
+                    metric=item["metric"],
+                    group=item["group"],
+                )
+                tables.append(
+                    {
+                        "key": item["key"],
+                        "label": item["label"],
+                        "schema": schema,
+                        "spec": spec,
+                    }
+                )
+            html = render_multi_html(tables, title=clean_name, description=clean_description)
+            await self.write_html(row, html)
+        except Exception:
+            try:
+                await self.delete(row)
+            except Exception:
+                logger.warning("failed to roll back quick-create app %s", row.app_id, exc_info=True)
+            raise
+        return row, ImportResult(
+            imported=imported,
+            skipped=skipped,
+            errors=errors[:MAX_IMPORT_ERRORS],
+            updated=updated,
+            warnings=warnings,
+            pii_columns=list(dict.fromkeys(pii_columns)),
+            blocked_pii=list(dict.fromkeys(blocked_pii)),
+            failed_rows=failed_rows[:MAX_FAILED_ROWS],
+        )
 
     async def read_workspace_file(self, agent_id: str, path: str) -> bytes:
         """Read a workspace file (a path outside the app's own directory)."""
@@ -2420,6 +2650,31 @@ class AppService:
                 failed_rows=failed_rows,
             )
 
+    async def find_row_by_values(
+        self,
+        row: AppRecord,
+        values: Mapping[str, object],
+        *,
+        table: str = MAIN_TABLE_KEY,
+    ) -> LightAppDataRow | None:
+        """First row whose stored values match every supplied column.
+
+        Used by external writers (games, callbacks) that identify a row by a
+        business key rather than a row id. Legacy CSV storage is migrated on
+        first access, so this always reads the database when migration works.
+        """
+        key = self._require_table(row, table)
+        if not values:
+            return None
+        if not await self._ensure_db_rows(row):
+            return None
+        current = self._app_repo.get(row.app_id) or row
+        wanted = {str(name): str(value) for name, value in values.items()}
+        for item in self._app_repo.list_all_data_rows(current.app_id, key):
+            if all(str(item.values.get(name, "")) == value for name, value in wanted.items()):
+                return item
+        return None
+
     async def update_row(
         self,
         row: AppRecord,
@@ -2446,6 +2701,7 @@ class AppService:
             if existing_row is None:
                 raise _invalid(ErrorCode.APP_ROW_NOT_FOUND, f"row not found: {row_id}")
             normalized = validate_row(schema, values)
+            _reject_unmarked_pii(schema, normalized, table=key)
             table_view = self._app_repo.get_table(current.app_id, key)
             current_bytes = table_view.data_bytes if table_view is not None else 0
             old_bytes = len(json.dumps(existing_row.values, ensure_ascii=False).encode("utf-8"))
@@ -2669,6 +2925,10 @@ class AppService:
     def get_publication(self, row: AppRecord) -> LightAppPublicationRow | None:
         return self._app_repo.get_publication(row.app_id)
 
+    @staticmethod
+    def _publication_secret_key(app_id: str) -> str:
+        return f"light_app_publication_token:{app_id}"
+
     def create_publication(
         self,
         row: AppRecord,
@@ -2685,10 +2945,42 @@ class AppService:
             created_by=user_id,
             expires_at=expires_at,
         )
+        if self._secret_repo is not None:
+            self._secret_repo.set(self._publication_secret_key(row.app_id), token.encode("utf-8"))
         return token, expires_at
 
+    def get_or_create_publication(
+        self,
+        row: AppRecord,
+        *,
+        user_id: int,
+        rotate: bool = False,
+        ttl_days: int = 0,
+    ) -> tuple[str, int | None]:
+        """Return the active public token, reusing it unless *rotate* is set.
+
+        The publication table stores only the token hash.  A copy of the
+        plaintext token lives in the secrets table so agent tools can hand the
+        same link to the user again without invalidating the previous message.
+        """
+        publication = self.get_publication(row)
+        if (
+            publication is not None
+            and publication.revoked_at is None
+            and (publication.expires_at is None or publication.expires_at > int(time.time()))
+            and not rotate
+            and self._secret_repo is not None
+        ):
+            stored = self._secret_repo.get(self._publication_secret_key(row.app_id))
+            if stored:
+                return stored.decode("utf-8"), publication.expires_at
+        return self.create_publication(row, user_id=user_id, ttl_days=ttl_days)
+
     def revoke_publication(self, row: AppRecord) -> bool:
-        return self._app_repo.revoke_publication(row.app_id)
+        revoked = self._app_repo.revoke_publication(row.app_id)
+        if self._secret_repo is not None:
+            self._secret_repo.delete(self._publication_secret_key(row.app_id))
+        return revoked
 
     def resolve_public_app(self, token: str) -> AppRecord | None:
         clean = token.strip()
@@ -3125,17 +3417,23 @@ class AppService:
         renames: Mapping[str, str] | None = None,
         drops: list[str] | None = None,
         types: Mapping[str, Mapping[str, Any]] | None = None,
+        pii: Mapping[str, str | None] | None = None,
     ) -> Schema:
         """Rename, drop or retype columns, migrating every existing row.
 
         A change is rejected as a whole when any row cannot be represented by
-        the new schema; nothing is half-written.
+        the new schema; nothing is half-written. ``pii`` marks or clears the
+        sensitive-data kind of existing columns (``None`` clears it).
         """
         key = self._require_table(row, table)
         clean_renames = {str(src): str(dst) for src, dst in (renames or {}).items()}
         clean_drops = {str(name) for name in (drops or [])}
         clean_types = {str(name): dict(spec) for name, spec in (types or {}).items()}
-        if not clean_renames and not clean_drops and not clean_types:
+        clean_pii = {
+            str(name): (str(kind).strip() if kind not in (None, "") else None)
+            for name, kind in (pii or {}).items()
+        }
+        if not clean_renames and not clean_drops and not clean_types and not clean_pii:
             return await self._read_schema(await self._workspace(row.agent_id), row.app_id, key)
         await self._ensure_db_rows(row)
         async with _lock_for(row.app_id):
@@ -3143,7 +3441,9 @@ class AppService:
             current = self._app_repo.get(row.app_id) or row
             ws = await self._workspace(current.agent_id)
             schema = await self._read_schema(ws, current.app_id, key)
-            unknown = (set(clean_renames) | clean_drops | set(clean_types)) - set(schema.names)
+            unknown = (set(clean_renames) | clean_drops | set(clean_types) | set(clean_pii)) - set(
+                schema.names
+            )
             if unknown:
                 raise _invalid(
                     ErrorCode.APP_SCHEMA_INVALID,
@@ -3165,7 +3465,10 @@ class AppService:
                 }
                 if column_type == "enum":
                     payload["values"] = spec.get("values", list(column.values))
-                if column.pii:
+                if column.name in clean_pii:
+                    if clean_pii[column.name]:
+                        payload["pii"] = clean_pii[column.name]
+                elif column.pii:
                     payload["pii"] = column.pii
                 parsed = parse_schema_payload([payload]).columns[0]
                 if parsed.name in seen:

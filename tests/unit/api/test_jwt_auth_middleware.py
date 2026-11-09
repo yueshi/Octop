@@ -17,6 +17,7 @@ from octop.api.deps import (
     maybe_sliding_renew_token,
     sign_token,
 )
+from octop.infra.apps.game_sessions import create_game_token
 from octop.infra.server import OctopServer
 
 
@@ -30,6 +31,7 @@ def test_exempt_paths() -> None:
     assert is_jwt_exempt_path("/api/auth/oidc/start")
     assert is_jwt_exempt_path("/api/auth/oidc/callback")
     assert is_jwt_exempt_path("/api/auth/oidc/exchange")
+    assert is_jwt_exempt_path("/api/game-sessions/abc/results")
     assert is_jwt_exempt_path("/api/auth/oauth/status")
     assert is_jwt_exempt_path("/api/auth/oauth/start")
     assert is_jwt_exempt_path("/api/auth/oauth/callback")
@@ -150,3 +152,26 @@ async def test_maybe_sliding_renew_helper_threshold(client) -> None:
     renewed = maybe_sliding_renew_token(srv, short, user)
     assert renewed is not None
     assert renewed != short
+
+
+async def test_game_token_is_not_accepted_as_access_token(client) -> None:
+    """A MiniApp game session token is signed with the same secret.
+
+    It carries no ``sub`` claim, so it must be rejected as an auth error
+    instead of crashing the request.
+    """
+    c, srv, home = client
+    await bootstrap_admin(c, home)
+    assert srv.services is not None
+    secret = srv.services.secret_repo.get("jwt")
+    assert secret is not None
+    token, _expires = create_game_token(
+        secret,
+        app_id="app_1",
+        user_id=1,
+        game_id="duck",
+        session_id="game_1",
+    )
+    r = await c.get("/api/auth/me", headers=bearer(token))
+    assert r.status_code == 401
+    assert r.json()["error"]["code"] == "AUTH_FAILED"

@@ -19,6 +19,7 @@ from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.agents import AgentRepo
 from octop.infra.db.repos.apps import LightAppRepo
+from octop.infra.db.repos.secrets import SecretRepo
 from octop.infra.db.repos.users import UserRepo
 from octop.infra.utils.ulid import new_ulid
 
@@ -74,6 +75,7 @@ def world(tmp_path: Path) -> World:
             agent_repo=agent_repo,
             user_repo=user_repo,
             workspaces=_Workspaces(agent_id, workspace),
+            secret_repo=SecretRepo(db),
         ),
         agent_repo=agent_repo,
         agent_id=agent_id,
@@ -94,11 +96,14 @@ def test_build_app_tools_names(world: World) -> None:
     assert names == {
         "app_inspect_file",
         "app_list",
+        "app_open",
+        "app_share_link",
         "app_create",
         "app_create_from_template",
         "app_add_table",
         "app_update_schema",
         "app_alter_schema",
+        "app_set_table_visibility",
         "app_write_html",
         "app_read_data",
         "app_append_row",
@@ -150,7 +155,8 @@ async def test_tool_lifecycle(world: World) -> None:
             await append.ainvoke({"app_id": app_id, "row": {"title": "A", "status": "new"}})
         )
         assert appended["row_index"] == 0
-        assert appended["row"]["title"] == "A"
+        assert appended["row_id"].startswith("row_")
+        assert "row" not in appended
 
         read = json.loads(await read_data.ainvoke({"app_id": app_id, "limit": 10}))
         assert read["total"] == 1
@@ -231,7 +237,8 @@ async def test_multi_table_tools(world: World) -> None:
             await append.ainvoke({"app_id": app_id, "row": {"item": "cup"}, "table": "orders"})
         )
         assert appended["table"] == "orders"
-        assert appended["row"] == {"item": "cup"}
+        assert appended["row_id"].startswith("row_")
+        assert "row" not in appended
 
         read = json.loads(await read_data.ainvoke({"app_id": app_id, "table": "orders"}))
         assert read["total"] == 1
@@ -410,7 +417,7 @@ async def test_shared_agent_members_can_create_and_use_their_own_apps(world: Wor
         appended = json.loads(
             await append.ainvoke({"app_id": app_id, "row": {"title": "A", "status": "new"}})
         )
-        assert appended["row"]["title"] == "A"
+        assert appended["row_id"].startswith("row_")
 
     # The agent owner neither sees nor touches an app another member created.
     with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
@@ -435,7 +442,7 @@ async def test_collaborator_can_append_but_not_change_structure(world: World) ->
         appended = json.loads(
             await append.ainvoke({"app_id": app_id, "row": {"title": "B", "status": "new"}})
         )
-        assert appended["row"]["title"] == "B"
+        assert appended["row_id"].startswith("row_")
 
         denied = json.loads(await write_html.ainvoke({"app_id": app_id, "html": "<h1>x</h1>"}))
     assert "no 'edit_structure' permission" in denied["error"]
@@ -528,3 +535,125 @@ async def test_tool_create_app_from_template(world: World) -> None:
     assert out["name"] == "reading"
     assert out["row_count"] == 0
     assert await world.service.has_html(world.service.get(out["app_id"])) is True
+
+
+async def test_app_open_returns_a_chat_card(world: World) -> None:
+    tools = build_app_tools(world.service)
+    create = _tool_by_name(tools, "app_create")
+    write_html = _tool_by_name(tools, "app_write_html")
+    open_app = _tool_by_name(tools, "app_open")
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        app_id = json.loads(await create.ainvoke({"name": "Card app", "columns": COLUMNS}))[
+            "app_id"
+        ]
+        written = json.loads(
+            await write_html.ainvoke(
+                {"app_id": app_id, "html": "<!doctype html><html><body>ok</body></html>"}
+            )
+        )
+        opened = json.loads(await open_app.ainvoke({"app_id": app_id}))
+
+    assert written["octop_ui"]["renderer"] == "app_card"
+    assert written["data"]["app_id"] == app_id
+    assert written["data"]["has_html"] is True
+    assert opened["octop_ui"]["renderer"] == "app_card"
+    assert opened["data"]["app_id"] == app_id
+    assert opened["data"]["name"] == "Card app"
+    assert opened["data"]["has_html"] is True
+
+
+async def test_app_share_link_reuses_link_and_returns_channel_payload(world: World) -> None:
+    tools = build_app_tools(world.service, public_base_url="http://example.test")
+    create = _tool_by_name(tools, "app_create")
+    share = _tool_by_name(tools, "app_share_link")
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        created = json.loads(
+            await create.ainvoke({"name": "Tracker", "description": "things", "columns": COLUMNS})
+        )
+        app_id = created["app_id"]
+        row = world.service.get(app_id)
+        await world.service.write_preview(
+            row,
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630"></svg>',
+        )
+
+        first = json.loads(await share.ainvoke({"app_id": app_id}))
+        second = json.loads(await share.ainvoke({"name": "Tracker"}))
+        rotated = json.loads(await share.ainvoke({"app_id": app_id, "rotate": True}))
+
+    assert isinstance(first, list)
+    assert first[0]["type"] == "text"
+    assert "http://example.test/p/" in first[0]["text"]
+    assert second[0]["text"] == first[0]["text"]
+    assert rotated[0]["text"] != first[0]["text"]
+    assert first[1]["type"] == "image"
+    assert first[1]["im_safe"] is False
+
+
+async def test_app_open_uses_channel_safe_payload_on_im(world: World) -> None:
+    tools = build_app_tools(world.service, public_base_url="http://example.test")
+    create = _tool_by_name(tools, "app_create")
+    open_tool = _tool_by_name(tools, "app_open")
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        created = json.loads(
+            await create.ainvoke({"name": "Tracker", "description": "things", "columns": COLUMNS})
+        )
+        app_id = created["app_id"]
+
+    with _configurable(
+        agent_id=world.agent_id,
+        user=str(world.alice_id),
+        octop_source="weixin/01M5F",
+    ):
+        im_payload = json.loads(await open_tool.ainvoke({"app_id": app_id}))
+
+    with _configurable(
+        agent_id=world.agent_id,
+        user=str(world.alice_id),
+        octop_source="dashboard/octop-dashboard",
+    ):
+        dashboard_payload = json.loads(await open_tool.ainvoke({"app_id": app_id}))
+
+    assert isinstance(im_payload, list)
+    assert "/p/" in im_payload[0]["text"]
+    assert isinstance(dashboard_payload, dict)
+    assert dashboard_payload["octop_ui"]["renderer"] == "app_card"
+
+
+async def test_app_set_table_visibility_and_share_warning(world: World) -> None:
+    tools = build_app_tools(world.service, public_base_url="http://example.test")
+    create = _tool_by_name(tools, "app_create")
+    add_table = _tool_by_name(tools, "app_add_table")
+    set_visibility = _tool_by_name(tools, "app_set_table_visibility")
+    share = _tool_by_name(tools, "app_share_link")
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        app_id = json.loads(await create.ainvoke({"name": "Tracker", "columns": COLUMNS}))["app_id"]
+        added = json.loads(
+            await add_table.ainvoke(
+                {
+                    "app_id": app_id,
+                    "key": "orders",
+                    "columns": [{"name": "item", "type": "string"}],
+                }
+            )
+        )
+        assert added["public_visible"] is False
+
+        before = json.loads(await share.ainvoke({"app_id": app_id}))
+        warning = next(
+            block["text"] for block in before if "Private tables" in block.get("text", "")
+        )
+        assert "orders" in warning
+
+        visible = json.loads(
+            await set_visibility.ainvoke({"app_id": app_id, "table": "orders", "public": True})
+        )
+        assert visible["public_visible"] is True
+
+        after = json.loads(await share.ainvoke({"app_id": app_id}))
+
+    assert all("Private tables" not in block.get("text", "") for block in after)

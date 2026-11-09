@@ -445,6 +445,7 @@ export function ToolDetailsInline({
         ? createPluginUiHost(registration.pluginId)
         : builtinPluginHost,
     output: toolData.output,
+    docked: forceInline,
     isStreaming,
     hideMediaPreview,
     onAcpPermissionSelect,

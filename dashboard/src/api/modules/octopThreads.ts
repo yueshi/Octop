@@ -46,6 +46,7 @@ export interface OctopThread {
   thread_id: string;
   title: string | null;
   channel_type: string;
+  channel_chat_type?: string;
   session_key: string;
   last_active: number;
   created_at: number;

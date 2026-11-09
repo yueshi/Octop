@@ -125,7 +125,7 @@ def test_columns_survive_version_rewind(tmp_path: Path) -> None:
     assert POLICY_COLUMNS.issubset(_columns(pool, "proactive_care_config"))
     with pool.connect() as conn:
         version = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
-    assert version == 29
+    assert version == 30
 
 
 def test_agent_repo_reads_autonomy_enabled(db: SqlitePool) -> None:

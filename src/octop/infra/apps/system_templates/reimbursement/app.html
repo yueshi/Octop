@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>费用报销台账</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --line:#e5e7eb; --text:#1f2937; --muted:#6b7280; --brand:#b45309; --brand-dark:#92400e; --danger:#dc2626; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:20px; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; font-size:14px; }
+  .page { max-width:1120px; margin:0 auto; }
+  .head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  h1 { margin:0; font-size:22px; }
+  .sub { margin:6px 0 0; color:var(--muted); font-size:13px; }
+  .badge { flex:none; padding:4px 10px; border-radius:999px; background:#fef3c7; color:#92400e; font-size:12px; }
+  .stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:18px 0; }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:6px; }
+  .stat span { color:var(--muted); font-size:12px; }
+  .stat strong { font-size:23px; font-variant-numeric:tabular-nums; }
+  .toolbar { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; align-items:center; }
+  input, select { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 10px; outline:none; }
+  input:focus, select:focus { border-color:var(--brand); }
+  .toolbar input[type=month] { flex:0 0 160px; }
+  .toolbar select { flex:0 0 130px; }
+  .toolbar .search { flex:1 1 200px; }
+  button { font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--card); color:var(--text); border-radius:8px; padding:8px 14px; }
+  button.primary { background:var(--brand); border-color:var(--brand); color:#fff; }
+  button.primary:hover { background:var(--brand-dark); }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:14px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+  .panel label { display:flex; flex-direction:column; gap:6px; color:var(--muted); font-size:12px; }
+  .panel label.wide { grid-column:1/-1; }
+  .actions { grid-column:1/-1; display:flex; gap:8px; }
+  .layout { display:grid; grid-template-columns:minmax(0,1fr) 250px; gap:14px; align-items:start; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .card h2 { margin:0 0 12px; font-size:13px; color:var(--muted); font-weight:600; }
+  .bars { display:flex; flex-direction:column; gap:9px; }
+  .bar-row { display:grid; grid-template-columns:52px minmax(0,1fr) 78px; gap:8px; align-items:center; }
+  .bar-name { color:var(--muted); font-size:12px; }
+  .bar-track { height:8px; border-radius:999px; background:#f1f5f9; overflow:hidden; }
+  .bar-fill { height:100%; border-radius:999px; background:var(--brand); }
+  .bar-value { text-align:right; font-size:12px; font-variant-numeric:tabular-nums; }
+  .table-wrap { background:var(--card); border:1px solid var(--line); border-radius:10px; overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; min-width:760px; }
+  th, td { padding:10px 12px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { background:#fafafa; color:var(--muted); font-size:12px; font-weight:600; white-space:nowrap; }
+  tbody tr:last-child td { border-bottom:0; }
+  tbody tr:hover { background:#fffaf4; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#f1f5f9; font-size:12px; white-space:nowrap; }
+  .status { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; white-space:nowrap; }
+  .s-pending { background:#fef3c7; color:#92400e; }
+  .s-ok { background:#dcfce7; color:#166534; }
+  .s-reject { background:#fee2e2; color:#991b1b; }
+  .s-paid { background:#e0f2fe; color:#075985; }
+  .muted { color:var(--muted); }
+  .empty { text-align:center; color:var(--muted); padding:32px 0; }
+  .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); margin:0; padding:9px 18px; border-radius:999px; background:#111827; color:#fff; font-size:13px; box-shadow:0 6px 20px rgba(0,0,0,.18); }
+  .toast.error { background:var(--danger); }
+  @media (max-width:900px) { .layout { grid-template-columns:1fr; } .stats { grid-template-columns:repeat(2,minmax(0,1fr)); } .panel { grid-template-columns:1fr; } body { padding:12px; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="head">
+    <div><h1>费用报销台账</h1><p class="sub">按月汇总报销申请，跟踪审批状态和费用类别。</p></div>
+    <span class="badge" id="readonly" hidden>只读</span>
+  </header>
+  <section class="stats">
+    <div class="stat"><span>本月报销金额</span><strong id="stat-total">¥0</strong></div>
+    <div class="stat"><span>待审批笔数</span><strong id="stat-pending">0</strong></div>
+    <div class="stat"><span>已打款金额</span><strong id="stat-paid">¥0</strong></div>
+    <div class="stat"><span>已驳回笔数</span><strong id="stat-reject">0</strong></div>
+  </section>
+  <section class="toolbar">
+    <input type="month" id="month" aria-label="选择月份">
+    <select id="filter-status"><option value="">全部状态</option></select>
+    <select id="filter-category"><option value="">全部类别</option></select>
+    <input class="search" id="search" placeholder="搜索申请人、发票号或备注">
+    <button id="toggle-add" class="primary" type="button">新增报销</button>
+  </section>
+  <form id="add-form" class="panel" hidden>
+    <label>申请人 *<input name="applicant" maxlength="50" required></label>
+    <label>费用日期 *<input type="date" name="expense_date" required></label>
+    <label>金额 *<input type="number" name="amount" min="0" step="0.01" required></label>
+    <label>费用类别<select name="category"></select></label>
+    <label>状态<select name="status"></select></label>
+    <label>发票号<input name="invoice_no" maxlength="50"></label>
+    <label class="wide">备注<input name="note" maxlength="200"></label>
+    <div class="actions"><button type="submit" class="primary">保存</button><button type="button" id="cancel-add">取消</button></div>
+  </form>
+  <div class="layout">
+    <div>
+      <p id="empty" class="empty" hidden>这个月还没有报销记录，点击「新增报销」开始。</p>
+      <div class="table-wrap" id="table-wrap">
+        <table>
+          <thead><tr><th>申请人</th><th>日期</th><th>类别</th><th class="num">金额</th><th>状态</th><th>发票号</th><th>备注</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+    <aside class="card">
+      <h2>类别占比</h2>
+      <div id="bars" class="bars"><p class="muted">暂无数据</p></div>
+    </aside>
+  </div>
+</div>
+<p id="toast" class="toast" hidden></p>
+<script>
+(function () {
+  "use strict";
+  var CATEGORIES = ["差旅", "交通", "餐饮", "办公", "招待", "其他"];
+  var STATUSES = ["待审批", "已通过", "已驳回", "已打款"];
+  var STATUS_CLASS = { "待审批": "s-pending", "已通过": "s-ok", "已驳回": "s-reject", "已打款": "s-paid" };
+  var rows = [];
+  var canEdit = true;
+  function $(s) { return document.querySelector(s); }
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function today() { var d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function currentMonth() { return today().slice(0, 7); }
+  function escapeHtml(v) { return String(v == null ? "" : v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+  function num(v) { var n = Number(v); return isFinite(n) ? n : 0; }
+  function money(v) { return "¥" + num(v).toLocaleString("zh-CN", { maximumFractionDigits: 2 }); }
+  function monthRows() { var m = $("#month").value || currentMonth(); return rows.filter(function (r) { return r.expense_date && r.expense_date.indexOf(m) === 0; }); }
+  function toast(message, isError) {
+    var el = $("#toast"); el.textContent = message; el.classList.toggle("error", Boolean(isError)); el.hidden = false;
+    clearTimeout(toast.timer); toast.timer = setTimeout(function () { el.hidden = true; }, 2600);
+  }
+  function fillSelect(select, values, allLabel) {
+    select.innerHTML = (allLabel ? '<option value="">' + allLabel + "</option>" : "") + values.map(function (v) {
+      return '<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + "</option>";
+    }).join("");
+  }
+  function renderFilters() {
+    fillSelect($("#filter-status"), STATUSES, "全部状态");
+    fillSelect($("#filter-category"), CATEGORIES, "全部类别");
+  }
+  function renderBars(scoped) {
+    var map = {};
+    scoped.forEach(function (row) { var c = row.category || "其他"; map[c] = (map[c] || 0) + num(row.amount); });
+    var ranked = Object.keys(map).map(function (k) { return { name: k, amount: map[k] }; }).sort(function (a, b) { return b.amount - a.amount; });
+    var max = ranked.length ? ranked[0].amount : 0;
+    $("#bars").innerHTML = ranked.length ? ranked.map(function (entry) {
+      var width = max ? Math.max(2, Math.round(entry.amount / max * 100)) : 0;
+      return '<div class="bar-row"><span class="bar-name">' + escapeHtml(entry.name) + '</span><div class="bar-track"><div class="bar-fill" style="width:' + width + '%"></div></div><span class="bar-value">' + money(entry.amount) + "</span></div>";
+    }).join("") : '<p class="muted">暂无数据</p>';
+  }
+  function render() {
+    var scoped = monthRows();
+    var status = $("#filter-status").value;
+    var category = $("#filter-category").value;
+    var q = $("#search").value.trim().toLowerCase();
+    var list = scoped.filter(function (row) {
+      if (status && row.status !== status) return false;
+      if (category && row.category !== category) return false;
+      if (!q) return true;
+      return [row.applicant, row.invoice_no, row.note].join(" ").toLowerCase().indexOf(q) >= 0;
+    }).sort(function (a, b) {
+      var da = a.expense_date || "", db = b.expense_date || "";
+      return da < db ? 1 : da > db ? -1 : 0;
+    });
+    var total = scoped.reduce(function (sum, r) { return sum + num(r.amount); }, 0);
+    var paid = scoped.filter(function (r) { return r.status === "已打款"; }).reduce(function (s, r) { return s + num(r.amount); }, 0);
+    $("#stat-total").textContent = money(total);
+    $("#stat-pending").textContent = String(scoped.filter(function (r) { return r.status === "待审批"; }).length);
+    $("#stat-paid").textContent = money(paid);
+    $("#stat-reject").textContent = String(scoped.filter(function (r) { return r.status === "已驳回"; }).length);
+    renderBars(scoped);
+    $("#empty").hidden = list.length > 0;
+    $("#empty").textContent = scoped.length ? "没有符合筛选条件的记录。" : "这个月还没有报销记录，点击「新增报销」开始。";
+    $("#rows").innerHTML = list.map(function (row) {
+      var statusClass = STATUS_CLASS[row.status] || "s-pending";
+      return "<tr>" +
+        "<td><strong>" + escapeHtml(row.applicant) + "</strong></td>" +
+        '<td class="muted">' + escapeHtml(row.expense_date) + "</td>" +
+        '<td><span class="pill">' + escapeHtml(row.category || "其他") + "</span></td>" +
+        '<td class="num">' + money(row.amount) + "</td>" +
+        '<td><span class="status ' + statusClass + '">' + escapeHtml(row.status || "待审批") + "</span></td>" +
+        '<td class="muted">' + escapeHtml(row.invoice_no) + "</td>" +
+        '<td class="muted">' + escapeHtml(row.note) + "</td>" +
+        "</tr>";
+    }).join("");
+  }
+  async function refresh() {
+    try {
+      var result = await octopApp.listRows({ limit: 500 });
+      rows = (result && result.rows) || [];
+      renderFilters();
+      render();
+    } catch (error) {
+      toast("加载失败：" + (error && error.message ? error.message : "未知错误"), true);
+    }
+  }
+  async function detectReadonly() {
+    if (typeof octopApp.me !== "function") return false;
+    try { var me = await octopApp.me(); return Boolean(me) && me.permission === "view"; } catch (e) { return false; }
+  }
+  function openForm(open) {
+    $("#add-form").hidden = !open;
+    $("#toggle-add").textContent = open ? "收起" : "新增报销";
+    if (open) $("#add-form input[name=applicant]").focus();
+  }
+  $("#toggle-add").addEventListener("click", function () { openForm($("#add-form").hidden); });
+  $("#cancel-add").addEventListener("click", function () { $("#add-form").reset(); openForm(false); });
+  $("#month").addEventListener("change", render);
+  $("#filter-status").addEventListener("change", render);
+  $("#filter-category").addEventListener("change", render);
+  $("#search").addEventListener("input", render);
+  $("#add-form").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var form = event.target, data = new FormData(form);
+    var applicant = String(data.get("applicant") || "").trim();
+    var date = String(data.get("expense_date") || "");
+    var amountText = String(data.get("amount") || "").trim();
+    if (!applicant) { toast("请填写申请人", true); return; }
+    if (!date) { toast("请选择费用日期", true); return; }
+    if (amountText === "") { toast("请填写金额", true); return; }
+    try {
+      await octopApp.appendRow({
+        applicant: applicant,
+        expense_date: date,
+        category: String(data.get("category") || CATEGORIES[0]),
+        amount: Number(amountText),
+        status: String(data.get("status") || STATUSES[0]),
+        invoice_no: String(data.get("invoice_no") || "").trim(),
+        note: String(data.get("note") || "").trim()
+      });
+      form.reset();
+      $("#add-form input[name=expense_date]").value = today();
+      $("#month").value = date.slice(0, 7);
+      openForm(false);
+      await refresh();
+      toast("已添加报销");
+    } catch (error) {
+      toast("保存失败：" + (error && error.message ? error.message : "未知错误"), true);
+    }
+  });
+  async function boot() {
+    $("#month").value = currentMonth();
+    $("#add-form input[name=expense_date]").value = today();
+    canEdit = !(await detectReadonly());
+    if (!canEdit) { $("#readonly").hidden = false; $("#toggle-add").hidden = true; openForm(false); }
+    fillSelect($("#add-form select[name=category]"), CATEGORIES, "");
+    fillSelect($("#add-form select[name=status]"), STATUSES, "");
+    $("#add-form select[name=status]").value = "待审批";
+    await refresh();
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

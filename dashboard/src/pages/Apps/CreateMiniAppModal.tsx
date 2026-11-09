@@ -26,8 +26,10 @@ import {
   appsApi,
   templatePreviewPath,
   type AppColumn,
+  type AppInspectColumn,
   type AppInspectSheet,
   type AppTemplate,
+  type AppViewSpec,
   type QuickInspectResponse,
   type QuickView,
 } from "../../api/modules/apps";
@@ -49,6 +51,15 @@ interface EditableField {
   required: boolean;
   include: boolean;
   pii?: string | null;
+}
+
+interface SheetDraft {
+  sheet: string;
+  selected: boolean;
+  fields: EditableField[];
+  view: QuickView;
+  metric: string;
+  group: string;
 }
 
 interface Props {
@@ -110,6 +121,48 @@ function sheetToFields(sheet: AppInspectSheet | undefined): EditableField[] {
   }));
 }
 
+function isCategorical(column: AppInspectColumn): boolean {
+  return (
+    column.type === "enum" ||
+    column.type === "boolean" ||
+    (column.type === "string" && column.distinct > 0 && column.distinct <= 12)
+  );
+}
+
+function numericNames(sheet: AppInspectSheet | undefined): string[] {
+  if (!sheet) return [];
+  return sheet.columns
+    .filter(
+      (column) =>
+        !column.pii && (column.type === "number" || column.type === "integer"),
+    )
+    .map((column) => column.name_suggestion);
+}
+
+function categoricalNames(sheet: AppInspectSheet | undefined): string[] {
+  if (!sheet) return [];
+  return sheet.columns
+    .filter((column) => !column.pii && isCategorical(column))
+    .map((column) => column.name_suggestion);
+}
+
+function defaultMetric(
+  sheet: AppInspectSheet | undefined,
+  spec: AppViewSpec | undefined,
+): string {
+  const fromSpec = spec?.kpis.find(
+    (item) => item.agg !== "count" && item.column,
+  )?.column;
+  return fromSpec || numericNames(sheet)[0] || "";
+}
+
+function defaultGroup(
+  sheet: AppInspectSheet | undefined,
+  spec: AppViewSpec | undefined,
+): string {
+  return spec?.group_by || categoricalNames(sheet)[0] || "";
+}
+
 function defaultName(filename: string): string {
   const base = filename.split(/[\\/]/).pop() || "小程序";
   return base.replace(/\.[^.]+$/, "").slice(0, 100) || "小程序";
@@ -159,9 +212,8 @@ export default function CreateMiniAppModal({
   // Quick mode
   const [quickFile, setQuickFile] = useState<File | null>(null);
   const [inspect, setInspect] = useState<QuickInspectResponse | null>(null);
-  const [sheetName, setSheetName] = useState<string>("");
-  const [fields, setFields] = useState<EditableField[]>([]);
-  const [view, setView] = useState<QuickView>("dashboard");
+  const [drafts, setDrafts] = useState<SheetDraft[]>([]);
+  const [activeSheet, setActiveSheet] = useState<string>("");
   const [includePii, setIncludePii] = useState(false);
   const [quickName, setQuickName] = useState("");
 
@@ -207,22 +259,103 @@ export default function CreateMiniAppModal({
   }, [open, mode, agentId, filter, t]);
 
   const selectedSheet = useMemo(
-    () => inspect?.report.sheets.find((sheet) => sheet.name === sheetName),
-    [inspect, sheetName],
+    () => inspect?.report.sheets.find((sheet) => sheet.name === activeSheet),
+    [inspect, activeSheet],
   );
+
+  const activeDraft = useMemo(
+    () => drafts.find((draft) => draft.sheet === activeSheet),
+    [drafts, activeSheet],
+  );
+  const fields = useMemo(() => activeDraft?.fields || [], [activeDraft]);
+  const view = activeDraft?.view || "dashboard";
+  const metric = activeDraft?.metric || "";
+  const group = activeDraft?.group || "";
+
+  const updateDraft = (sheet: string, patch: Partial<SheetDraft>) => {
+    setDrafts((current) =>
+      current.map((draft) =>
+        draft.sheet === sheet ? { ...draft, ...patch } : draft,
+      ),
+    );
+  };
 
   const piiColumns = useMemo(
     () =>
-      fields.filter((field) => Boolean(field.pii)).map((field) => field.label),
+      Array.from(
+        new Set(
+          drafts
+            .filter((draft) => draft.selected)
+            .flatMap((draft) =>
+              draft.fields
+                .filter((field) => Boolean(field.pii))
+                .map((field) => field.label),
+            ),
+        ),
+      ),
+    [drafts],
+  );
+
+  const metricOptions = useMemo(
+    () =>
+      fields
+        .filter(
+          (field) =>
+            field.include &&
+            !field.pii &&
+            (field.type === "number" || field.type === "integer"),
+        )
+        .map((field) => ({
+          value: field.name,
+          label: field.label || field.name,
+        })),
     [fields],
   );
+
+  const groupOptions = useMemo(() => {
+    const stats = new Map(
+      (selectedSheet?.columns || []).map((column) => [
+        column.name_suggestion,
+        column,
+      ]),
+    );
+    return fields
+      .filter((field) => {
+        if (!field.include || field.pii) return false;
+        if (field.type === "enum" || field.type === "boolean") return true;
+        if (field.type !== "string") return false;
+        const distinct = stats.get(field.name)?.distinct || 0;
+        return distinct > 0 && distinct <= 12;
+      })
+      .map((field) => ({
+        value: field.name,
+        label: field.label || field.name,
+      }));
+  }, [fields, selectedSheet]);
+
+  useEffect(() => {
+    if (!activeSheet) return;
+    const patch: Partial<SheetDraft> = {};
+    if (metric && !metricOptions.some((option) => option.value === metric)) {
+      patch.metric = metricOptions[0]?.value || "";
+    }
+    if (group && !groupOptions.some((option) => option.value === group)) {
+      patch.group = groupOptions[0]?.value || "";
+    }
+    if (Object.keys(patch).length) {
+      setDrafts((current) =>
+        current.map((draft) =>
+          draft.sheet === activeSheet ? { ...draft, ...patch } : draft,
+        ),
+      );
+    }
+  }, [activeSheet, metric, metricOptions, group, groupOptions]);
 
   const resetQuick = () => {
     setQuickFile(null);
     setInspect(null);
-    setSheetName("");
-    setFields([]);
-    setView("dashboard");
+    setDrafts([]);
+    setActiveSheet("");
     setIncludePii(false);
     setQuickName("");
   };
@@ -232,9 +365,8 @@ export default function CreateMiniAppModal({
     setMode("quick");
     setQuickFile(null);
     setInspect(null);
-    setSheetName("");
-    setFields([]);
-    setView("dashboard");
+    setDrafts([]);
+    setActiveSheet("");
     setIncludePii(false);
     setQuickName("");
     setTemplateId("");
@@ -252,13 +384,26 @@ export default function CreateMiniAppModal({
     try {
       const result = await appsApi.quickInspect(selectedAgent, file);
       setInspect(result);
-      setSheetName(result.sheet);
-      const sheet = result.report.sheets.find(
-        (item) => item.name === result.sheet,
-      );
-      setFields(sheetToFields(sheet));
+      const built = result.report.sheets.map((sheet, index) => ({
+        sheet: sheet.name,
+        selected: index === 0,
+        fields: sheetToFields(sheet),
+        view:
+          index === 0
+            ? result.suggested_view.view || ("dashboard" as QuickView)
+            : ("dashboard" as QuickView),
+        metric: defaultMetric(
+          sheet,
+          index === 0 ? result.suggested_view : undefined,
+        ),
+        group: defaultGroup(
+          sheet,
+          index === 0 ? result.suggested_view : undefined,
+        ),
+      }));
+      setDrafts(built);
+      setActiveSheet(result.sheet || result.report.sheets[0]?.name || "");
       setQuickName(defaultName(file.name));
-      setView(result.suggested_view.view || "dashboard");
     } catch (err) {
       message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
     } finally {
@@ -266,47 +411,84 @@ export default function CreateMiniAppModal({
     }
   };
 
-  const selectSheet = (name: string) => {
-    setSheetName(name);
-    const sheet = inspect?.report.sheets.find((item) => item.name === name);
-    setFields(sheetToFields(sheet));
+  const toggleSheet = (name: string, selected: boolean) => {
+    setDrafts((current) =>
+      current.map((draft) =>
+        draft.sheet === name ? { ...draft, selected } : draft,
+      ),
+    );
+    if (selected) {
+      setActiveSheet(name);
+    } else if (name === activeSheet) {
+      const next = drafts.find(
+        (draft) => draft.sheet !== name && draft.selected,
+      );
+      // Nothing left to edit: clear the editor instead of keeping a sheet
+      // that will not be imported.
+      setActiveSheet(next?.sheet || "");
+    }
   };
 
   const updateField = (name: string, patch: Partial<EditableField>) => {
-    setFields((current) =>
-      current.map((field) =>
-        field.name === name ? { ...field, ...patch } : field,
+    setDrafts((current) =>
+      current.map((draft) =>
+        draft.sheet === activeSheet
+          ? {
+              ...draft,
+              fields: draft.fields.map((field) =>
+                field.name === name ? { ...field, ...patch } : field,
+              ),
+            }
+          : draft,
       ),
     );
   };
 
   const submitQuick = async () => {
     if (!inspect || !agentId) return;
-    const picked = fields.filter((field) => field.include);
-    if (!picked.length) {
+    const selected = drafts.filter((draft) => draft.selected);
+    if (!selected.length) {
+      message.warning(t("apps.create.sheetsRequired"));
+      return;
+    }
+    if (
+      selected.some((draft) => !draft.fields.some((field) => field.include))
+    ) {
       message.warning(t("apps.create.fieldsRequired"));
       return;
     }
     setBusy(true);
     try {
-      const columns: AppColumn[] = picked.map((field) => ({
-        name: field.name,
-        label: field.label || field.name,
-        type: field.type,
-        required: field.required,
-        values: [],
-        pii: field.pii ?? null,
-      }));
-      const mapping: Record<string, string> = {};
-      for (const field of picked) mapping[field.source] = field.name;
+      const sheets = selected.map((draft) => {
+        const sheet = inspect.report.sheets.find(
+          (item) => item.name === draft.sheet,
+        );
+        const picked = draft.fields.filter((field) => field.include);
+        const columns: AppColumn[] = picked.map((field) => ({
+          name: field.name,
+          label: field.label || field.name,
+          type: field.type,
+          required: field.required,
+          values: [],
+          pii: field.pii ?? null,
+        }));
+        const mapping: Record<string, string> = {};
+        for (const field of picked) mapping[field.source] = field.name;
+        return {
+          sheet: draft.sheet,
+          columns,
+          header_row: sheet?.header_row,
+          mapping,
+          metric_column: draft.metric || null,
+          group_column: draft.group || null,
+          view: draft.view,
+        };
+      });
       const result = await appsApi.quickCreate({
         agent_id: agentId,
         path: inspect.upload_path,
-        columns,
-        view,
+        sheets,
         name: quickName.trim() || defaultName(quickFile?.name || "小程序"),
-        sheet: sheetName || undefined,
-        mapping,
         include_pii: includePii,
       });
       if (result.blocked_pii.length) {
@@ -426,6 +608,13 @@ export default function CreateMiniAppModal({
       footer={null}
       width={840}
       destroyOnHidden
+      styles={{
+        body: {
+          maxHeight: "calc(100vh - 180px)",
+          overflowY: "auto",
+          paddingRight: 6,
+        },
+      }}
     >
       <Space direction="vertical" size={14} style={{ width: "100%" }}>
         <Segmented
@@ -506,22 +695,49 @@ export default function CreateMiniAppModal({
             {inspect ? (
               <>
                 <Space wrap>
-                  {inspect.report.sheets.length > 1 ? (
-                    <>
-                      <Text type="secondary">{t("apps.create.sheet")}</Text>
-                      <Select
-                        style={{ minWidth: 180 }}
-                        value={sheetName}
-                        options={inspect.report.sheets.map((sheet) => ({
-                          value: sheet.name,
-                          label: `${sheet.name} · ${t("apps.rows", {
-                            count: sheet.rows,
-                          })}`,
-                        }))}
-                        onChange={selectSheet}
-                      />
-                    </>
-                  ) : null}
+                  <Text type="secondary">{t("apps.create.sheets")}</Text>
+                  {inspect.report.sheets.map((sheet) => {
+                    const draft = drafts.find(
+                      (item) => item.sheet === sheet.name,
+                    );
+                    const isActive = activeSheet === sheet.name;
+                    return (
+                      <span
+                        key={sheet.name}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "4px 10px",
+                          border: `1px solid ${
+                            isActive ? "var(--fn-color-brand)" : "#e5e7eb"
+                          }`,
+                          borderRadius: 999,
+                          background: isActive
+                            ? "var(--fn-color-brand-bg)"
+                            : undefined,
+                        }}
+                      >
+                        <Checkbox
+                          checked={Boolean(draft?.selected)}
+                          onChange={(event) =>
+                            toggleSheet(sheet.name, event.target.checked)
+                          }
+                        />
+                        <span
+                          style={{ cursor: "pointer" }}
+                          onClick={() => setActiveSheet(sheet.name)}
+                        >
+                          {sheet.name} · {t("apps.rows", { count: sheet.rows })}
+                        </span>
+                      </span>
+                    );
+                  })}
+                  <Text type="secondary">
+                    {t("apps.create.selectedSheets", {
+                      count: drafts.filter((draft) => draft.selected).length,
+                    })}
+                  </Text>
                   <Text type="secondary">{t("apps.name")}</Text>
                   <Input
                     style={{ width: 260 }}
@@ -529,6 +745,13 @@ export default function CreateMiniAppModal({
                     maxLength={100}
                     onChange={(event) => setQuickName(event.target.value)}
                   />
+                  {selectedSheet && selectedSheet.header_row >= 0 ? (
+                    <Text type="secondary">
+                      {t("apps.inspectHeaderRow", {
+                        row: selectedSheet.header_row + 1,
+                      })}
+                    </Text>
+                  ) : null}
                 </Space>
 
                 {selectedSheet?.warnings?.length ? (
@@ -568,12 +791,132 @@ export default function CreateMiniAppModal({
                   scroll={{ y: 240 }}
                 />
 
+                {view !== "ledger" &&
+                (metricOptions.length > 0 || groupOptions.length > 0) ? (
+                  <Space wrap>
+                    <Text type="secondary">{t("apps.create.analysis")}</Text>
+                    {metricOptions.length ? (
+                      <>
+                        <Text type="secondary">{t("apps.create.metric")}</Text>
+                        <Select
+                          allowClear
+                          style={{ minWidth: 160 }}
+                          value={metric || undefined}
+                          placeholder={t("apps.create.metricPlaceholder")}
+                          options={metricOptions}
+                          onChange={(value) =>
+                            updateDraft(activeSheet, { metric: value || "" })
+                          }
+                        />
+                      </>
+                    ) : null}
+                    {groupOptions.length ? (
+                      <>
+                        <Text type="secondary">{t("apps.create.group")}</Text>
+                        <Select
+                          allowClear
+                          style={{ minWidth: 160 }}
+                          value={group || undefined}
+                          placeholder={t("apps.create.groupPlaceholder")}
+                          options={groupOptions}
+                          onChange={(value) =>
+                            updateDraft(activeSheet, { group: value || "" })
+                          }
+                        />
+                      </>
+                    ) : null}
+                  </Space>
+                ) : null}
+
+                {selectedSheet && selectedSheet.sample_rows.length ? (
+                  <details
+                    style={{
+                      background: "rgba(127,127,127,0.06)",
+                      border: "1px solid rgba(127,127,127,0.2)",
+                      borderRadius: 8,
+                      padding: "8px 12px",
+                    }}
+                  >
+                    <summary
+                      style={{
+                        cursor: "pointer",
+                        opacity: 0.65,
+                        fontSize: 12,
+                      }}
+                    >
+                      {t("apps.create.dataPreview", {
+                        count: selectedSheet.sample_rows.length,
+                      })}
+                    </summary>
+                    <div
+                      style={{
+                        overflow: "auto",
+                        maxHeight: 220,
+                        marginTop: 8,
+                      }}
+                    >
+                      <table
+                        style={{
+                          borderCollapse: "collapse",
+                          width: "100%",
+                          fontSize: 12,
+                        }}
+                      >
+                        <thead>
+                          <tr>
+                            {selectedSheet.header.map((header, index) => (
+                              <th
+                                key={index}
+                                style={{
+                                  textAlign: "left",
+                                  padding: "4px 8px",
+                                  borderBottom:
+                                    "1px solid rgba(127,127,127,0.2)",
+                                  whiteSpace: "nowrap",
+                                  opacity: 0.65,
+                                  fontWeight: 500,
+                                }}
+                              >
+                                {header}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedSheet.sample_rows.map((row, rowIndex) => (
+                            <tr key={rowIndex}>
+                              {row.map((cell, cellIndex) => (
+                                <td
+                                  key={cellIndex}
+                                  style={{
+                                    padding: "4px 8px",
+                                    borderBottom:
+                                      rowIndex ===
+                                      selectedSheet.sample_rows.length - 1
+                                        ? "none"
+                                        : "1px solid rgba(127,127,127,0.2)",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {cell || "—"}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+                ) : null}
+
                 <div>
                   <Text type="secondary">{t("apps.create.view")}</Text>
                   <Radio.Group
                     value={view}
                     onChange={(event) =>
-                      setView(event.target.value as QuickView)
+                      updateDraft(activeSheet, {
+                        view: event.target.value as QuickView,
+                      })
                     }
                     style={{ marginTop: 8, width: "100%" }}
                   >

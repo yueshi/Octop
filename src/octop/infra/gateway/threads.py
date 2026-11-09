@@ -281,7 +281,32 @@ class ThreadRegistry:
         async with self._lock:
             session = self._sessions.get(session_key)
             ref = self._sessions.get(row.session_key)
-            if ref is not None:
+            # The session key itself carries the destination channel
+            # (``agent:channel:subject:chat_type``). A dashboard/CLI key must
+            # stay virtual even when it is bound to an IM thread; copying the
+            # thread's original IM identity here made proactive routing send
+            # dashboard turns back to the IM provider.
+            parts = session_key.split(":", 3)
+            key_channel_type = parts[1].strip() if len(parts) == 4 else ""
+            key_subject_id = parts[2] if len(parts) == 4 else ""
+            key_chat_type = parts[3] if len(parts) == 4 else ""
+            if ref is not None and ref.channel_type == key_channel_type:
+                channel_id = ref.channel_id
+                metadata = ref.channel_metadata
+            else:
+                channel_id = None
+                metadata = None
+            if key_channel_type:
+                channel_type = key_channel_type
+                chat_type = key_chat_type or "dm"
+                subject_id = key_subject_id or str(row.user_id)
+                channel_chat_type = chat_type
+                if metadata is None:
+                    metadata = {
+                        "channel_type": channel_type,
+                        "user_id": row.user_id,
+                    }
+            elif ref is not None:
                 channel_type = ref.channel_type
                 chat_type = ref.chat_type
                 subject_id = ref.channel_subject_id
@@ -491,6 +516,9 @@ class ThreadRegistry:
 
     def increment_unread(self, session_key: str, *, delta: int = 1) -> None:
         self._sessions.increment_unread(session_key, delta=delta)
+
+    def touch_session(self, session_key: str) -> None:
+        self._sessions.touch(session_key)
 
     def mark_thread_read(self, thread_id: str) -> None:
         self._sessions.clear_unread_for_thread(thread_id)

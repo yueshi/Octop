@@ -187,32 +187,44 @@ export function ActiveModelPool({
       mode: capability.default_mode,
       effort: capability.default_effort,
     };
+    const alwaysOn = !capability.toggle && capability.efforts.length > 0;
     const content = (
       <div style={{ width: 250, display: "grid", gap: 10 }}>
-        <div style={{ fontWeight: 600 }}>
-          {t("chat.reasoningMode", "思考模式")}
-        </div>
-        <Segmented
-          block
-          value={preference.mode}
-          options={[
-            { value: "auto", label: t("chat.reasoningAuto", "自动") },
-            { value: "enabled", label: t("chat.reasoningEnabled", "开启") },
-            ...(capability.toggle
-              ? [
-                  {
-                    value: "disabled",
-                    label: t("chat.reasoningDisabled", "关闭"),
-                  },
-                ]
-              : []),
-          ]}
-          onChange={(value) =>
-            void handleReasoningChange(key, {
-              mode: value as "auto" | "enabled" | "disabled",
-            })
-          }
-        />
+        {alwaysOn ? (
+          <div style={{ fontWeight: 600 }}>
+            {t("chat.reasoningAlways", "始终推理")}
+          </div>
+        ) : (
+          <>
+            <div style={{ fontWeight: 600 }}>
+              {t("chat.reasoningMode", "思考模式")}
+            </div>
+            <Segmented
+              block
+              value={preference.mode}
+              options={[
+                { value: "auto", label: t("chat.reasoningAuto", "自动") },
+                {
+                  value: "enabled",
+                  label: t("chat.reasoningEnabled", "开启"),
+                },
+                ...(capability.toggle
+                  ? [
+                      {
+                        value: "disabled",
+                        label: t("chat.reasoningDisabled", "关闭"),
+                      },
+                    ]
+                  : []),
+              ]}
+              onChange={(value) =>
+                void handleReasoningChange(key, {
+                  mode: value as "auto" | "enabled" | "disabled",
+                })
+              }
+            />
+          </>
+        )}
         {capability.efforts.length > 0 && (
           <Select
             value={preference.effort || undefined}

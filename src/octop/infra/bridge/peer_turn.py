@@ -25,6 +25,7 @@ USER_TURN_WS_KEYS = frozenset(
         "delivery",
         "client_pending_id",
         "expected_turn_id",
+        "reply_via",
     }
 )
 

@@ -315,7 +315,7 @@ def build_harness_request(
         }
         if agent_id is not None:
             req["agent_id"] = agent_id
-        configurable: dict[str, Any] = {}
+        configurable: dict[str, Any] = {"octop_source": source}
         if auto_route:
             configurable["octop_auto_route"] = True
         if session_key is not None:
@@ -351,7 +351,7 @@ def build_harness_request(
     }
     if agent_id is not None:
         req["agent_id"] = agent_id
-    configurable = {}
+    configurable = {"octop_source": source}
     if auto_route:
         configurable["octop_auto_route"] = True
     if session_key is not None:

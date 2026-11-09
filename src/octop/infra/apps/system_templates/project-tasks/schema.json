@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "columns": [
+    { "name": "task", "label": "任务", "type": "text", "required": true },
+    { "name": "owner", "label": "负责人", "type": "string" },
+    { "name": "status", "label": "状态", "type": "enum", "values": ["待办", "进行中", "已完成", "阻塞"] },
+    { "name": "priority", "label": "优先级", "type": "enum", "values": ["低", "中", "高"] },
+    { "name": "due_date", "label": "截止日期", "type": "date" },
+    { "name": "progress", "label": "进度(%)", "type": "integer" },
+    { "name": "note", "label": "备注", "type": "text" }
+  ]
+}

@@ -904,11 +904,14 @@ def test_build_harness_config_includes_cronjob_tools_when_cron_manager_set(
         "search_knowledge",
         "app_inspect_file",
         "app_list",
+        "app_open",
+        "app_share_link",
         "app_create",
         "app_create_from_template",
         "app_add_table",
         "app_update_schema",
         "app_alter_schema",
+        "app_set_table_visibility",
         "app_write_html",
         "app_read_data",
         "app_append_row",
@@ -924,6 +927,7 @@ def test_build_harness_config_includes_cronjob_tools_when_cron_manager_set(
 def test_build_harness_config_includes_search_knowledge_without_cron(
     manager: AgentManager,
 ) -> None:
+    from octop.infra.agents.middleware.channel_context import ChannelContextMiddleware
     from octop.infra.knowledge.hint import KnowledgeSearchHintMiddleware
 
     cfg = manager._build_harness_config(_row(agent_id="AGT001"))
@@ -932,11 +936,14 @@ def test_build_harness_config_includes_search_knowledge_without_cron(
         "search_knowledge",
         "app_inspect_file",
         "app_list",
+        "app_open",
+        "app_share_link",
         "app_create",
         "app_create_from_template",
         "app_add_table",
         "app_update_schema",
         "app_alter_schema",
+        "app_set_table_visibility",
         "app_write_html",
         "app_read_data",
         "app_append_row",
@@ -948,6 +955,7 @@ def test_build_harness_config_includes_search_knowledge_without_cron(
         "app_delete",
     }
     assert any(isinstance(item, KnowledgeSearchHintMiddleware) for item in (cfg.middleware or []))
+    assert any(isinstance(item, ChannelContextMiddleware) for item in (cfg.middleware or []))
 
 
 def test_build_harness_config_defaults_local_shell_backend(manager: AgentManager) -> None:

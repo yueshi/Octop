@@ -240,8 +240,16 @@ class SessionRepo:
     def increment_unread(self, session_key: str, *, delta: int = 1) -> None:
         with self._db.transaction() as conn:
             conn.execute(
-                "UPDATE sessions SET unread_count = unread_count + ? WHERE session_key = ?",
-                (delta, session_key),
+                "UPDATE sessions SET unread_count = unread_count + ?, updated_at = ? "
+                "WHERE session_key = ?",
+                (delta, now_ts(), session_key),
+            )
+
+    def touch(self, session_key: str) -> None:
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE sessions SET updated_at = ? WHERE session_key = ?",
+                (now_ts(), session_key),
             )
 
     def clear_unread_for_thread(self, thread_id: str) -> None:

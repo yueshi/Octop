@@ -61,12 +61,14 @@ from octop.infra.gateway.process.harness_request import (
     build_harness_request,
 )
 from octop.infra.gateway.process.message_keys import (
+    COMPOSER_CTX_KEY,
     INBOUND_ATTACHMENTS_KEY,
     resolve_user_id_for_message,
     session_key_from_message,
     session_metadata_from_message,
 )
 from octop.infra.gateway.process.stream_project import (
+    StreamBudget,
     StreamProjectionState,
     enrich_tool_stream_chunk,
     project_stream,
@@ -86,9 +88,55 @@ from octop.infra.users.preferences import (
     get_model_reasoning_from_json,
     get_preferred_model_from_json,
 )
+from octop.infra.utils.llm_text import format_channel_text, strip_internal_payloads
 from octop.infra.utils.locale import resolve_user_locale
 from octop.infra.utils.turn_failure import log_failed_tool_results, log_turn_failure
 from octop.infra.utils.ulid import new_ulid
+
+
+@dataclass
+class _ChannelOutputTracker:
+    """Track whether a turn produced user-visible output after its last tool call.
+
+    ``collapse_to_invoke_response`` drops narration that leads into a tool call.
+    If the model then ends without a final answer, the IM user would receive
+    only ``COMPLETED`` and no message. This tracker mirrors that collapse rule
+    so the processor can emit a localized fallback instead of staying silent.
+    """
+
+    text_after_tool: bool = False
+    media: bool = False
+    error: bool = False
+
+    def observe(self, event: MessageEvent) -> None:
+        if event.type == MessageEventType.ERROR:
+            # The channel already delivered a visible error; do not append the
+            # empty-reply guard on top of it.
+            self.error = True
+            return
+        if event.type == MessageEventType.TOOL_START:
+            meta = event.metadata if isinstance(event.metadata, dict) else {}
+            tool_key = str(meta.get("tool_key") or meta.get("tool_name") or "")
+            if tool_key != "ask_agent":
+                self.text_after_tool = False
+            return
+        if event.type == MessageEventType.DELTA:
+            if any(isinstance(part, TextContent) and part.text.strip() for part in event.content):
+                self.text_after_tool = True
+            return
+        if event.type != MessageEventType.MESSAGE:
+            return
+        for part in event.content:
+            if isinstance(part, TextContent):
+                if part.text.strip():
+                    self.text_after_tool = True
+            else:
+                self.media = True
+
+    @property
+    def has_output(self) -> bool:
+        return self.text_after_tool or self.media or self.error
+
 
 if TYPE_CHECKING:
     from octop.infra.agents.manager import AgentManager
@@ -658,6 +706,30 @@ class GlobalProcessor:
 
     # -- IM channel entry (MessageEvent stream) --------------------------------
 
+    @staticmethod
+    async def _format_channel_events(
+        events: AsyncIterator[MessageEvent],
+        channel_type: str,
+    ) -> AsyncIterator[MessageEvent]:
+        """Rewrite Markdown for plain-text transports (WeChat/QQ)."""
+        async for event in events:
+            if event.type in (MessageEventType.MESSAGE, MessageEventType.DELTA):
+                changed = False
+                content: list[Any] = []
+                for part in event.content:
+                    if isinstance(part, TextContent) and part.text:
+                        new_text = format_channel_text(
+                            strip_internal_payloads(part.text),
+                            channel_type,
+                        )
+                        if new_text != part.text:
+                            part = part.model_copy(update={"text": new_text})
+                            changed = True
+                    content.append(part)
+                if changed:
+                    event = event.model_copy(update={"content": content})
+            yield event
+
     async def __call__(self, msg: InboundMessage) -> AsyncIterator[MessageEvent]:
         from octop.infra.metrics import METRICS  # noqa: PLC0415
 
@@ -676,7 +748,15 @@ class GlobalProcessor:
         )
         session_key = session_key_from_message(msg, agent_id=agent_id)
         channel_type = msg.channel_type or "unknown"
+        meta = msg.metadata if isinstance(msg.metadata, dict) else {}
         im_meta = session_metadata_from_message(msg)
+        bridge_turn_id = str(meta.get("bridge_turn_id") or "").strip()
+        if bridge_turn_id:
+            consume = getattr(self._gateway, "consume_im_bridge_cancel", None)
+            if callable(consume) and consume(bridge_turn_id):
+                # The Web client cancelled while this bridge turn was queued.
+                yield MessageEvent.completed()
+                return
         if is_team_agent(agent_row) and self._team_coordinator is not None:
             # Shadow ledger: a user message reached a team host over IM (v2 §11.2).
             self._team_coordinator.record_user_message(
@@ -824,39 +904,63 @@ class GlobalProcessor:
         model_route = self._resolve_harness_model_route(
             agent_id,
             thread_id,
-            None,
+            meta,
             user_id=user_id,
             needs_multimodal=content_blocks_need_vision(content),
         )
         model_ref = model_route.model_ref
+        reasoning_overrides = self._resolve_reasoning_overrides(
+            user_id=user_id,
+            thread_id=thread_id,
+            model_ref=model_ref,
+            meta=meta,
+        )
+        explicit_mcp = meta.get("mcp_servers")
+        # A Web-originated turn always carries mcp_servers (possibly []), so
+        # the user can opt out of default_open for this turn.
+        if isinstance(explicit_mcp, list):
+            apply_defaults = False
+        else:
+            explicit_mcp = None
+            apply_defaults = True
         mcp_servers = await self._resolve_turn_mcp_servers(
             agent_id=agent_id,
             user_id=user_id,
-            explicit=None,
-            apply_defaults=True,
+            explicit=explicit_mcp,
+            apply_defaults=apply_defaults,
             raise_on_failure=False,
         )
         message_kwargs: dict[str, Any] = {}
-        attachments = inbound_attachments_from_parts(msg.content)
+        composer = meta.get(COMPOSER_CTX_KEY)
+        if isinstance(composer, dict) and composer:
+            message_kwargs[COMPOSER_CTX_KEY] = composer
+        attachments = meta.get(INBOUND_ATTACHMENTS_KEY)
+        if not isinstance(attachments, list) or not attachments:
+            attachments = inbound_attachments_from_parts(msg.content)
         if attachments:
             message_kwargs[INBOUND_ATTACHMENTS_KEY] = attachments
         if mcp_servers:
-            from octop.infra.gateway.process.message_keys import (  # noqa: PLC0415
-                COMPOSER_CTX_KEY,
-                build_composer_context,
-            )
+            # Keep history chips aligned with the servers actually injected.
+            if isinstance(composer, dict) and composer:
+                stamped = dict(composer)
+                stamped["connectors"] = list(mcp_servers)
+                message_kwargs[COMPOSER_CTX_KEY] = stamped
+            else:
+                from octop.infra.gateway.process.message_keys import (  # noqa: PLC0415
+                    build_composer_context,
+                )
 
-            row = self._agent_repo.get(agent_id)
-            default_model = (row.default_model if row is not None else None) or None
-            composer = build_composer_context(
-                mcp_servers=mcp_servers,
-                skills=None,
-                target_agent_ids=None,
-                model_ref=model_ref,
-                default_model=default_model,
-            )
-            if composer:
-                message_kwargs[COMPOSER_CTX_KEY] = composer
+                row = self._agent_repo.get(agent_id)
+                default_model = (row.default_model if row is not None else None) or None
+                built = build_composer_context(
+                    mcp_servers=mcp_servers,
+                    skills=meta.get("skills") if isinstance(meta.get("skills"), list) else None,
+                    target_agent_ids=None,
+                    model_ref=model_ref,
+                    default_model=default_model,
+                )
+                if built:
+                    message_kwargs[COMPOSER_CTX_KEY] = built
         request = build_harness_request(
             thread_id=thread_id,
             user_id=user_id,
@@ -867,21 +971,27 @@ class GlobalProcessor:
             model=model_ref,
             auto_route=model_route.automatic,
             message_kwargs=message_kwargs or None,
+            reasoning_overrides=reasoning_overrides,
         )
         self.teams.stamp_host_runtime(request, agent_id)
         self._attach_turn_knowledge_config(
             request,
             user_id=user_id,
-            is_admin=False,
-            explicit_ids=None,
+            is_admin=bool(meta.get("user_is_admin")),
+            explicit_ids=meta.get("knowledge_base_ids")
+            if isinstance(meta.get("knowledge_base_ids"), list)
+            else None,
             locale=locale,
             agent_id=agent_id,
         )
+        if "skills" in meta:
+            request["skills"] = meta["skills"]
+        self._apply_turn_hitl_policy(thread_id, meta)
         request = self._stamp_turn_conversation_mode(
             request,
             agent_id=agent_id,
             thread_id=thread_id,
-            meta=None,
+            meta=meta,
             user_text=msg.text,
             mcp_servers=mcp_servers,
             locale=locale,
@@ -892,10 +1002,22 @@ class GlobalProcessor:
         hitl_paused = False
         failure_saved = False
         usage_tracker = UsageTracker()
+        output_tracker = _ChannelOutputTracker()
+        origin = str((msg.metadata or {}).get("origin") or "")
+        active_started = channel_type not in {"dashboard", "cli", "mcp"}
+        turn_id = f"turn_{new_ulid()}"
         history_tracker = await self._begin_history(agent_id, thread_id, request)
+        if active_started:
+            await self._publish_thread_state(
+                user_id=user_id,
+                agent_id=agent_id,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                active=True,
+            )
         projection_state = StreamProjectionState()
         try:
-            async for ev in project_stream(
+            events = project_stream(
                 self._agent_manager,
                 agent_id,
                 request,
@@ -912,7 +1034,10 @@ class GlobalProcessor:
                     session_key=session_key,
                     channel_type=channel_type,
                 ),
-            ):
+                budget=StreamBudget(),
+            )
+            async for ev in self._format_channel_events(events, channel_type):
+                output_tracker.observe(ev)
                 yield ev
             stream_ok = True
             hitl_paused = projection_state.hitl_paused
@@ -934,6 +1059,10 @@ class GlobalProcessor:
             failure_saved = True
             yield MessageEvent.error_event(message)
         else:
+            if stream_ok and not hitl_paused and not output_tracker.has_output:
+                from octop.i18n import tr  # noqa: PLC0415
+
+                yield MessageEvent.text(tr("stream_guard.empty_reply", locale))
             if stream_ok and not hitl_paused:
                 self._touch_thread_after_turn(thread_id, msg.text)
                 self._record_turn_usage(
@@ -956,6 +1085,24 @@ class GlobalProcessor:
                 )
             elif not failure_saved:
                 await self._finish_history(history_tracker, completed=stream_ok and not hitl_paused)
+            if active_started:
+                self._touch_im_session_after_turn(
+                    channel_type=channel_type,
+                    session_key=session_key,
+                    thread_id=thread_id,
+                    origin=origin,
+                )
+                await self._publish_thread_state(
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    active=False,
+                )
+            if bridge_turn_id:
+                clear = getattr(self._gateway, "clear_im_bridge_cancel", None)
+                if callable(clear):
+                    clear(bridge_turn_id)
         yield MessageEvent.completed()
 
     def cancel_agent_stream(self, agent_id: str, thread_id: str) -> None:
@@ -999,8 +1146,8 @@ class GlobalProcessor:
         )
         session_key = session_key_from_message(msg, agent_id=agent_id)
         channel_type = msg.channel_type or "unknown"
+        meta = msg.metadata if isinstance(msg.metadata, dict) else {}
         im_meta = session_metadata_from_message(msg)
-        meta = msg.metadata or {}
         if team_host and self._team_coordinator is not None:
             # Shadow ledger: a user message reached a team host (v2 §11.2).
             self._team_coordinator.record_user_message(
@@ -1215,6 +1362,7 @@ class GlobalProcessor:
         # Align with IM stream_project: only push after a live tool_call this
         # turn, then dedupe Overwrite replays and identical path/URL frames.
         saw_tool_call = False
+        live_tool_call_ids: set[str] = set()
         emitted_media_ids: set[str] = set()
         emitted_attachment_keys: set[str] = set()
         emitted_tool_error_ids: set[str] = set()
@@ -1263,6 +1411,9 @@ class GlobalProcessor:
                         }
                 if chunk.get("type") == "tool_call_chunk":
                     saw_tool_call = True
+                    call_id = chunk.get("id")
+                    if isinstance(call_id, str) and call_id:
+                        live_tool_call_ids.add(call_id)
                 if chunk.get("type") == "tool_result":
                     log_failed_tool_results(
                         chunk,
@@ -1284,6 +1435,7 @@ class GlobalProcessor:
                             saw_tool_call=saw_tool_call,
                             emitted_media_ids=emitted_media_ids,
                             emitted_attachment_keys=emitted_attachment_keys,
+                            allowed_tool_call_ids=live_tool_call_ids or None,
                         ):
                             yield _maybe_stamp_team_host(att, agent_id, team_host)
                     else:
@@ -1428,8 +1580,6 @@ class GlobalProcessor:
         thread_id: str,
         meta: dict[str, Any],
     ) -> dict[str, Any]:
-        from octop.infra.gateway.process.message_keys import COMPOSER_CTX_KEY  # noqa: PLC0415
-
         media_backend = media_backend_for_agent(self._agent_manager, agent_id)
         source = f"{msg.channel_type}/{msg.channel_id}"
         locale = resolve_user_locale(
@@ -1749,6 +1899,51 @@ class GlobalProcessor:
             target=agent_id,
             payload=str(exc),
         )
+
+    async def _publish_thread_state(
+        self,
+        *,
+        user_id: int,
+        agent_id: str,
+        thread_id: str,
+        turn_id: str,
+        active: bool,
+    ) -> None:
+        publish = getattr(self._gateway, "publish_thread_updated", None)
+        if not callable(publish):
+            return
+        try:
+            await publish(
+                user_id=user_id,
+                agent_id=agent_id,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                active=active,
+            )
+        except Exception:
+            logger.debug(
+                "thread update publish failed thread=%s active=%s",
+                thread_id,
+                active,
+                exc_info=True,
+            )
+
+    def _touch_im_session_after_turn(
+        self,
+        *,
+        channel_type: str,
+        session_key: str,
+        thread_id: str,
+        origin: str,
+    ) -> None:
+        if channel_type in {"dashboard", "cli", "mcp"} or not session_key:
+            return
+        hub = getattr(self._gateway, "ws_hub", None)
+        viewing = bool(hub is not None and hub.has_subscribers(thread_id))
+        if origin != "web" and not viewing:
+            self._thread_registry.increment_unread(session_key)
+        else:
+            self._thread_registry.touch_session(session_key)
 
     def _touch_thread_after_turn(self, thread_id: str, title_source: str | None) -> None:
         self._thread_registry.touch_last_active(thread_id)

@@ -1,17 +1,17 @@
-# 轻应用增强方案
+# MiniApp 增强方案
 
 > 状态：讨论稿（2026-11-04）
 >
-> 命名说明（2026-11-05）：本文档中的「轻应用」为旧称，产品现统一称为「小程序 / MiniApp」；正文保留原文以保留决策上下文。
+> 术语说明（2026-11-08）：本文档已全文统一为 MiniApp；此前的旧称（「小程序」「轻应用」）不再使用，仅保留于 git 历史。
 >
-> 范围：`feature/light-apps` 分支上的轻应用能力（Agent tools + 工作区文件 + 沙箱 iframe）
+> 范围：`feature/light-apps` 分支上的 MiniApp 能力（Agent tools + 工作区文件 + 沙箱 iframe）
 >
-> 定位：把轻应用从“agent 生成的单页工具”升级为**可维护、可接入、可协作、可运营的数据产品**。
+> 定位：把 MiniApp 从“agent 生成的单页工具”升级为**可维护、可接入、可协作、可运营的数据产品**。
 > HTML 仍是最后一层皮，增强重点在底座。
 >
-> 相关：[轻应用数据与协作架构方案](./light-apps-architecture.md)（数据层 D1–D12 的既有设计，本方案沿用）、
-> [轻应用默认 AI 助手与外部数据导入设计](./light-apps-assistant-and-import-design.md)、
-> [轻应用多 CSV（多数据表）设计](./light-apps-multi-table-design.md)。
+> 相关：[MiniApp 数据与协作架构方案](./light-apps-architecture.md)（数据层 D1–D12 的既有设计，本方案沿用）、
+> [MiniApp 默认 AI 助手与外部数据导入设计](./light-apps-assistant-and-import-design.md)、
+> [MiniApp 多 CSV（多数据表）设计](./light-apps-multi-table-design.md)。
 
 ---
 
@@ -124,7 +124,7 @@
 - **数据源增强**：允许无凭证的只读连接器；外部源补去重键与增量同步；新增通用 HTTP 取数
   （URL + 选择器/JSON-LD）作为 `http_extract` 连接器。
 
-#### 4.3.1 Excel 分析 → 生成轻应用（重点）
+#### 4.3.1 Excel 分析 → 生成 MiniApp （重点）
 
 这条能力不是一个“导入按钮”，而是贯穿**接入层 + 交互层 + Agent 协作层**的完整链路。
 关键原则：**解析用代码，建议用模型，决定权在用户**。模型不直接读整张 Excel，只看服务端
@@ -472,7 +472,7 @@ P2 覆盖 Case 6/7/8；P3 覆盖后置项。
 
 **不建议加入**
 
-复杂审批流、实时协同编辑、公开可写表单、大二进制编辑——会显著扩大范围，且不属于轻应用主线。
+复杂审批流、实时协同编辑、公开可写表单、大二进制编辑——会显著扩大范围，且不属于 MiniApp 主线。
 
 ---
 

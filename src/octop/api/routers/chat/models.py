@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -82,6 +82,13 @@ class ChatTurnBody(BaseModel):
         default=None,
         description="Active turn_id from turn.started / turn.resumed (required while busy).",
     )
+    reply_via: Literal["im", "web"] = Field(
+        default="web",
+        description=(
+            "Where the assistant reply should go for an IM thread. "
+            "'im' sends it through the thread's primary IM channel; 'web' keeps it in the dashboard."
+        ),
+    )
 
     @classmethod
     def from_ws_payload(cls, payload: dict[str, Any]) -> ChatTurnBody:
@@ -137,6 +144,10 @@ class ChatTurnBody(BaseModel):
             if isinstance(payload.get("expected_turn_id"), str)
             and str(payload["expected_turn_id"]).strip()
             else None,
+            reply_via=cast(
+                Literal["im", "web"],
+                payload.get("reply_via") if payload.get("reply_via") in ("im", "web") else "web",
+            ),
         )
 
 
@@ -161,6 +172,7 @@ class UserTurnWsFrame(BaseModel):
     delivery: Literal["auto", "steer", "follow_up"] | None = None
     client_pending_id: str | None = None
     expected_turn_id: str | None = None
+    reply_via: Literal["im", "web"] | None = None
 
     def to_turn_body(self) -> ChatTurnBody:
         return ChatTurnBody.from_ws_payload(self.model_dump(exclude_none=True))

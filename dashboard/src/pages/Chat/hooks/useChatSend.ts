@@ -49,6 +49,7 @@ interface UseChatSendParams {
     reasoningEffort?: string | null,
     conversationMode?: "ask" | "plan" | "craft" | null,
     hitlPolicy?: HitlSessionPolicy | null,
+    replyVia?: "im" | "web",
   ) => void;
   createSession: () => { session: Session; resolvedId: Promise<string> };
   renameSession: (id: string, name: string) => void;
@@ -75,6 +76,8 @@ export type ChatSendOverrides = {
   agentId?: string | null;
   conversationMode?: "ask" | "plan" | "craft";
   hitlPolicy?: HitlSessionPolicy;
+  /** Deliver through the thread's primary IM session (default ``web``). */
+  replyVia?: "im" | "web";
 };
 
 export function useChatSend({
@@ -156,6 +159,7 @@ export function useChatSend({
         overrides?.modelRef !== undefined
           ? overrides.modelRef
           : resolveTurnModelRef(modelSelection, defaultModel);
+      const replyVia = overrides?.replyVia ?? "web";
 
       const runSend = (tid: string, hadMessages: boolean) => {
         maybeRenameNewThread(tid, hadMessages);
@@ -174,6 +178,7 @@ export function useChatSend({
           composerContext?.reasoningEffort ?? reasoningEffort,
           mode,
           policy,
+          replyVia,
         );
       };
 
@@ -236,6 +241,7 @@ export function useChatSend({
           composerContext?.reasoningEffort ?? reasoningEffort,
           mode,
           policy,
+          replyVia,
         );
         navigate(`/chat/${agent}/${tid}`, { replace: true });
       });

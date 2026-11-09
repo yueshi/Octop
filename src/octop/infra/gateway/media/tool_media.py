@@ -7,7 +7,6 @@ Uses ``agent.workspace`` via :mod:`.backend_files` —
 from __future__ import annotations
 
 import base64
-import contextlib
 import json
 import logging
 import mimetypes
@@ -55,6 +54,7 @@ MEDIA_PUSH_TOOL_BASES = frozenset(
         "mobile_screenshot",
         "generate_image",
         "generate_video",
+        "app_share_link",
     }
 )
 # browser_use / write_file / read_file may embed media-shaped payloads or
@@ -96,6 +96,37 @@ def tool_message_name(message: Any, *, chunk_name: str | None = None) -> str | N
     if isinstance(chunk_name, str) and chunk_name.strip():
         return chunk_name.strip()
     return None
+
+
+def message_tool_call_id(message: Any) -> str | None:
+    """Resolve ``tool_call_id`` from a ToolMessage / dict."""
+    raw = (
+        message.get("tool_call_id")
+        if isinstance(message, dict)
+        else getattr(message, "tool_call_id", None)
+    )
+    return raw.strip() if isinstance(raw, str) and raw.strip() else None
+
+
+def _is_live_tool_message(message: Any, allowed_tool_call_ids: set[str] | None) -> bool:
+    """True when *message* belongs to a tool call made in the current turn."""
+    if allowed_tool_call_ids is None:
+        return True
+    call_id = message_tool_call_id(message)
+    return bool(call_id and call_id in allowed_tool_call_ids)
+
+
+def _message_copy_with_content(message: Any, content: Any) -> Any:
+    """Copy a message with new content; never mutate shared harness state."""
+    if isinstance(message, dict):
+        msg_copy = dict(message)
+        msg_copy["content"] = content
+        return msg_copy
+    copy = getattr(message, "model_copy", None)
+    if callable(copy):
+        return copy(update={"content": content})
+    # Unknown message type: leave the original untouched rather than mutating it.
+    return message
 
 
 def dedup_tool_result_messages(
@@ -218,6 +249,21 @@ def _block_file_refs(block: dict[str, Any]) -> tuple[str, str, str]:
         mime = str(block.get("media_type") or block.get("mime_type") or "")
     filename = str(block.get("filename") or "")
     return raw_url, mime, filename
+
+
+def _preview_media_source(preview_url: str) -> tuple[str, str]:
+    """Return ``(source, mime_hint)`` from an Octop ``/media/preview`` URL.
+
+    Dashboard preview URLs are relative and JWT-protected, so IM channels must
+    resolve the original ``source`` against the workspace instead of fetching
+    the URL. ``source`` is a ``file://`` URL or workspace-relative path.
+    """
+    if "/media/preview" not in preview_url or "?" not in preview_url:
+        return "", ""
+    params = urllib.parse.parse_qs(urllib.parse.urlsplit(preview_url).query)
+    source = (params.get("source") or [""])[0].strip()
+    mime = (params.get("mime_type") or [""])[0].strip()
+    return source, mime
 
 
 def _workspace_rel_from_preview(preview: str) -> str | None:
@@ -381,22 +427,11 @@ def enrich_tool_result_for_dashboard(
 
     out_messages: list[Any] = []
     for message in messages:
-        if isinstance(message, dict):
-            content = message.get("content")
-            enriched = enrich_tool_message_content(content, agent_id=agent_id)
-            if enriched is not content:
-                msg_copy = dict(message)
-                msg_copy["content"] = enriched
-                out_messages.append(msg_copy)
-            else:
-                out_messages.append(message)
-        else:
-            content = getattr(message, "content", None)
-            enriched = enrich_tool_message_content(content, agent_id=agent_id)
-            if enriched is not content:
-                with contextlib.suppress(AttributeError):
-                    message.content = enriched
-            out_messages.append(message)
+        content = extract_message_content(message)
+        enriched = enrich_tool_message_content(content, agent_id=agent_id)
+        out_messages.append(
+            _message_copy_with_content(message, enriched) if enriched is not content else message
+        )
 
     out = dict(chunk)
     out["messages"] = out_messages
@@ -431,14 +466,7 @@ async def enrich_tool_result_with_backend(
                     workspace=workspace,
                 )
                 if plain_enriched != content:
-                    if isinstance(message, dict):
-                        msg_copy = dict(message)
-                        msg_copy["content"] = plain_enriched
-                        out_messages.append(msg_copy)
-                    else:
-                        with contextlib.suppress(AttributeError):
-                            message.content = plain_enriched
-                        out_messages.append(message)
+                    out_messages.append(_message_copy_with_content(message, plain_enriched))
                     continue
 
         enriched = await _amap_content_blocks(
@@ -448,14 +476,7 @@ async def enrich_tool_result_with_backend(
         if enriched is content:
             out_messages.append(message)
             continue
-        if isinstance(message, dict):
-            msg_copy = dict(message)
-            msg_copy["content"] = enriched
-            out_messages.append(msg_copy)
-        else:
-            with contextlib.suppress(AttributeError):
-                message.content = enriched
-            out_messages.append(message)
+        out_messages.append(_message_copy_with_content(message, enriched))
 
     out = dict(chunk)
     out["messages"] = out_messages
@@ -672,6 +693,7 @@ async def iter_dashboard_attachment_frames(
     saw_tool_call: bool,
     emitted_media_ids: set[str],
     emitted_attachment_keys: set[str],
+    allowed_tool_call_ids: set[str] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield pushable dashboard attachments for this turn.
 
@@ -679,8 +701,9 @@ async def iter_dashboard_attachment_frames(
     1. At least one ``tool_call_chunk`` this stream (skip historical Overwrite
        dumps at turn start — same as IM ``saw_tool_call``).
     2. ``tool_call_id`` not already emitted (Overwrite replay dedup).
-    3. Allowlisted delivery tools inside :func:`attachment_frames_from_tool_result`.
-    4. Path / URL / payload key not already pushed (same file, new call id).
+    3. ``tool_call_id`` started in this turn (when known).
+    4. Allowlisted delivery tools inside :func:`attachment_frames_from_tool_result`.
+    5. Path / URL / payload key not already pushed (same file, new call id).
     """
     if not saw_tool_call:
         return
@@ -691,6 +714,7 @@ async def iter_dashboard_attachment_frames(
         chunk_for_media,
         agent_id=agent_id,
         workspace=workspace,
+        allowed_tool_call_ids=allowed_tool_call_ids,
     ):
         key = attachment_frame_dedup_key(frame)
         if key is not None:
@@ -705,11 +729,13 @@ async def attachment_frames_from_tool_result(
     *,
     agent_id: str,
     workspace: BackendWorkspace,
+    allowed_tool_call_ids: set[str] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield dashboard WS attachment frames with workspace download URLs.
 
     Only :data:`MEDIA_PUSH_TOOL_BASES` results produce frames — other tools may
     embed media-shaped payloads without intending a user-facing push.
+    ``allowed_tool_call_ids`` keeps full-history replays from re-pushing files.
     """
     messages = chunk.get("messages")
     if not isinstance(messages, list):
@@ -718,6 +744,8 @@ async def attachment_frames_from_tool_result(
     chunk_name = chunk.get("name") if isinstance(chunk.get("name"), str) else None
     for message in messages:
         if not is_media_push_tool(tool_message_name(message, chunk_name=chunk_name)):
+            continue
+        if not _is_live_tool_message(message, allowed_tool_call_ids):
             continue
         for block in iter_media_blocks(extract_message_content(message)):
             preview_url = block.get("preview_url")
@@ -838,6 +866,10 @@ async def block_to_content_part(
     source = block.get("source") or {}
     src_type = source.get("type") or ""
     raw_url, mime, filename = _block_file_refs(block)
+    if not raw_url:
+        raw_url = str(block.get("preview_url") or "")
+    if not raw_url:
+        raw_url = _file_block_path(block, "") or ""
 
     local_path: str | None = None
     url_field = ""
@@ -861,7 +893,28 @@ async def block_to_content_part(
         if not mime:
             mime = mimetypes.guess_type(filename or raw_url)[0] or "application/octet-stream"
     elif raw_url:
-        url_field = raw_url
+        # Dashboard preview URLs are relative + JWT-protected: resolve the
+        # workspace source instead of handing the URL to the IM channel.
+        preview_source, preview_mime = _preview_media_source(raw_url)
+        workspace_ref = preview_source or _file_block_path(block, raw_url)
+        if workspace_ref:
+            file_bytes = await read_file_url_bytes(
+                workspace,
+                workspace_ref,
+                filename=filename,
+                mime=mime or preview_mime,
+            )
+            if file_bytes is None:
+                return None
+            data_field = base64.b64encode(file_bytes).decode("ascii")
+            if not mime:
+                mime = (
+                    preview_mime
+                    or mimetypes.guess_type(filename or workspace_ref)[0]
+                    or "application/octet-stream"
+                )
+        else:
+            url_field = raw_url
     else:
         return None
 
@@ -901,8 +954,14 @@ async def media_events_from_tool_result(
     chunk: dict[str, Any],
     *,
     workspace: BackendWorkspace,
+    allowed_tool_call_ids: set[str] | None = None,
 ) -> AsyncIterator[MessageEvent]:
-    """Yield IM media events from allowlisted delivery-tool results only."""
+    """Yield IM media events from allowlisted delivery-tool results only.
+
+    ``allowed_tool_call_ids`` restricts output to tool calls started in the
+    current turn. Full-history updates (MediaOffload / Overwrite replays) must
+    not re-send media the user already received in earlier turns.
+    """
     messages = chunk.get("messages") or []
     if not isinstance(messages, list):
         return
@@ -911,7 +970,11 @@ async def media_events_from_tool_result(
     for message in messages:
         if not is_media_push_tool(tool_message_name(message, chunk_name=chunk_name)):
             continue
+        if not _is_live_tool_message(message, allowed_tool_call_ids):
+            continue
         for block in iter_media_blocks(extract_message_content(message)):
+            if block.get("im_safe") is False:
+                continue
             try:
                 part = await block_to_content_part(block, workspace=workspace)
             except (FileNotFoundError, OSError, ValueError) as exc:

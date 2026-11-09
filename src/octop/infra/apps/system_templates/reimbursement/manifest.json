@@ -1,0 +1,13 @@
+{
+  "id": "reimbursement",
+  "version": 1,
+  "name": { "zh": "费用报销台账", "en": "Expense Reimbursement" },
+  "description": {
+    "zh": "按月汇总报销申请，跟踪审批状态和费用类别。",
+    "en": "Collect reimbursement requests by month and track approval status and categories."
+  },
+  "category": "finance",
+  "tags": ["finance", "expense", "approval"],
+  "schema": "schema.json",
+  "html": "app.html"
+}

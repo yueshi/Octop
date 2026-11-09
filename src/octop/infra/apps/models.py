@@ -16,6 +16,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 
+from octop.infra.apps.pii import detect_header_pii
+from octop.infra.apps.pii import redact_text as redact_pii_text
 from octop.infra.errors import ErrorCode, OctopError
 
 APP_ID_RE = re.compile(r"^app_[0-9A-Za-z]{6,32}$")
@@ -55,15 +57,28 @@ PII_MASK = "••••"
 def redact_rows(
     schema: Schema,
     rows: Sequence[Mapping[str, str]],
+    *,
+    redact_text: bool = False,
 ) -> list[dict[str, str]]:
-    """Mask every column marked with a ``pii`` kind."""
+    """Mask marked columns and, optionally, PII inside free-text cells.
+
+    Marked columns are masked wholesale; unmarked columns are value-scanned
+    when ``redact_text`` is set so a phone number in a note cannot slip through
+    just because the column was never classified.
+    """
     sensitive = {column.name for column in schema.columns if column.pii}
-    if not sensitive:
-        return [dict(row) for row in rows]
-    return [
-        {name: (PII_MASK if name in sensitive else str(value)) for name, value in row.items()}
-        for row in rows
-    ]
+    output: list[dict[str, str]] = []
+    for row in rows:
+        item: dict[str, str] = {}
+        for name, value in row.items():
+            if name in sensitive:
+                item[name] = PII_MASK
+            elif redact_text:
+                item[name] = redact_pii_text(str(value))
+            else:
+                item[name] = str(value)
+        output.append(item)
+    return output
 
 
 _TRUE_VALUES = frozenset({"true", "1", "yes", "y", "on"})
@@ -252,6 +267,10 @@ def _parse_column(raw: object, *, index: int) -> Column:
                 ErrorCode.APP_SCHEMA_INVALID,
                 f"column {name!r} has an invalid pii kind {pii!r}",
             )
+    if pii is None:
+        # Sensitive column names are classified even when the creator forgot
+        # to pass ``pii``; explicit metadata remains authoritative.
+        pii = detect_header_pii(name) or detect_header_pii(label)
     return Column(
         name=name,
         label=label,

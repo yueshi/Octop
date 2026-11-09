@@ -29,6 +29,7 @@ class Metrics:
     light_app_row_write_total: int = 0
     light_app_export_total: int = 0
     light_app_assistant_total: int = 0
+    light_app_generate_total: int = 0
     light_app_public_view_total: int = 0
     agent_active: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -65,6 +66,7 @@ class Metrics:
                 "light_app_row_write_total": self.light_app_row_write_total,
                 "light_app_export_total": self.light_app_export_total,
                 "light_app_assistant_total": self.light_app_assistant_total,
+                "light_app_generate_total": self.light_app_generate_total,
                 "light_app_public_view_total": self.light_app_public_view_total,
                 "agent_active": self.agent_active,
             }
