@@ -11,6 +11,7 @@ from langgraph.config import get_config
 from pydantic import Field
 
 from octop.infra.agents.tool_scope import current_tool_scope
+from octop.infra.apps import capabilities as app_capabilities
 from octop.infra.apps.models import MAIN_TABLE_KEY
 from octop.infra.apps.pii import detect_text_pii, find_unmarked_pii
 from octop.infra.apps.service import (
@@ -35,6 +36,7 @@ APP_TOOL_NAMES: tuple[str, ...] = (
     "app_update_schema",
     "app_alter_schema",
     "app_set_table_visibility",
+    "app_set_capabilities",
     "app_write_html",
     "app_read_data",
     "app_append_row",
@@ -152,6 +154,7 @@ def _summary(row: LightAppRow) -> dict[str, Any]:
         "name": row.name,
         "description": row.description,
         "row_count": row.row_count,
+        "capabilities": app_capabilities.describe(row.capabilities_json),
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }
@@ -476,6 +479,17 @@ def build_app_tools(
             str,
             Field(description="Optional one-line description shown in the app list."),
         ] = "",
+        capabilities: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "Page capabilities to declare. Omit for the safe default: data.read, "
+                    "data.write, asset.read, external.open, chat.compose, events.read. "
+                    "High-risk actions (ai.generate, game.launch, external.fetch, "
+                    "events.emit, schedules.manage) must be declared explicitly."
+                )
+            ),
+        ] = None,
     ) -> str:
         try:
             agent_id, user_id = _tool_ctx()
@@ -487,6 +501,7 @@ def build_app_tools(
                 name=name,
                 description=description,
                 columns=columns,
+                capabilities=capabilities,
             )
             return _ok({**_summary(row), "next_step": "call app_write_html to build the UI"})
         except Exception as exc:
@@ -604,6 +619,27 @@ def build_app_tools(
                     "public_visible": view.public_visible,
                 }
             )
+        except Exception as exc:
+            return _err(exc)
+
+    async def app_set_capabilities(
+        app_id: Annotated[str, Field(description="App id returned by app_create/app_list.")],
+        capabilities: Annotated[
+            list[str],
+            Field(
+                description=(
+                    "Complete page capability list. Pass [] to deny every page action; "
+                    "omit high-risk actions the app does not need (ai.generate, "
+                    "game.launch, external.fetch, events.emit, schedules.manage)."
+                )
+            ),
+        ],
+    ) -> str:
+        try:
+            agent_id, user_id = _tool_ctx()
+            row = _get_for_actor(service, app_id, agent_id, user_id, "edit_structure")
+            row = service.set_capabilities(row, capabilities)
+            return _ok(_summary(row))
         except Exception as exc:
             return _err(exc)
 
@@ -1173,6 +1209,16 @@ def build_app_tools(
                 "Expose or hide one table on the app's public read-only link. The main "
                 "table is public by default; add-on tables are private. Call this before "
                 "sharing when the public link should include (or must exclude) a table."
+            ),
+        ),
+        StructuredTool.from_function(
+            coroutine=app_set_capabilities,
+            name="app_set_capabilities",
+            description=(
+                "Replace the capability manifest that gates what the sandboxed app page "
+                "may request from the host. Use it to remove high-risk actions the app "
+                "does not need, or to grant ai.generate / game.launch / external.fetch / "
+                "events.emit / schedules.manage when the app really uses them."
             ),
         ),
         StructuredTool.from_function(

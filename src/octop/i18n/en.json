@@ -515,6 +515,8 @@
     "APP_PROMPT_INVALID": "Please enter a prompt.",
     "APP_GENERATE_FAILED": "AI generation failed. Please try again.",
     "APP_SOURCE_INVALID": "Invalid data source configuration.",
+    "APP_CAPABILITY_INVALID": "Invalid app capability configuration.",
+    "APP_CAPABILITY_DENIED": "This MiniApp does not allow that page action.",
     "CHAT_IM_UNAVAILABLE": "The IM channel for this conversation is not connected; switch to Web-only or reconnect the channel.",
     "AVATAR_INVALID": "Avatar must be a PNG, JPEG, WebP, or GIF image.",
     "AVATAR_TOO_LARGE": "Avatar exceeds the 5 MB size limit.",

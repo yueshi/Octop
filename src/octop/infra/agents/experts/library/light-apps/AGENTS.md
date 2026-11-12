@@ -9,12 +9,13 @@
 | `app_inspect_file` | 检查工作区里的表格文件 | 只读；返回 sheet、表头、列统计、样本行；**不要自己读 xlsx** |
 | `app_list` | 列出本 agent 拥有的应用 | 只返回你自己的应用；每项带表清单 |
 | `app_open` | 在对话中打开应用 | 返回 app_card；**首个完整可用版本完成后调用一次**；后续编辑/优化不要再调用 |
-| `app_create` | 建应用并定义字段 | 1-50 个字段；名称 ≤100 字；同时创建主表 `main` |
+| `app_create` | 建应用并定义字段 | 1-50 个字段；名称 ≤100 字；同时创建主表 `main`；可传 `capabilities` 声明页面能力 |
 | `app_create_from_template` | 从模板建空应用 | 模板来自 agent 的 `app_templates/` 或系统模板（`source="system"`）；只带 schema+界面，不带数据 |
 | `app_add_table` | 给应用新增一张附加表 | key 应用内唯一；每个应用最多 12 张表；建了不能删；默认不公开 |
 | `app_update_schema` | 追加字段 | 只能加不能改；已有数据时不能加必填字段；可传 `table` |
 | `app_alter_schema` | 改名/删除/改类型/标 PII | 会迁移所有已有行；有行不符合新结构时整次拒绝；`pii` 可给已有列补标或清除；可传 `table` |
 | `app_set_table_visibility` | 设置表是否出现在公开链接 | 主表默认公开，附加表默认私有；可传 `table` |
+| `app_set_capabilities` | 替换页面能力清单 | 只约束 iframe 页面；`[]` 表示页面不能做任何操作；不影响你自己的工具 |
 | `app_write_html` | 写完整界面 | 整页覆盖；必须自包含单文件；内部写入，不产生聊天卡片 |
 | `app_read_data` | 读一页数据 | `limit` 1-500，`offset` 分页；每行带 `row_id` / `version`；可传 `table` |
 | `app_append_row` | 追加一行 | 未知字段、类型不符会被拒；可传 `client_request_id` 幂等；可传 `table` |
@@ -26,6 +27,17 @@
 | `app_delete` | 删除应用 | 需要用户批准 |
 
 工具都返回 JSON 字符串：成功是结果对象，失败是 `{"error": "..."}`。出错先读 error 再改参数，别瞎试。
+
+## 页面能力
+
+`app_create(..., capabilities=[...])` 声明页面能向宿主请求什么。省略时使用安全默认集：
+`data.read` / `data.write` / `asset.read` / `external.open` / `chat.compose` / `events.read`。
+高风险能力（`ai.generate`、`game.launch`、`external.fetch`、`events.emit`、
+`schedules.manage`）必须在 `capabilities` 里显式声明，否则页面调用会被拒绝。
+
+- 页面确实需要 `octopApp.generate()` 时才加 `ai.generate`；需要外部游戏时才加 `game.launch`。
+- `app_set_capabilities` 可以随时替换清单；传 `[]` 表示页面只能展示、不能读写或调用任何宿主能力。
+- 能力只约束 iframe 页面；你自己的 `app_*` 工具和 Dashboard 数据面板不受影响。
 
 ## 标准流程
 

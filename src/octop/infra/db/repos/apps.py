@@ -37,6 +37,7 @@ class LightAppRow:
     html_bytes: int
     data_bytes: int
     storage_version: int
+    capabilities_json: str
     created_at: int
     updated_at: int
 
@@ -53,6 +54,7 @@ class LightAppRow:
             html_bytes=int(r["html_bytes"] or 0),
             data_bytes=int(r["data_bytes"] or 0),
             storage_version=int(r["storage_version"] or 1),
+            capabilities_json=str(r["capabilities_json"] or ""),
             created_at=int(r["created_at"]),
             updated_at=int(r["updated_at"]),
         )
@@ -255,6 +257,7 @@ class LightAppRepo:
         description: str = "",
         app_id: str | None = None,
         storage_version: int = 1,
+        capabilities_json: str = "",
     ) -> LightAppRow:
         app_id = app_id or self.allocate_id()
         ts = now_ts()
@@ -262,9 +265,19 @@ class LightAppRepo:
             conn.execute(
                 "INSERT INTO light_apps("
                 "app_id, agent_id, owner_user_id, name, description, row_count, "
-                "storage_version, created_at, updated_at"
-                ") VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)",
-                (app_id, agent_id, owner_user_id, name, description, storage_version, ts, ts),
+                "storage_version, capabilities_json, created_at, updated_at"
+                ") VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
+                (
+                    app_id,
+                    agent_id,
+                    owner_user_id,
+                    name,
+                    description,
+                    storage_version,
+                    capabilities_json,
+                    ts,
+                    ts,
+                ),
             )
         row = self.get(app_id)
         if row is None:
@@ -781,6 +794,13 @@ class LightAppRepo:
                     "UPDATE light_apps SET row_count = ? WHERE app_id = ?",
                     (row_count, app_id),
                 )
+
+    def set_capabilities(self, app_id: str, capabilities_json: str) -> None:
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE light_apps SET capabilities_json = ?, updated_at = ? WHERE app_id = ?",
+                (capabilities_json, now_ts(), app_id),
+            )
 
     def set_file_stats(
         self,

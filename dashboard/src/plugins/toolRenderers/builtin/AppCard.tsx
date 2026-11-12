@@ -17,6 +17,7 @@ interface AppCardData {
   row_count?: number;
   has_html?: boolean;
   has_preview?: boolean;
+  capabilities?: string[];
 }
 
 function isAppCardData(data: unknown): data is AppCardData {
@@ -73,6 +74,7 @@ export function AppCard({
         <MiniAppFrame
           appId={app.app_id}
           title={app.name}
+          capabilities={app.capabilities}
           fill
           onLaunchGame={launchGame}
         />

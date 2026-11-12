@@ -107,6 +107,7 @@ BUILTIN_TOOL_CATALOG: tuple[BuiltinToolEntry, ...] = (
     BuiltinToolEntry("app_update_schema", "apps"),
     BuiltinToolEntry("app_alter_schema", "apps"),
     BuiltinToolEntry("app_set_table_visibility", "apps"),
+    BuiltinToolEntry("app_set_capabilities", "apps"),
     BuiltinToolEntry("app_write_html", "apps"),
     BuiltinToolEntry("app_read_data", "apps"),
     BuiltinToolEntry("app_append_row", "apps"),

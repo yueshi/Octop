@@ -23,6 +23,7 @@ from octop.api.common.upload_limit import read_upload_capped
 from octop.api.deps import current_user, get_server
 from octop.api.routers.chat.sse import format_sse
 from octop.config import DEFAULT_MAX_UPLOAD_MB, upload_mb_to_bytes
+from octop.infra.apps import capabilities as app_capabilities
 from octop.infra.apps.assistant import AppAssistant
 from octop.infra.apps.game_sessions import create_game_token
 from octop.infra.apps.generation import AppGenerator
@@ -81,6 +82,10 @@ class AppSummary(BaseModel):
     has_html: bool = Field(default=False, description="Whether the agent has written the UI yet.")
     has_preview: bool = Field(
         default=False, description="Whether the agent drew a preview image for the app."
+    )
+    capabilities: list[str] = Field(
+        default_factory=list,
+        description="Page-facing capabilities the MiniApp may request from the host.",
     )
     created_at: int
     updated_at: int
@@ -265,6 +270,12 @@ class AlterSchemaBody(BaseModel):
 class UpdateAppBody(BaseModel):
     name: str | None = Field(default=None, description="New display name.")
     description: str | None = Field(default=None, description="New description.")
+
+
+class CapabilitiesBody(BaseModel):
+    capabilities: list[str] = Field(
+        description="Page-facing capabilities to grant; an empty list denies all page actions."
+    )
 
 
 class DeleteAppResponse(BaseModel):
@@ -831,6 +842,7 @@ async def create_app_game_session(
     row = service.get(app_id)
     # Results are written into the app, so a game session needs write access.
     service.require(row, user.id, "edit_data", is_admin=user.is_admin)
+    service.require_capability(row, app_capabilities.CAP_GAME_LAUNCH)
     if server.services is None:
         raise OctopError(ErrorCode.INTERNAL_ERROR, "server is not started")
     game = next(
@@ -1421,6 +1433,34 @@ async def update_app(
     )
 
 
+@router.put(
+    "/{app_id}/capabilities",
+    response_model=AppDetail,
+    summary="Update MiniApp page capabilities",
+    description=(
+        "Replaces the capability manifest that gates what the sandboxed app page may "
+        "ask the host to do. This does not restrict the agent tools or the dashboard's "
+        "own data panel. Requires edit_structure."
+    ),
+)
+async def update_app_capabilities(
+    app_id: str,
+    body: CapabilitiesBody,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> AppDetail:
+    service, row, _permission = _row_access(server, user, app_id, "edit_structure")
+    row = service.set_capabilities(row, body.capabilities)
+    _audit(
+        server,
+        actor=f"user:{user.id}",
+        action="light_app.capabilities.update",
+        target=app_id,
+        payload={"capabilities": service.capability_list(row)},
+    )
+    return await _app_detail(service, row)
+
+
 @router.delete(
     "/{app_id}",
     response_model=DeleteAppResponse,
@@ -1767,7 +1807,8 @@ async def generate_app_text(
     user: User = Depends(current_user),
     server: OctopServer = Depends(get_server),
 ) -> GenerateResponse:
-    _service, row, _permission = _row_access(server, user, app_id, "view")
+    service, row, _permission = _row_access(server, user, app_id, "view")
+    service.require_capability(row, app_capabilities.CAP_AI_GENERATE)
     prompt = body.prompt.strip()
     if not prompt:
         raise OctopError(ErrorCode.APP_PROMPT_INVALID, "prompt must not be empty")

@@ -104,6 +104,7 @@ def test_build_app_tools_names(world: World) -> None:
         "app_update_schema",
         "app_alter_schema",
         "app_set_table_visibility",
+        "app_set_capabilities",
         "app_write_html",
         "app_read_data",
         "app_append_row",
@@ -169,6 +170,35 @@ async def test_tool_lifecycle(world: World) -> None:
         deleted = json.loads(await delete.ainvoke({"app_id": app_id}))
         assert deleted == {"deleted": app_id}
         assert json.loads(await list_tool.ainvoke({})) == {"apps": []}
+
+
+async def test_tool_capabilities(world: World) -> None:
+    tools = build_app_tools(world.service)
+    create = _tool_by_name(tools, "app_create")
+    set_capabilities = _tool_by_name(tools, "app_set_capabilities")
+
+    with _configurable(agent_id=world.agent_id, user=str(world.alice_id)):
+        created = json.loads(
+            await create.ainvoke(
+                {
+                    "name": "Tracker",
+                    "columns": COLUMNS,
+                    "capabilities": ["data.read", "ai.generate"],
+                }
+            )
+        )
+        app_id = created["app_id"]
+        assert created["capabilities"] == ["ai.generate", "data.read"]
+
+        updated = json.loads(
+            await set_capabilities.ainvoke({"app_id": app_id, "capabilities": ["data.read"]})
+        )
+        assert updated["capabilities"] == ["data.read"]
+
+        rejected = json.loads(
+            await set_capabilities.ainvoke({"app_id": app_id, "capabilities": ["not.a.capability"]})
+        )
+        assert "error" in rejected
 
 
 async def test_tool_write_html_rejects_external_resources(world: World) -> None:

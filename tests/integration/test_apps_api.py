@@ -10,6 +10,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from octop.config import GameConfig
+from octop.infra.apps import capabilities as app_capabilities
 from octop.infra.apps.game_sessions import create_game_token
 from octop.infra.apps.service import AppService
 from octop.infra.server import OctopServer
@@ -31,7 +32,13 @@ def _service(srv: OctopServer) -> AppService:
     )
 
 
-async def _create_app(srv: OctopServer, agent_id: str, username: str) -> str:
+async def _create_app(
+    srv: OctopServer,
+    agent_id: str,
+    username: str,
+    *,
+    capabilities: list[str] | None = None,
+) -> str:
     assert srv.services is not None
     owner = srv.services.user_repo.get_by_username(username)
     assert owner is not None
@@ -41,6 +48,7 @@ async def _create_app(srv: OctopServer, agent_id: str, username: str) -> str:
         name="Tracker",
         description="things",
         columns=COLUMNS,
+        capabilities=capabilities,
     )
     return row.app_id
 
@@ -370,11 +378,73 @@ async def test_assistant_history_acl_and_guards(
     assert all(m["created_at"] > 0 for m in messages)
 
 
+async def test_capabilities_api_and_legacy_default(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+
+    r = await client.get(f"/api/apps/{app_id}", headers=alice_auth)
+    assert r.status_code == 200, r.text
+    granted = set(r.json()["capabilities"])
+    assert app_capabilities.CAP_DATA_READ in granted
+    assert app_capabilities.CAP_AI_GENERATE not in granted
+
+    r = await client.put(
+        f"/api/apps/{app_id}/capabilities",
+        headers=alice_auth,
+        json={
+            "capabilities": [
+                app_capabilities.CAP_DATA_READ,
+                app_capabilities.CAP_AI_GENERATE,
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert set(r.json()["capabilities"]) == {
+        app_capabilities.CAP_DATA_READ,
+        app_capabilities.CAP_AI_GENERATE,
+    }
+
+    r = await client.put(
+        f"/api/apps/{app_id}/capabilities",
+        headers=bob_auth,
+        json={"capabilities": []},
+    )
+    assert r.status_code == 403
+    assert r.json()["error"]["code"] == "APP_FORBIDDEN"
+
+    r = await client.put(
+        f"/api/apps/{app_id}/capabilities",
+        headers=alice_auth,
+        json={"capabilities": ["not.a.capability"]},
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "APP_CAPABILITY_INVALID"
+
+    # A row from before the manifest existed keeps every original capability.
+    assert srv.services is not None
+    srv.services.light_app_repo.set_capabilities(app_id, "")
+    r = await client.get(f"/api/apps/{app_id}", headers=alice_auth)
+    assert set(r.json()["capabilities"]) == set(app_capabilities.ALL_CAPABILITIES)
+
+
 async def test_generate_acl_and_output(
     env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
 ) -> None:
     client, srv, alice_auth, bob_auth, agent_id = env_alice_bob_agent
     app_id = await _create_app(srv, agent_id, "alice")
+
+    # New apps do not grant the AI-generation capability by default.
+    r = await client.post(f"/api/apps/{app_id}/generate", headers=alice_auth, json={"prompt": "hi"})
+    assert r.status_code == 403
+    assert r.json()["error"]["code"] == "APP_CAPABILITY_DENIED"
+
+    service = _service(srv)
+    service.set_capabilities(
+        service.get(app_id),
+        app_capabilities.ALL_CAPABILITIES,
+    )
 
     # Generation follows the app's view permission.
     r = await client.post(f"/api/apps/{app_id}/generate", headers=bob_auth, json={"prompt": "hi"})
@@ -1476,7 +1546,12 @@ async def test_external_game_session_and_result_flow(
     env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
 ) -> None:
     client, srv, alice_auth, bob_auth, agent_id = env_alice_bob_agent
-    app_id = await _create_app(srv, agent_id, "alice")
+    app_id = await _create_app(
+        srv,
+        agent_id,
+        "alice",
+        capabilities=list(app_capabilities.ALL_CAPABILITIES),
+    )
     assert srv.services is not None
 
     # Games live in config.json; the endpoint reads them from services.

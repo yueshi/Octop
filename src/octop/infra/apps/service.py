@@ -31,6 +31,7 @@ from typing import Any, Protocol
 
 from octop_harness.backends import BackendWorkspace
 
+from octop.infra.apps import capabilities as app_capabilities
 from octop.infra.apps.importer import parse_import_file
 from octop.infra.apps.inspect import detect_pii, inspect_file
 from octop.infra.apps.models import (
@@ -220,6 +221,9 @@ class AppRecord(Protocol):
     def storage_version(self) -> int: ...
 
     @property
+    def capabilities_json(self) -> str: ...
+
+    @property
     def created_at(self) -> int: ...
 
     @property
@@ -242,6 +246,7 @@ class AppView:
     created_at: int
     updated_at: int
     has_preview: bool = False
+    capabilities: tuple[str, ...] = ()
 
     @property
     def has_html(self) -> bool:
@@ -744,7 +749,28 @@ class AppService:
             data_bytes=row.data_bytes,
             created_at=row.created_at,
             updated_at=row.updated_at,
+            capabilities=tuple(app_capabilities.describe(row.capabilities_json)),
         )
+
+    def capabilities(self, row: AppRecord) -> frozenset[str]:
+        """The page actions this app currently allows."""
+        return app_capabilities.parse(row.capabilities_json)
+
+    def capability_list(self, row: AppRecord) -> list[str]:
+        return sorted(self.capabilities(row))
+
+    def set_capabilities(self, row: AppRecord, values: Iterable[str]) -> LightAppRow:
+        """Replace the page capability manifest; requires edit_structure upstream."""
+        clean = app_capabilities.validate(values)
+        self._app_repo.set_capabilities(row.app_id, app_capabilities.dump(clean))
+        return self.get(row.app_id)
+
+    def require_capability(self, row: AppRecord, capability: str) -> None:
+        if capability not in self.capabilities(row):
+            raise OctopError(
+                ErrorCode.APP_CAPABILITY_DENIED,
+                f"app does not allow {capability}",
+            )
 
     async def views_for_app_ids(
         self, app_ids: Iterable[str], user_id: int, *, is_admin: bool
@@ -1248,6 +1274,7 @@ class AppService:
         source: str = AGENT_SOURCE,
         name: str | None = None,
         description: str = "",
+        capabilities: Iterable[str] | None = None,
     ) -> LightAppRow:
         """Create an empty app from a system or workspace shell (schema + HTML)."""
         clean = clean_template_id(template)
@@ -1270,6 +1297,7 @@ class AppService:
             name=(name or clean).strip() or clean,
             description=description,
             columns=schema_text,
+            capabilities=capabilities,
         )
         if html:
             try:
@@ -1302,10 +1330,16 @@ class AppService:
         name: str,
         description: str = "",
         columns: object,
+        capabilities: Iterable[str] | None = None,
     ) -> LightAppRow:
         clean_name = validate_name(name)
         clean_description = validate_description(description)
         schema = parse_schema_payload(columns)
+        selected_capabilities = (
+            app_capabilities.NEW_APP_CAPABILITIES
+            if capabilities is None
+            else app_capabilities.validate(capabilities)
+        )
         if self._app_repo.count_for_owner(owner_user_id) >= MAX_APPS_PER_OWNER:
             raise _invalid(
                 ErrorCode.APP_LIMIT_EXCEEDED,
@@ -1321,6 +1355,7 @@ class AppService:
             name=clean_name,
             description=clean_description,
             storage_version=2,
+            capabilities_json=app_capabilities.dump(selected_capabilities),
         )
         try:
             empty_csv = render_csv(schema, [])
@@ -2859,6 +2894,7 @@ class AppService:
             "version": BACKUP_VERSION,
             "created_at": int(time.time()),
             "app": {"name": current.name, "description": current.description},
+            "capabilities": self.capability_list(current),
             "tables": tables,
         }
         entries.insert(
@@ -2898,6 +2934,12 @@ class AppService:
         assert isinstance(app_meta, dict)  # _read_backup_zip validated it
         name = str(app_meta.get("name") or "").strip() or "Restored app"
         description = str(app_meta.get("description") or "")
+        raw_capabilities = manifest.get("capabilities")
+        restored_capabilities = (
+            app_capabilities.validate(raw_capabilities)
+            if isinstance(raw_capabilities, list)
+            else app_capabilities.LEGACY_CAPABILITIES
+        )
         main = tables.get(MAIN_TABLE_KEY)
         if main is None:
             raise _invalid(ErrorCode.APP_SOURCE_INVALID, "backup has no main table")
@@ -2917,6 +2959,7 @@ class AppService:
             name=name,
             description=description,
             columns=schemas[MAIN_TABLE_KEY],
+            capabilities=restored_capabilities,
         )
         try:
             for key, (label, _schema_bytes, _csv) in tables.items():

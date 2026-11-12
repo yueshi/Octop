@@ -1673,6 +1673,7 @@ def _ensure_light_apps_schema(db: DatabasePool) -> None:
         # the ALTERs cover databases that already recorded version 25.
         _ensure_column(db, "light_apps", "html_bytes", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(db, "light_apps", "data_bytes", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(db, "light_apps", "capabilities_json", "TEXT NOT NULL DEFAULT ''")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_light_apps_owner ON light_apps(owner_user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_light_apps_agent ON light_apps(agent_id)")
         conn.execute(

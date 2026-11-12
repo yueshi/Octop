@@ -85,6 +85,11 @@ import GameFrame, {
   type MiniAppGameFinishedDetail,
 } from "../../components/MiniAppFrame/GameFrame";
 import { buildSrcDoc } from "../../components/MiniAppFrame/sdk";
+import {
+  CAP,
+  effectiveCapabilities,
+  isMethodAllowed,
+} from "../../components/MiniAppFrame/capabilities";
 
 const { Text } = Typography;
 
@@ -107,6 +112,68 @@ function permissionLabel(
 
 const SOURCE_COLUMN_WIDTH = 90;
 const ACTIONS_COLUMN_WIDTH = 150;
+
+const CAPABILITY_OPTIONS: {
+  value: string;
+  labelKey: string;
+  fallback: string;
+}[] = [
+  {
+    value: CAP.DATA_READ,
+    labelKey: "apps.capabilities.dataRead",
+    fallback: "Read tables and rows",
+  },
+  {
+    value: CAP.DATA_WRITE,
+    labelKey: "apps.capabilities.dataWrite",
+    fallback: "Append rows",
+  },
+  {
+    value: CAP.ASSET_READ,
+    labelKey: "apps.capabilities.assetRead",
+    fallback: "Load app images",
+  },
+  {
+    value: CAP.EXTERNAL_OPEN,
+    labelKey: "apps.capabilities.externalOpen",
+    fallback: "Open external links",
+  },
+  {
+    value: CAP.CHAT_COMPOSE,
+    labelKey: "apps.capabilities.chatCompose",
+    fallback: "Prepare a chat message",
+  },
+  {
+    value: CAP.EVENTS_READ,
+    labelKey: "apps.capabilities.eventsRead",
+    fallback: "Read app events",
+  },
+  {
+    value: CAP.AI_GENERATE,
+    labelKey: "apps.capabilities.aiGenerate",
+    fallback: "Call the AI model",
+  },
+  {
+    value: CAP.GAME_LAUNCH,
+    labelKey: "apps.capabilities.gameLaunch",
+    fallback: "Launch external games",
+  },
+  {
+    value: CAP.EXTERNAL_FETCH,
+    labelKey: "apps.capabilities.externalFetch",
+    fallback: "Call external services",
+  },
+  {
+    value: CAP.EVENTS_EMIT,
+    labelKey: "apps.capabilities.eventsEmit",
+    fallback: "Send events and alerts",
+  },
+  {
+    value: CAP.SCHEDULES_MANAGE,
+    labelKey: "apps.capabilities.schedulesManage",
+    fallback: "Manage schedules",
+  },
+];
 
 /**
  * Fixed width for a data column, by its schema type.
@@ -167,8 +234,39 @@ export default function AppDetailPage() {
   const { appId = "" } = useParams<{ appId: string }>();
   const timeZone = useServerTimezone();
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const capabilitiesRef = useRef<readonly string[] | undefined>(undefined);
 
   const [detail, setDetail] = useState<AppDetail | null>(null);
+  const [capabilityDraft, setCapabilityDraft] = useState<string[]>([]);
+  const [savingCapabilities, setSavingCapabilities] = useState(false);
+  useEffect(() => {
+    capabilitiesRef.current = detail?.capabilities;
+    setCapabilityDraft(detail?.capabilities ?? []);
+  }, [detail?.capabilities]);
+
+  const saveCapabilities = useCallback(async () => {
+    if (!detail) return;
+    setSavingCapabilities(true);
+    try {
+      const updated = await appsApi.setCapabilities(
+        detail.app_id,
+        capabilityDraft,
+      );
+      setDetail(updated);
+      message.success(t("apps.capabilities.saved", "Capabilities saved"));
+    } catch (err) {
+      message.error(
+        apiErrorMessage(
+          err,
+          t("apps.capabilities.saveFailed", "Could not save capabilities"),
+          t,
+        ),
+      );
+    } finally {
+      setSavingCapabilities(false);
+    }
+  }, [capabilityDraft, detail, t]);
+
   const [html, setHtml] = useState("");
   const [loading, setLoading] = useState(true);
   const [htmlLoading, setHtmlLoading] = useState(false);
@@ -348,11 +446,20 @@ export default function AppDetailPage() {
       };
       void (async () => {
         try {
+          if (!isMethodAllowed(data.method, capabilitiesRef.current)) {
+            reply({ ok: false, error: "capability not declared" });
+            return;
+          }
           if (data.method === "me") {
             const current = await appsApi.get(appId);
             reply({
               ok: true,
-              data: { permission: current.permission },
+              data: {
+                permission: current.permission,
+                capabilities: effectiveCapabilities(
+                  current.capabilities ?? capabilitiesRef.current,
+                ),
+              },
             });
           } else if (data.method === "schema") {
             const current = await appsApi.get(appId);
@@ -1940,6 +2047,52 @@ export default function AppDetailPage() {
               </Text>
             </Descriptions.Item>
           </Descriptions>
+        )}
+
+        {detail && (
+          <div style={{ marginTop: 20 }}>
+            <Text strong>
+              {t("apps.capabilities.title", "Page capabilities")}
+            </Text>
+            <div style={{ marginTop: 6 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {t(
+                  "apps.capabilities.hint",
+                  "Controls what the MiniApp page may ask the host to do; agent tools and this dashboard are not affected.",
+                )}
+              </Text>
+            </div>
+            <Checkbox.Group
+              value={capabilityDraft}
+              onChange={(values) => setCapabilityDraft(values as string[])}
+              disabled={
+                detail.permission !== "edit_structure" || savingCapabilities
+              }
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+                marginTop: 8,
+              }}
+            >
+              {CAPABILITY_OPTIONS.map((option) => (
+                <Checkbox key={option.value} value={option.value}>
+                  {t(option.labelKey, option.fallback)}
+                </Checkbox>
+              ))}
+            </Checkbox.Group>
+            {detail.permission === "edit_structure" && (
+              <Button
+                type="primary"
+                size="small"
+                style={{ marginTop: 10 }}
+                loading={savingCapabilities}
+                onClick={() => void saveCapabilities()}
+              >
+                {t("apps.capabilities.save", "Save")}
+              </Button>
+            )}
+          </div>
         )}
 
         <div style={{ marginTop: 20 }}>

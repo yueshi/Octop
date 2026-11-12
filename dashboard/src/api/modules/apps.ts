@@ -25,6 +25,8 @@ export interface AppSummary {
   data_bytes: number;
   has_html: boolean;
   has_preview: boolean;
+  /** Page capabilities; absent in older payloads (legacy all-on). */
+  capabilities?: string[];
   created_at: number;
   updated_at: number;
 }
@@ -377,6 +379,12 @@ export const appsApi = {
     ),
 
   get: (appId: string) => request<AppDetail>(`/apps/${encodeId(appId)}`),
+
+  setCapabilities: (appId: string, capabilities: string[]) =>
+    request<AppDetail>(`/apps/${encodeId(appId)}/capabilities`, {
+      method: "PUT",
+      body: JSON.stringify({ capabilities }),
+    }),
 
   publication: (appId: string) =>
     request<AppPublication>(`/apps/${encodeId(appId)}/publication`),

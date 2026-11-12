@@ -209,6 +209,8 @@
     "APP_PROMPT_INVALID": "Please enter a prompt.",
     "APP_GENERATE_FAILED": "AI generation failed. Please try again.",
     "APP_SOURCE_INVALID": "Invalid data source configuration.",
+    "APP_CAPABILITY_INVALID": "Invalid app capability configuration.",
+    "APP_CAPABILITY_DENIED": "This MiniApp does not allow that page action.",
     "CHAT_IM_UNAVAILABLE": "The IM channel for this conversation is not connected; switch to Web-only or reconnect the channel.",
     "AVATAR_INVALID": "Avatar must be a PNG, JPEG, WebP, or GIF image.",
     "AVATAR_TOO_LARGE": "Avatar exceeds the 5 MB size limit.",
@@ -1867,6 +1869,24 @@
   "apps": {
     "title": "Workbench",
     "subtitle": "Small tools your experts build from chat — lists, trackers and dashboards backed by their own data",
+    "capabilities": {
+      "title": "Page capabilities",
+      "hint": "Controls what the MiniApp page may ask the host to do; agent tools and this dashboard are not affected.",
+      "save": "Save capabilities",
+      "saved": "Capabilities saved",
+      "saveFailed": "Could not save capabilities",
+      "dataRead": "Read tables and rows",
+      "dataWrite": "Append rows",
+      "assetRead": "Load app images",
+      "externalOpen": "Open external links",
+      "chatCompose": "Prepare a chat message",
+      "eventsRead": "Read app events",
+      "aiGenerate": "Call the AI model",
+      "gameLaunch": "Launch external games",
+      "externalFetch": "Call external services",
+      "eventsEmit": "Send events and alerts",
+      "schedulesManage": "Manage schedules"
+    },
     "board": {
       "empty": "No MiniApp on the board yet. Open “All MiniApps” at the top right to pin some.",
       "add": "Pin to board",

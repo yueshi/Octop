@@ -253,6 +253,7 @@ export default function AppWidget({
           appId={app.app_id}
           fill
           title={app.name}
+          capabilities={app.capabilities}
         />
       </div>
       <Tooltip

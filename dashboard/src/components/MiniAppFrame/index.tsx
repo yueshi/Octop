@@ -8,6 +8,7 @@ import {
   type MiniAppGameFinishedDetail,
 } from "./GameFrame";
 import { buildSrcDoc } from "./sdk";
+import { effectiveCapabilities, isMethodAllowed } from "./capabilities";
 
 const { Text } = Typography;
 
@@ -19,6 +20,8 @@ interface Props {
   fill?: boolean;
   /** Launch an external game and return its session id (chat dock only). */
   onLaunchGame?: (gameId: string) => Promise<string>;
+  /** Page capabilities; omit for legacy payloads (all page actions allowed). */
+  capabilities?: readonly string[];
 }
 
 interface BridgeParams {
@@ -44,6 +47,7 @@ export default function MiniAppFrame({
   title,
   fill = false,
   onLaunchGame,
+  capabilities,
 }: Props) {
   const { t } = useTranslation();
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -118,11 +122,20 @@ export default function MiniAppFrame({
       };
       void (async () => {
         try {
+          if (!isMethodAllowed(data.method, capabilities)) {
+            reply({ ok: false, error: "capability not declared" });
+            return;
+          }
           if (data.method === "me") {
             const current = await appsApi.get(appId);
             reply({
               ok: true,
-              data: { permission: current.permission },
+              data: {
+                permission: current.permission,
+                capabilities: effectiveCapabilities(
+                  current.capabilities ?? capabilities,
+                ),
+              },
             });
           } else if (data.method === "schema") {
             const current = await appsApi.get(appId);
@@ -237,7 +250,7 @@ export default function MiniAppFrame({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [appId, onLaunchGame, t]);
+  }, [appId, capabilities, onLaunchGame, t]);
 
   const srcDoc = useMemo(() => (html ? buildSrcDoc(html) : ""), [html]);
 

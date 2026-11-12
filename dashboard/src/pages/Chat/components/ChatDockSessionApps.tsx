@@ -83,7 +83,12 @@ export default function ChatDockSessionApps({
           </Text>
         </div>
         <div className={styles.sessionAppsFrame}>
-          <MiniAppFrame appId={selected.app_id} title={selected.name} fill />
+          <MiniAppFrame
+            appId={selected.app_id}
+            title={selected.name}
+            capabilities={selected.capabilities}
+            fill
+          />
         </div>
       </div>
     );

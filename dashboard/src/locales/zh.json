@@ -209,6 +209,8 @@
     "APP_PROMPT_INVALID": "请输入提示词。",
     "APP_GENERATE_FAILED": "AI 生成失败，请稍后重试。",
     "APP_SOURCE_INVALID": "数据源配置无效。",
+    "APP_CAPABILITY_INVALID": "小程序能力配置无效。",
+    "APP_CAPABILITY_DENIED": "该小程序未开放此页面操作。",
     "CHAT_IM_UNAVAILABLE": "该对话的 IM 通道未连接；可以切换到“仅 Web”，或重新连接通道。",
     "AVATAR_INVALID": "头像须为 PNG、JPEG、WebP 或 GIF 图片。",
     "AVATAR_TOO_LARGE": "头像超过 5 MB 大小限制。",
@@ -1867,6 +1869,24 @@
   "apps": {
     "title": "工作台",
     "subtitle": "由专家在对话中搭建的小工具：清单、追踪表和轻量看板，数据保存在专家工作区",
+    "capabilities": {
+      "title": "页面能力",
+      "hint": "控制小程序页面能向宿主请求什么；不影响 Agent 工具和本控制台。",
+      "save": "保存能力",
+      "saved": "能力已保存",
+      "saveFailed": "能力保存失败",
+      "dataRead": "读取表和行",
+      "dataWrite": "追加行",
+      "assetRead": "加载应用图片",
+      "externalOpen": "打开外部链接",
+      "chatCompose": "准备聊天输入",
+      "eventsRead": "读取应用事件",
+      "aiGenerate": "调用 AI 模型",
+      "gameLaunch": "启动外部游戏",
+      "externalFetch": "调用外部服务",
+      "eventsEmit": "发送事件和告警",
+      "schedulesManage": "管理定时任务"
+    },
     "board": {
       "empty": "看板上还没有小程序。点右上角「全部小程序」挑几个加进来。",
       "add": "加入看板",

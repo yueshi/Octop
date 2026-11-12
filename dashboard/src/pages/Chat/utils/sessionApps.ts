@@ -12,6 +12,7 @@ export interface SessionApp {
   row_count?: number;
   has_html?: boolean;
   has_preview?: boolean;
+  capabilities?: string[];
 }
 
 function readAppCard(message: ChatMessage): SessionApp | null {
@@ -44,6 +45,11 @@ function readAppCard(message: ChatMessage): SessionApp | null {
   }
   if (typeof record.has_preview === "boolean") {
     app.has_preview = record.has_preview;
+  }
+  if (Array.isArray(record.capabilities)) {
+    app.capabilities = record.capabilities.filter(
+      (value): value is string => typeof value === "string",
+    );
   }
   return app;
 }
@@ -80,6 +86,7 @@ export function sessionAppsFromSummaries(
     row_count: row.row_count,
     has_html: row.has_html,
     has_preview: row.has_preview,
+    capabilities: row.capabilities,
   }));
 }
 
