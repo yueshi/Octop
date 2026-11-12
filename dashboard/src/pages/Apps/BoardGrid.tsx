@@ -84,12 +84,15 @@ function BoardCell({
           .filter(Boolean)
           .join(" ")}
         aria-hidden
+        title={t("apps.board.moveHint", "Drag to move")}
+        data-testid="board-notch"
       />
       <div
         className={[styles.cellHead, editable ? "" : styles.cellHeadStatic]
           .filter(Boolean)
           .join(" ")}
         title={app.name}
+        data-testid="board-head"
       >
         <AppWindow size={13} className={styles.cellIcon} />
         <Text ellipsis className={styles.cellTitle}>
@@ -225,9 +228,10 @@ export default function BoardGrid({
             compactType="vertical"
             isDraggable={editable}
             isResizable={editable}
-            isBounded
+            // Not bounded to the auto-sized grid: vertical growth must be
+            // possible, otherwise a cell in the last row cannot get taller.
             resizeHandles={["se"]}
-            draggableHandle={`${styles.notchZone}, ${styles.cellHead}`}
+            draggableHandle={`.${styles.notchZone}, .${styles.cellHead}`}
             draggableCancel="button,a,input,textarea,select"
             onLayoutChange={handleLayoutChange}
             onDragStop={(layout) => onCommit?.(fromLayout(layout))}

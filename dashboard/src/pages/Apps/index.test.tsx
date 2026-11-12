@@ -216,6 +216,25 @@ describe("workbench board", () => {
     });
   });
 
+  it("rearranges the board to fill every column", async () => {
+    const pinned = savedBoard([{ app_id: "app_1", x: 0, y: 0, w: 2, h: 2 }], 1);
+    vi.mocked(boardsApi.get).mockResolvedValue(pinned);
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(1),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "自动铺满" }));
+    fireEvent.click(await screen.findByRole("button", { name: "重新排列" }));
+
+    await waitFor(() =>
+      expect(boardsApi.setLayout).toHaveBeenCalledWith("board_1", {
+        version: 1,
+        items: [{ app_id: "app_1", x: 0, y: 0, w: 12, h: 2 }],
+      }),
+    );
+  });
+
   it("creates the first board and migrates browser-local pins", async () => {
     const created = { ...board, board_id: "board_new", name: "旧看板迁移" };
     const migrated: BoardDetail = {

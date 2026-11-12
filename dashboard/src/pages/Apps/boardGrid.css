@@ -8,11 +8,11 @@
 }
 
 .react-grid-item > .react-resizable-handle {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   right: 2px;
   bottom: 2px;
-  opacity: 0;
+  opacity: 0.35;
   transition: opacity 0.16s ease;
 }
 

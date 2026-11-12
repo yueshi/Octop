@@ -13,6 +13,7 @@ import {
   Form,
   Input,
   Modal,
+  Popconfirm,
   Select,
   Space,
   Spin,
@@ -26,6 +27,7 @@ import {
   AppWindow,
   Bot,
   Clock,
+  Grid2x2,
   LayoutGrid,
   Maximize2,
   MessageSquareText,
@@ -53,6 +55,7 @@ import {
 import PageShell from "../../layouts/PageShell";
 import CreateMiniAppModal from "./CreateMiniAppModal";
 import BoardGrid from "./BoardGrid";
+import { autoFillBoardLayout } from "./boardLayout";
 import {
   APP_BOARD_SPANS,
   DEFAULT_APP_BOARD_SIZE,
@@ -474,6 +477,17 @@ export default function AppsPage() {
     [queueSave],
   );
 
+  const autoFillBoard = useCallback(() => {
+    if (!boardRef.current || itemsRef.current.length === 0) return;
+    const next = autoFillBoardLayout(itemsRef.current);
+    itemsRef.current = next;
+    setItems(next);
+    queueSave(next);
+    message.success(
+      t("apps.board.fillDone", "Board rearranged to fill the page"),
+    );
+  }, [queueSave, t]);
+
   const openCreateBoard = () => {
     boardForm.resetFields();
     setDialog({ mode: "create" });
@@ -677,6 +691,20 @@ export default function AppsPage() {
           <Button type="primary" onClick={() => setCreateOpen(true)}>
             {t("apps.create.button", "Create")}
           </Button>
+          <Popconfirm
+            title={t(
+              "apps.board.fillConfirm",
+              "Rearrange every MiniApp to fill the board?",
+            )}
+            okText={t("apps.board.fillConfirmOk", "Arrange")}
+            cancelText={t("common.cancel", "Cancel")}
+            onConfirm={autoFillBoard}
+            disabled={items.length === 0}
+          >
+            <Button icon={<Grid2x2 size={16} />} disabled={items.length === 0}>
+              {t("apps.board.fill", "Auto-fill")}
+            </Button>
+          </Popconfirm>
           {saving && (
             <Text className={styles.savingHint}>
               {t("apps.board.saving", "Saving…")}

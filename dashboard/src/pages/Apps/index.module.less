@@ -48,21 +48,21 @@
   top: 0;
   left: 50%;
   z-index: 3;
-  width: 120px;
-  height: 28px;
+  width: 160px;
+  height: 32px;
   transform: translateX(-50%);
   cursor: grab;
 
   &::after {
     content: "";
     position: absolute;
-    top: 6px;
+    top: 7px;
     left: 50%;
-    width: 44px;
-    height: 5px;
+    width: 56px;
+    height: 6px;
     border-radius: 999px;
-    background: var(--fn-color-brand-border);
-    opacity: 0.65;
+    background: var(--fn-text-tertiary);
+    opacity: 0.45;
     transform: translateX(-50%);
     transition:
       opacity 0.16s ease,
@@ -70,7 +70,7 @@
   }
 
   &:hover::after {
-    background: var(--fn-text-tertiary);
+    background: var(--fn-color-brand);
     opacity: 1;
   }
 

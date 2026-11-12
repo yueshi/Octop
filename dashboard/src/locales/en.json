@@ -1921,6 +1921,11 @@
       "conflict": "This board changed elsewhere; reloaded the latest layout.",
       "none": "No board yet.",
       "dragHint": "Drag the top handle to move; hover it to reveal the header, or drag the corner to resize.",
+      "moveHint": "Drag to move",
+      "fill": "Auto-fill",
+      "fillConfirm": "Rearrange every MiniApp to fill the board?",
+      "fillConfirmOk": "Arrange",
+      "fillDone": "Board rearranged to fill the page",
       "refresh": "Refresh",
       "open": "Open detail",
       "menu": "Board actions"
