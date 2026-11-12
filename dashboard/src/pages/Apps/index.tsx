@@ -1,17 +1,17 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
-  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import {
   Button,
   Drawer,
+  Dropdown,
   Empty,
   Form,
+  Input,
   Modal,
   Select,
   Space,
@@ -29,13 +29,14 @@ import {
   LayoutGrid,
   Maximize2,
   MessageSquareText,
-  Minimize2,
+  MoreHorizontal,
+  Plus,
   Table2,
   User,
 } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { message } from "../../utils/antdMessage";
 
 import {
@@ -43,26 +44,23 @@ import {
   appPreviewPath,
   type AppSummary,
 } from "../../api/modules/apps";
+import {
+  boardsApi,
+  type BoardDetail,
+  type BoardItem,
+  type BoardSummary,
+} from "../../api/modules/boards";
 import PageShell from "../../layouts/PageShell";
 import CreateMiniAppModal from "./CreateMiniAppModal";
-import AppWidget from "./AppWidget";
+import BoardGrid from "./BoardGrid";
 import {
-  addAppToBoard,
   APP_BOARD_SPANS,
   DEFAULT_APP_BOARD_SIZE,
-  isAppOnBoard,
+  clearAppBoard,
   loadAppBoard,
-  moveAppInBoard,
-  reconcileAppBoard,
-  removeAppFromBoard,
-  saveAppBoard,
-  sizeOfApp,
-  snapAppBoardSize,
-  withAppSize,
-  type AppBoard,
   type AppBoardSize,
 } from "./appBoard";
-import { apiErrorMessage } from "../../utils/apiError";
+import { apiErrorMessage, parseApiError } from "../../utils/apiError";
 import { formatServerDateTime } from "../../utils/formatMessageTime";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
 import { usePreviewImage } from "../../hooks/usePreviewImage";
@@ -70,20 +68,46 @@ import { useAgent } from "../../context/AgentContext";
 import styles from "./index.module.less";
 
 const { Text } = Typography;
+const ACTIVE_BOARD_KEY = "octop:apps-active-board:v1";
 
-/** A drag of the cell resize handle, in board grid cells. */
-interface ResizeSession {
-  appId: string;
-  pointerId: number;
-  startX: number;
-  startY: number;
-  startCols: number;
-  startRows: number;
-  colWidth: number;
-  rowHeight: number;
-  gap: number;
-  /** Columns the board actually has at this width (responsive layouts). */
-  maxCols: number;
+type BoardDialog = { mode: "create" } | { mode: "rename"; board: BoardSummary };
+
+function legacyBoardItems(
+  order: string[],
+  sizes: Record<string, AppBoardSize>,
+): BoardItem[] {
+  let x = 0;
+  let y = 0;
+  let rowHeight = 0;
+  return order.map((appId) => {
+    const span = APP_BOARD_SPANS[sizes[appId] ?? DEFAULT_APP_BOARD_SIZE];
+    const w = Math.min(12, span.cols * 2);
+    const h = Math.min(12, span.rows);
+    if (x + w > 12) {
+      x = 0;
+      y += rowHeight;
+      rowHeight = 0;
+    }
+    const item = { app_id: appId, x, y, w, h };
+    x += w;
+    rowHeight = Math.max(rowHeight, h);
+    return item;
+  });
+}
+
+function sameLayout(left: BoardItem[], right: BoardItem[]): boolean {
+  if (left.length !== right.length) return false;
+  const signature = (item: BoardItem) =>
+    `${item.app_id}:${item.x}:${item.y}:${item.w}:${item.h}`;
+  return (
+    left.map(signature).sort().join("|") ===
+    right.map(signature).sort().join("|")
+  );
+}
+
+function nextItem(items: BoardItem[], appId: string): BoardItem {
+  const y = items.reduce((max, item) => Math.max(max, item.y + item.h), 0);
+  return { app_id: appId, x: 0, y, w: 4, h: 4 };
 }
 
 function permissionLabel(
@@ -95,35 +119,7 @@ function permissionLabel(
   return t("apps.viewOnly", "View only");
 }
 
-function MetaItem({
-  icon,
-  children,
-  title,
-}: {
-  icon: ReactNode;
-  children: ReactNode;
-  title?: string;
-}) {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        fontSize: 12,
-        color: "var(--fn-text-tertiary)",
-        whiteSpace: "nowrap",
-      }}
-    >
-      <span style={{ display: "inline-flex", alignItems: "center" }}>
-        {icon}
-      </span>
-      {title ? <Tooltip title={title}>{children}</Tooltip> : children}
-    </span>
-  );
-}
-
-function AppThumb({ app }: { app: AppSummary }) {
+function MiniAppThumb({ app }: { app: AppSummary }) {
   const url = usePreviewImage(
     app.has_preview ? appPreviewPath(app.app_id) : null,
   );
@@ -139,218 +135,449 @@ function AppThumb({ app }: { app: AppSummary }) {
   );
 }
 
+function MetaItem({
+  icon,
+  children,
+}: {
+  icon: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        fontSize: 12,
+        color: "var(--fn-text-tertiary)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ display: "inline-flex", alignItems: "center" }}>
+        {icon}
+      </span>
+      {children}
+    </span>
+  );
+}
+
 export default function AppsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { boardId: routeBoardId } = useParams();
   const timeZone = useServerTimezone();
   const { agents } = useAgent();
+
   const [apps, setApps] = useState<AppSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [board, setBoard] = useState<AppBoard>(loadAppBoard);
-  const [draftSize, setDraftSize] = useState<{
-    appId: string;
-    size: AppBoardSize;
-  } | null>(null);
-  const [resize, setResize] = useState<ResizeSession | null>(null);
-  const gridRef = useRef<HTMLDivElement>(null);
+  const [appsLoading, setAppsLoading] = useState(true);
+  const [boards, setBoards] = useState<BoardSummary[]>([]);
+  const [boardsLoading, setBoardsLoading] = useState(true);
+  const [activeId, setActiveId] = useState<string | null>(() => {
+    if (routeBoardId) return routeBoardId;
+    try {
+      return localStorage.getItem(ACTIVE_BOARD_KEY);
+    } catch {
+      return null;
+    }
+  });
+  const [board, setBoard] = useState<BoardDetail | null>(null);
+  const [items, setItems] = useState<BoardItem[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const boardRef = useRef<BoardDetail | null>(null);
+  const itemsRef = useRef<BoardItem[]>([]);
+  /** Apps the caller can currently open; stale board cells are dropped. */
+  const availableAppsRef = useRef<Set<string>>(new Set());
+  const pendingRef = useRef<BoardItem[] | null>(null);
+  const savingRef = useRef(false);
+  const bootedRef = useRef(false);
+
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [listOpen, setListOpen] = useState(false);
-  const [fullscreen, setFullscreen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
-  const [restoreForm] = Form.useForm<{ agent_id: string }>();
   const [restoreFiles, setRestoreFiles] = useState<UploadFile[]>([]);
   const [restoreSaving, setRestoreSaving] = useState(false);
+  const [restoreForm] = Form.useForm<{ agent_id: string }>();
+  const [dialog, setDialog] = useState<BoardDialog | null>(null);
+  const [dialogSaving, setDialogSaving] = useState(false);
+  const [boardForm] = Form.useForm<{ name: string; description?: string }>();
 
-  useEffect(() => {
-    saveAppBoard(board);
-  }, [board]);
+  const applyBoard = useCallback((detail: BoardDetail) => {
+    const items = detail.layout.items.filter((item) =>
+      availableAppsRef.current.has(item.app_id),
+    );
+    const clean: BoardDetail = {
+      ...detail,
+      layout: { ...detail.layout, items },
+    };
+    boardRef.current = clean;
+    setBoard(clean);
+    itemsRef.current = items;
+    setItems(items);
+    setBoards((prev) =>
+      prev.map((item) =>
+        item.board_id === detail.board_id ? { ...detail } : item,
+      ),
+    );
+  }, []);
 
+  const flush = useCallback(async () => {
+    const current = boardRef.current;
+    if (!current || savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      for (;;) {
+        // Re-read on every pass: the user may switch boards while a save is
+        // in flight, and the queued items then belong to the new board.
+        const boardNow = boardRef.current;
+        if (!boardNow) break;
+        const next = pendingRef.current;
+        if (!next) break;
+        pendingRef.current = null;
+        if (sameLayout(next, boardNow.layout.items)) continue;
+        try {
+          const saved = await boardsApi.setLayout(boardNow.board_id, {
+            version: boardNow.version,
+            items: next,
+          });
+          // The user may have switched boards while the save was in flight.
+          if (boardRef.current?.board_id === boardNow.board_id) {
+            applyBoard(saved);
+          }
+        } catch (err) {
+          pendingRef.current = null;
+          const parsed = parseApiError(err);
+          if (parsed?.code === "BOARD_CONFLICT") {
+            message.warning(
+              t(
+                "apps.board.conflict",
+                "This board changed elsewhere; reloaded the latest layout.",
+              ),
+            );
+            try {
+              const latest = await boardsApi.get(boardNow.board_id);
+              if (boardRef.current?.board_id === boardNow.board_id) {
+                applyBoard(latest);
+              }
+            } catch {
+              /* the next reload will retry */
+            }
+          } else {
+            message.error(
+              apiErrorMessage(
+                err,
+                t("apps.board.saveFailed", "Could not save the board"),
+                t,
+              ),
+            );
+          }
+          break;
+        }
+      }
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+      // An edit queued between the last loop check and this point still
+      // needs a save.
+      if (pendingRef.current) void flush();
+    }
+  }, [applyBoard, t]);
+
+  const queueSave = useCallback(
+    (next: BoardItem[]) => {
+      // A deleted app (or one whose access was revoked) must not block the
+      // rest of the layout from saving — the API rejects unknown app ids.
+      pendingRef.current = next.filter((item) =>
+        availableAppsRef.current.has(item.app_id),
+      );
+      void flush();
+    },
+    [flush],
+  );
+
+  // Boot: load the catalog and boards, create the first board, and move any
+  // browser-local pins from the pre-server workbench onto it.
   useEffect(() => {
+    if (bootedRef.current) return;
+    bootedRef.current = true;
     let alive = true;
-    setLoading(true);
-    appsApi
-      .list()
-      .then((data) => {
-        if (alive) setApps(data.apps);
-      })
-      .catch((err) => {
-        message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
+    (async () => {
+      try {
+        const [appList, boardList] = await Promise.all([
+          appsApi.list(),
+          boardsApi.list(),
+        ]);
+        if (!alive) return;
+        availableAppsRef.current = new Set(
+          appList.apps.map((app) => app.app_id),
+        );
+        setApps(appList.apps);
+        let list = boardList;
+        if (list.length === 0) {
+          const created = await boardsApi.create({
+            name: t("apps.board.defaultName", "My board"),
+          });
+          if (!alive) return;
+          list = [created];
+          const legacy = loadAppBoard();
+          const available = new Set(appList.apps.map((app) => app.app_id));
+          const pinned = legacy.order.filter((appId) => available.has(appId));
+          if (pinned.length > 0) {
+            try {
+              const saved = await boardsApi.setLayout(created.board_id, {
+                version: created.version,
+                items: legacyBoardItems(pinned, legacy.sizes),
+              });
+              clearAppBoard();
+              list = [saved];
+            } catch {
+              /* an empty board is still usable; pins can be re-added */
+            }
+          }
+        }
+        if (!alive) return;
+        setBoards(list);
+        setActiveId((prev) => {
+          const remembered = list.find((item) => item.board_id === prev);
+          return remembered?.board_id ?? list[0]?.board_id ?? null;
+        });
+      } catch (err) {
+        if (alive) {
+          message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
+        }
+      } finally {
+        if (alive) {
+          setAppsLoading(false);
+          setBoardsLoading(false);
+        }
+      }
+    })();
     return () => {
       alive = false;
     };
   }, [t]);
 
-  // A pinned app that was deleted (or whose access was revoked) leaves the
-  // board instead of leaving a broken cell behind.
   useEffect(() => {
-    if (loading) return;
-    setBoard((prev) =>
-      reconcileAppBoard(
-        prev,
-        apps.map((app) => app.app_id),
-      ),
-    );
-  }, [apps, loading]);
+    try {
+      if (activeId) localStorage.setItem(ACTIVE_BOARD_KEY, activeId);
+      else localStorage.removeItem(ACTIVE_BOARD_KEY);
+    } catch {
+      /* storage may be unavailable */
+    }
+  }, [activeId]);
 
-  const boardApps = useMemo(() => {
-    const byId = new Map(apps.map((app) => [app.app_id, app]));
-    return board.order
-      .map((appId) => byId.get(appId))
-      .filter((app): app is AppSummary => Boolean(app));
-  }, [apps, board.order]);
-
-  // The board can take over the whole window. Escape restores the page, and
-  // the last cell leaving the board also ends the mode (nothing left to show).
+  // Each board has a stable URL so multiple tabs (or a shared link) can open
+  // different boards side by side.
   useEffect(() => {
-    if (!fullscreen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setFullscreen(false);
+    if (routeBoardId && routeBoardId !== activeId) setActiveId(routeBoardId);
+  }, [routeBoardId, activeId]);
+
+  const selectBoard = useCallback(
+    (value: string) => {
+      setActiveId(value);
+      navigate(`/apps/boards/${encodeURIComponent(value)}`, { replace: true });
+    },
+    [navigate],
+  );
+
+  // Load the selected board. A board just created is already in `boardRef`,
+  // so skip the redundant fetch.
+  useEffect(() => {
+    pendingRef.current = null;
+    if (!activeId) {
+      boardRef.current = null;
+      setBoard(null);
+      setItems([]);
+      return;
+    }
+    if (boardRef.current?.board_id === activeId) return;
+    let alive = true;
+    setDetailLoading(true);
+    boardsApi
+      .get(activeId)
+      .then((detail) => {
+        if (alive) applyBoard(detail);
+      })
+      .catch((err) => {
+        if (!alive) return;
+        message.error(
+          apiErrorMessage(
+            err,
+            t("apps.board.loadFailed", "Could not load this board"),
+            t,
+          ),
+        );
+        boardRef.current = null;
+        setBoard(null);
+        setItems([]);
+      })
+      .finally(() => {
+        if (alive) setDetailLoading(false);
+      });
+    return () => {
+      alive = false;
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [fullscreen]);
-
-  useEffect(() => {
-    if (fullscreen && boardApps.length === 0) setFullscreen(false);
-  }, [boardApps.length, fullscreen]);
+  }, [activeId, applyBoard, t]);
 
   const openApp = useCallback(
     (appId: string) => navigate(`/apps/${appId}`),
     [navigate],
   );
 
-  const pinApp = useCallback((appId: string) => {
-    setBoard((prev) => addAppToBoard(prev, appId));
-  }, []);
-
-  const unpinApp = useCallback((appId: string) => {
-    setBoard((prev) => removeAppFromBoard(prev, appId));
-  }, []);
-
-  const sizeOf = useCallback(
-    (appId: string): AppBoardSize =>
-      draftSize?.appId === appId ? draftSize.size : sizeOfApp(board, appId),
-    [board, draftSize],
-  );
-
-  const startResize = useCallback(
-    (
-      event: ReactPointerEvent<HTMLButtonElement>,
-      appId: string,
-      size: AppBoardSize,
-    ) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const grid = gridRef.current;
-      if (!grid) return;
-      // Capture the pointer so the drag still ends when the mouse is released
-      // outside the browser window (otherwise the resize never completes).
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-      } catch {
-        /* capture is best-effort */
-      }
-      const computed = window.getComputedStyle(grid);
-      const columns = computed.gridTemplateColumns
-        .split(/\s+/)
-        .map((value) => Number.parseFloat(value))
-        .filter((value) => Number.isFinite(value) && value > 0);
-      const colWidth = columns[0] ?? 200;
-      const rowHeight = Number.parseFloat(computed.gridAutoRows) || 132;
-      const gap = Number.parseFloat(computed.columnGap) || 12;
-      const span = APP_BOARD_SPANS[size];
-      setDraftSize({ appId, size });
-      setResize({
-        appId,
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        startCols: span.cols,
-        startRows: span.rows,
-        colWidth,
-        rowHeight,
-        gap,
-        maxCols: Math.max(1, Math.min(6, columns.length || 6)),
+  const composeMessage = useCallback(
+    (agentId: string, text: string) => {
+      if (!text.trim()) return;
+      navigate(`/chat/${encodeURIComponent(agentId)}`, {
+        state: { prefillInput: text },
       });
     },
-    [],
+    [navigate],
   );
 
-  useEffect(() => {
-    if (!resize) return;
-    let moved = false;
-    let next: AppBoardSize = DEFAULT_APP_BOARD_SIZE;
-    const previousUserSelect = document.body.style.userSelect;
-    document.body.style.userSelect = "none";
+  const pinApp = useCallback(
+    (appId: string) => {
+      const current = boardRef.current;
+      if (!current) return;
+      if (itemsRef.current.some((item) => item.app_id === appId)) return;
+      const next = [...itemsRef.current, nextItem(itemsRef.current, appId)];
+      itemsRef.current = next;
+      setItems(next);
+      queueSave(next);
+    },
+    [queueSave],
+  );
 
-    const onMove = (event: PointerEvent) => {
-      if (event.pointerId !== resize.pointerId) return;
-      const dx = event.clientX - resize.startX;
-      const dy = event.clientY - resize.startY;
-      if (!moved && Math.abs(dx) + Math.abs(dy) < 4) return;
-      moved = true;
-      const width = Math.max(
-        resize.colWidth,
-        resize.startCols * resize.colWidth +
-          (resize.startCols - 1) * resize.gap +
-          dx,
-      );
-      const height = Math.max(
-        resize.rowHeight,
-        resize.startRows * resize.rowHeight +
-          (resize.startRows - 1) * resize.gap +
-          dy,
-      );
-      // The board is up to six columns wide; narrower viewports cap it lower.
-      const cols = Math.min(
-        resize.maxCols,
-        Math.max(
-          1,
-          Math.round((width + resize.gap) / (resize.colWidth + resize.gap)),
-        ),
-      );
-      const rows = Math.min(
-        6,
-        Math.max(
-          1,
-          Math.round((height + resize.gap) / (resize.rowHeight + resize.gap)),
-        ),
-      );
-      next = snapAppBoardSize(cols, rows);
-      setDraftSize({ appId: resize.appId, size: next });
-    };
+  const unpinApp = useCallback(
+    (appId: string) => {
+      if (!boardRef.current) return;
+      const next = itemsRef.current.filter((item) => item.app_id !== appId);
+      itemsRef.current = next;
+      setItems(next);
+      queueSave(next);
+    },
+    [queueSave],
+  );
 
-    const onUp = () => {
-      if (moved) {
-        setBoard((prev) => withAppSize(prev, resize.appId, next));
+  const onGridLayoutChange = useCallback((next: BoardItem[]) => {
+    itemsRef.current = next;
+    setItems(next);
+  }, []);
+
+  const onGridCommit = useCallback(
+    (next: BoardItem[]) => {
+      itemsRef.current = next;
+      setItems(next);
+      queueSave(next);
+    },
+    [queueSave],
+  );
+
+  const openCreateBoard = () => {
+    boardForm.resetFields();
+    setDialog({ mode: "create" });
+  };
+
+  const openRenameBoard = () => {
+    const current = boardRef.current;
+    if (!current) return;
+    boardForm.setFieldsValue({
+      name: current.name,
+      description: current.description,
+    });
+    setDialog({ mode: "rename", board: current });
+  };
+
+  const submitBoardDialog = async () => {
+    if (!dialog) return;
+    const values = await boardForm.validateFields();
+    setDialogSaving(true);
+    try {
+      if (dialog.mode === "create") {
+        const created = await boardsApi.create({
+          name: values.name.trim(),
+          description: (values.description ?? "").trim(),
+        });
+        setBoards((prev) => [created, ...prev]);
+        setActiveId(created.board_id);
+        applyBoard(created);
+        navigate(`/apps/boards/${encodeURIComponent(created.board_id)}`, {
+          replace: true,
+        });
+      } else {
+        const updated = await boardsApi.update(dialog.board.board_id, {
+          name: values.name.trim(),
+        });
+        applyBoard(updated);
       }
-      setDraftSize(null);
-      setResize(null);
-      document.body.style.userSelect = previousUserSelect;
-    };
+      setDialog(null);
+      boardForm.resetFields();
+    } catch (err) {
+      message.error(
+        apiErrorMessage(
+          err,
+          t("apps.board.saveFailed", "Could not save the board"),
+          t,
+        ),
+      );
+    } finally {
+      setDialogSaving(false);
+    }
+  };
 
-    const onCancel = () => {
-      setDraftSize(null);
-      setResize(null);
-      document.body.style.userSelect = previousUserSelect;
-    };
+  const confirmDeleteBoard = () => {
+    const current = boardRef.current;
+    if (!current) return;
+    Modal.confirm({
+      title: t("apps.board.delete", "Delete board"),
+      content: t(
+        "apps.board.deleteConfirm",
+        "Delete “{{name}}”? The MiniApps on it are kept.",
+        { name: current.name },
+      ),
+      okText: t("common.delete", "Delete"),
+      okButtonProps: { danger: true },
+      cancelText: t("common.cancel", "Cancel"),
+      onOk: async () => {
+        try {
+          await boardsApi.remove(current.board_id);
+          const rest = boards.filter(
+            (item) => item.board_id !== current.board_id,
+          );
+          setBoards(rest);
+          const nextId =
+            activeId === current.board_id
+              ? rest[0]?.board_id ?? null
+              : activeId;
+          setActiveId(nextId);
+          navigate(
+            nextId ? `/apps/boards/${encodeURIComponent(nextId)}` : "/apps",
+            { replace: true },
+          );
+        } catch (err) {
+          message.error(
+            apiErrorMessage(
+              err,
+              t("apps.board.deleteFailed", "Could not delete the board"),
+              t,
+            ),
+          );
+          throw err;
+        }
+      },
+    });
+  };
 
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onCancel);
-    window.addEventListener("blur", onCancel);
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel);
-      window.removeEventListener("blur", onCancel);
-      document.body.style.userSelect = previousUserSelect;
-    };
-  }, [resize]);
+  const openPresent = () => {
+    const current = boardRef.current;
+    if (!current || itemsRef.current.length === 0) return;
+    window.open(
+      `/apps/boards/${encodeURIComponent(current.board_id)}/view`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  };
 
   const openRestore = () => {
     setRestoreOpen(true);
@@ -379,32 +606,84 @@ export default function AppsPage() {
     }
   };
 
+  const boardMenu = {
+    items: [
+      {
+        key: "rename",
+        label: t("apps.board.rename", "Rename board"),
+        disabled: !board,
+      },
+      {
+        key: "restore",
+        label: t("apps.restoreBackup", "Restore backup"),
+      },
+      { type: "divider" as const },
+      {
+        key: "delete",
+        label: t("apps.board.delete", "Delete board"),
+        danger: true,
+        disabled: !board,
+      },
+    ],
+    onClick: ({ key }: { key: string }) => {
+      if (key === "rename") openRenameBoard();
+      else if (key === "delete") confirmDeleteBoard();
+      else if (key === "restore") openRestore();
+    },
+  };
+
+  const loading = appsLoading || boardsLoading;
+  const pinned = new Set(items.map((item) => item.app_id));
+
   return (
     <PageShell
       flush
       title={t("apps.title", "Workbench")}
       subtitle={t("apps.subtitle", "MiniApps built by your agents")}
       actions={
-        <Space>
+        <Space wrap>
+          {boards.length > 0 && (
+            <Select
+              aria-label={t("apps.board.select", "Select board")}
+              value={activeId ?? undefined}
+              style={{ minWidth: 160, maxWidth: 240 }}
+              options={boards.map((item) => ({
+                value: item.board_id,
+                label: item.name,
+              }))}
+              onChange={selectBoard}
+            />
+          )}
+          <Tooltip title={t("apps.board.new", "New board")}>
+            <Button
+              aria-label={t("apps.board.new", "New board")}
+              icon={<Plus size={16} />}
+              onClick={openCreateBoard}
+            />
+          </Tooltip>
+          <Dropdown menu={boardMenu} trigger={["click"]}>
+            <Button
+              aria-label={t("apps.board.menu", "Board actions")}
+              icon={<MoreHorizontal size={16} />}
+            />
+          </Dropdown>
           <Button
             icon={<LayoutGrid size={16} />}
-            onClick={() => setListOpen(true)}
+            onClick={() => setCatalogOpen(true)}
           >
             {t("apps.all.title", "All MiniApps")}
           </Button>
           <Button type="primary" onClick={() => setCreateOpen(true)}>
             {t("apps.create.button", "Create")}
           </Button>
-          <Button onClick={openRestore}>
-            {t("apps.restoreBackup", "Restore backup")}
-          </Button>
-          <Tooltip title={t("apps.board.fullscreen", "Fullscreen")}>
+          <Tooltip title={t("apps.board.presentHint", "Open in a new tab")}>
             <Button
-              aria-label={t("apps.board.fullscreen", "Fullscreen")}
               icon={<Maximize2 size={16} />}
-              disabled={boardApps.length === 0}
-              onClick={() => setFullscreen(true)}
-            />
+              disabled={items.length === 0}
+              onClick={openPresent}
+            >
+              {t("apps.board.present", "Present")}
+            </Button>
           </Tooltip>
         </Space>
       }
@@ -441,7 +720,22 @@ export default function AppsPage() {
             </Button>
           </Space>
         </Empty>
-      ) : boardApps.length === 0 ? (
+      ) : !board ? (
+        detailLoading ? (
+          <div style={{ padding: 48, textAlign: "center" }}>
+            <Spin />
+          </div>
+        ) : (
+          <div className={styles.boardEmpty}>
+            <Space direction="vertical" size={12}>
+              <Text>{t("apps.board.none", "No board yet.")}</Text>
+              <Button type="primary" onClick={openCreateBoard}>
+                {t("apps.board.new", "New board")}
+              </Button>
+            </Space>
+          </div>
+        )
+      ) : items.length === 0 ? (
         <div className={styles.boardEmpty}>
           {t(
             "apps.board.empty",
@@ -449,66 +743,38 @@ export default function AppsPage() {
           )}
         </div>
       ) : (
-        <>
-          <div
-            ref={gridRef}
-            className={[styles.board, fullscreen ? styles.boardFullscreen : ""]
-              .filter(Boolean)
-              .join(" ")}
-            data-fullscreen={fullscreen ? "true" : undefined}
-          >
-            {boardApps.map((app, index) => (
-              <AppWidget
-                key={app.app_id}
-                app={app}
-                size={sizeOf(app.app_id)}
-                canMoveUp={index > 0}
-                canMoveDown={index < boardApps.length - 1}
-                onMoveUp={() =>
-                  setBoard((prev) => moveAppInBoard(prev, app.app_id, -1))
-                }
-                onMoveDown={() =>
-                  setBoard((prev) => moveAppInBoard(prev, app.app_id, 1))
-                }
-                onOpen={() => openApp(app.app_id)}
-                onRemove={() => unpinApp(app.app_id)}
-                onResizeStart={(event) =>
-                  startResize(event, app.app_id, sizeOf(app.app_id))
-                }
-                onSetSize={(next) =>
-                  setBoard((prev) => withAppSize(prev, app.app_id, next))
-                }
-              />
-            ))}
-          </div>
-          {fullscreen && (
-            <Button
-              type="text"
-              className={styles.fullscreenExit}
-              aria-label={t("apps.board.restore", "Restore")}
-              icon={<Minimize2 size={16} />}
-              style={{ color: "var(--fn-text-tertiary)" }}
-              onClick={() => setFullscreen(false)}
-            >
-              {t("apps.board.restore", "Restore")}
-            </Button>
-          )}
-        </>
+        <BoardGrid
+          items={items}
+          apps={apps}
+          editable
+          onLayoutChange={onGridLayoutChange}
+          onCommit={onGridCommit}
+          onOpenApp={openApp}
+          onRemoveApp={unpinApp}
+          onComposeMessage={composeMessage}
+        />
+      )}
+      {saving && (
+        <div style={{ padding: "0 16px 16px" }}>
+          <Text className={styles.savingHint}>
+            {t("apps.board.saving", "Saving…")}
+          </Text>
+        </div>
       )}
 
       <Drawer
         title={t("apps.all.title", "All MiniApps")}
-        open={listOpen}
-        onClose={() => setListOpen(false)}
+        open={catalogOpen}
+        onClose={() => setCatalogOpen(false)}
         width="min(560px, 100vw)"
         styles={{ body: { padding: 12 } }}
       >
         <div className={styles.list}>
           {apps.map((app) => {
-            const pinned = isAppOnBoard(board, app.app_id);
+            const onBoard = pinned.has(app.app_id);
             return (
               <div key={app.app_id} className={styles.listRow}>
-                <AppThumb app={app} />
+                <MiniAppThumb app={app} />
                 <div className={styles.listMain}>
                   <Space size={8} align="start">
                     <Text strong ellipsis={{ tooltip: app.name }}>
@@ -553,12 +819,16 @@ export default function AppsPage() {
                   </Space>
                 </div>
                 <Space>
-                  {pinned ? (
+                  {onBoard ? (
                     <Button onClick={() => unpinApp(app.app_id)}>
                       {t("apps.board.remove", "Remove from board")}
                     </Button>
                   ) : (
-                    <Button type="primary" onClick={() => pinApp(app.app_id)}>
+                    <Button
+                      type="primary"
+                      disabled={!board}
+                      onClick={() => pinApp(app.app_id)}
+                    >
                       {t("apps.board.add", "Pin to board")}
                     </Button>
                   )}
@@ -571,6 +841,52 @@ export default function AppsPage() {
           })}
         </div>
       </Drawer>
+
+      <Modal
+        title={
+          dialog?.mode === "create"
+            ? t("apps.board.createTitle", "New board")
+            : t("apps.board.renameTitle", "Rename board")
+        }
+        open={dialog !== null}
+        onCancel={() => {
+          setDialog(null);
+          boardForm.resetFields();
+        }}
+        onOk={() => void submitBoardDialog()}
+        okText={
+          dialog?.mode === "create"
+            ? t("apps.board.new", "New board")
+            : t("common.save", "Save")
+        }
+        cancelText={t("common.cancel", "Cancel")}
+        confirmLoading={dialogSaving}
+        destroyOnHidden
+      >
+        <Form form={boardForm} layout="vertical">
+          <Form.Item
+            name="name"
+            label={t("apps.board.nameLabel", "Board name")}
+            rules={[
+              {
+                required: true,
+                whitespace: true,
+                message: t("apps.board.nameRequired", "Enter a board name"),
+              },
+            ]}
+          >
+            <Input maxLength={100} />
+          </Form.Item>
+          {dialog?.mode === "create" && (
+            <Form.Item
+              name="description"
+              label={t("apps.board.descriptionLabel", "Description")}
+            >
+              <Input.TextArea maxLength={500} rows={2} />
+            </Form.Item>
+          )}
+        </Form>
+      </Modal>
 
       <CreateMiniAppModal
         open={createOpen}

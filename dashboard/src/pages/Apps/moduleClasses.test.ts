@@ -21,8 +21,12 @@ const defined = new Set(
 );
 
 const used = new Set<string>();
-for (const file of ["index.tsx", "AppWidget.tsx"]) {
-  const source = readFileSync(path.join(dir, file), "utf8");
+for (const file of ["index.tsx", "BoardGrid.tsx", "BoardView.tsx"]) {
+  // Drop import lines: `react-grid-layout/css/styles.css` is not a style ref.
+  const source = readFileSync(path.join(dir, file), "utf8")
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("import "))
+    .join("\n");
   for (const match of source.matchAll(/styles\.([A-Za-z0-9_]+)/g)) {
     used.add(match[1]);
   }

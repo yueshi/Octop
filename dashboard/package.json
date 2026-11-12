@@ -39,6 +39,7 @@
     "qrcode.react": "^4.2.0",
     "react": "^18",
     "react-dom": "^18",
+    "react-grid-layout": "^2.3.0",
     "react-i18next": "^16.5.4",
     "react-json-view-lite": "^2.5.0",
     "react-markdown": "^10.1.0",

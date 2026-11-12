@@ -81,7 +81,8 @@ const LEGACY_SIZE_IDS: Record<string, AppBoardSize> = {
   wide: "3x6",
 };
 
-export type AppBoardStorage = Pick<Storage, "getItem" | "setItem">;
+export type AppBoardStorage = Pick<Storage, "getItem" | "setItem"> &
+  Partial<Pick<Storage, "removeItem">>;
 
 export interface AppBoard {
   /** Pinned app ids, in display order. */
@@ -181,6 +182,19 @@ export function saveAppBoard(
   if (!storage) return;
   try {
     storage.setItem(STORAGE_KEY, JSON.stringify(board));
+  } catch {
+    /* localStorage can be unavailable (private mode / quota). */
+  }
+}
+
+/** Drop the browser-local board once its pins live on a server board. */
+export function clearAppBoard(
+  storage: AppBoardStorage | undefined = defaultStorage(),
+): void {
+  if (!storage?.removeItem) return;
+  try {
+    storage.removeItem(STORAGE_KEY);
+    storage.removeItem(LEGACY_STORAGE_KEY);
   } catch {
     /* localStorage can be unavailable (private mode / quota). */
   }

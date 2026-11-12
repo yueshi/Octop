@@ -4,6 +4,7 @@ import {
   addAppToBoard,
   APP_BOARD_SIZE_ORDER,
   APP_BOARD_SPANS,
+  clearAppBoard,
   emptyAppBoard,
   isAppOnBoard,
   isAppBoardSize,
@@ -184,6 +185,18 @@ describe("appBoard", () => {
       JSON.stringify({ order: [1, "a", "a"], sizes: { a: "huge" } }),
     );
     expect(loadAppBoard(storage)).toEqual({ order: ["a"], sizes: {} });
+  });
+
+  it("clears both browser-local keys after server migration", () => {
+    const removed: string[] = [];
+    clearAppBoard({
+      getItem: () => null,
+      setItem: () => undefined,
+      removeItem: (key) => {
+        removed.push(key);
+      },
+    });
+    expect(removed).toEqual(["octop:apps-board:v1", "octop:apps-layout:v1"]);
   });
 
   it("reads a board saved before sizes existed", () => {

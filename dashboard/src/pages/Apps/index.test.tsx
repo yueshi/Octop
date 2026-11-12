@@ -3,6 +3,11 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { appsApi, type AppSummary } from "../../api/modules/apps";
+import {
+  boardsApi,
+  type BoardDetail,
+  type BoardItem,
+} from "../../api/modules/boards";
 import AppsPage from "./index";
 
 vi.mock("react-i18next", async () => {
@@ -14,9 +19,9 @@ vi.mock("react-i18next", async () => {
     }
     return value;
   };
-  // The translator must be stable across renders: the page loads the
-  // MiniApp list in an effect keyed on `t`, so a fresh function every render
-  // would refetch the list forever.
+  // The translator must be stable across renders: the page loads the board
+  // and catalog in effects keyed on `t`, so a fresh function every render
+  // would refetch forever.
   const t = (
     key: string,
     fallback?: unknown,
@@ -60,6 +65,17 @@ vi.mock("../../api/modules/apps", () => {
   };
 });
 
+vi.mock("../../api/modules/boards", () => ({
+  boardsApi: {
+    list: vi.fn(),
+    create: vi.fn(),
+    get: vi.fn(),
+    update: vi.fn(),
+    remove: vi.fn(),
+    setLayout: vi.fn(),
+  },
+}));
+
 vi.mock("../../components/MiniAppFrame", () => ({
   default: ({ appId }: { appId: string }) => (
     <div data-testid="mini-app-frame" data-app-id={appId} />
@@ -96,20 +112,33 @@ const app1: AppSummary = {
 
 const app2 = { ...app1, app_id: "app_2", name: "本月业绩看板" };
 
-/**
- * jsdom has no PointerEvent, so build a plain event and attach the pointer
- * fields the resize handler reads.
- */
-function pointerEvent(type: string, props: Record<string, unknown>): Event {
-  const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.assign(event, props);
-  return event;
+const board: BoardDetail = {
+  board_id: "board_1",
+  name: "我的看板",
+  description: "",
+  version: 1,
+  item_count: 0,
+  created_at: 0,
+  updated_at: 0,
+  layout: { version: 1, items: [] },
+};
+
+function savedBoard(items: BoardItem[], version = 2): BoardDetail {
+  return {
+    ...board,
+    version,
+    item_count: items.length,
+    layout: { version: 1, items },
+  };
 }
 
-beforeEach(() => {
-  localStorage.clear();
-  vi.mocked(appsApi.list).mockResolvedValue({ apps: [app1, app2] });
-});
+function renderPage() {
+  return render(
+    <MemoryRouter>
+      <AppsPage />
+    </MemoryRouter>,
+  );
+}
 
 /** The full MiniApp catalog lives behind the title-row button. */
 async function openCatalog(): Promise<HTMLElement[]> {
@@ -117,33 +146,35 @@ async function openCatalog(): Promise<HTMLElement[]> {
   return screen.findAllByRole("button", { name: "加入看板" });
 }
 
+beforeEach(() => {
+  localStorage.clear();
+  vi.clearAllMocks();
+  window.open = vi.fn();
+  vi.mocked(appsApi.list).mockResolvedValue({ apps: [app1, app2] });
+  vi.mocked(boardsApi.list).mockResolvedValue([board]);
+  vi.mocked(boardsApi.get).mockResolvedValue(board);
+  vi.mocked(boardsApi.setLayout).mockImplementation(async (_id, input) =>
+    savedBoard(input.items),
+  );
+});
+
 describe("workbench board", () => {
-  it("starts with an empty board and lists every MiniApp", async () => {
-    render(
-      <MemoryRouter>
-        <AppsPage />
-      </MemoryRouter>,
-    );
+  it("loads the selected board and lists every MiniApp", async () => {
+    renderPage();
     expect(await screen.findByText("工作台")).toBeInTheDocument();
-    expect(screen.getByText(/看板上还没有小程序/)).toBeInTheDocument();
+    await screen.findByText(/看板上还没有小程序/);
+    expect(boardsApi.get).toHaveBeenCalledWith("board_1");
+
     // The catalog stays closed until the top button opens it.
     expect(screen.queryByText("客户跟进台账")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "全部小程序" }),
-    ).toBeInTheDocument();
-
     await openCatalog();
     expect(screen.getByText("客户跟进台账")).toBeInTheDocument();
     expect(screen.getByText("本月业绩看板")).toBeInTheDocument();
     expect(screen.queryByTestId("mini-app-frame")).not.toBeInTheDocument();
   });
 
-  it("pins a MiniApp and runs it live on the board", async () => {
-    render(
-      <MemoryRouter>
-        <AppsPage />
-      </MemoryRouter>,
-    );
+  it("pins a MiniApp and saves its grid cell", async () => {
+    renderPage();
     const pins = await openCatalog();
     fireEvent.click(pins[0]);
 
@@ -154,155 +185,109 @@ describe("workbench board", () => {
       "data-app-id",
       "app_1",
     );
-    // The list entry switches to the pinned state.
     expect(
-      screen.getByRole("button", { name: "移出看板" }),
-    ).toBeInTheDocument();
+      screen.getAllByRole("button", { name: "移出看板" }).length,
+    ).toBeGreaterThan(0);
+
+    await waitFor(() =>
+      expect(boardsApi.setLayout).toHaveBeenCalledWith("board_1", {
+        version: 1,
+        items: [{ app_id: "app_1", x: 0, y: 0, w: 4, h: 4 }],
+      }),
+    );
   });
 
-  it("removes a pinned MiniApp from the board", async () => {
-    render(
-      <MemoryRouter>
-        <AppsPage />
-      </MemoryRouter>,
-    );
-    const pins = await openCatalog();
-    fireEvent.click(pins[0]);
+  it("removes a pinned MiniApp and persists the empty board", async () => {
+    const pinned = savedBoard([{ app_id: "app_1", x: 0, y: 0, w: 4, h: 4 }], 1);
+    vi.mocked(boardsApi.get).mockResolvedValue(pinned);
+    renderPage();
+
     await waitFor(() =>
       expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(1),
     );
-
     fireEvent.click(screen.getByRole("button", { name: "移出看板" }));
+
     await waitFor(() =>
       expect(screen.queryByTestId("mini-app-frame")).not.toBeInTheDocument(),
     );
+    expect(boardsApi.setLayout).toHaveBeenCalledWith("board_1", {
+      version: 1,
+      items: [],
+    });
   });
 
-  it("resizes a cell by dragging the corner handle", async () => {
-    render(
-      <MemoryRouter>
-        <AppsPage />
-      </MemoryRouter>,
+  it("creates the first board and migrates browser-local pins", async () => {
+    const created = { ...board, board_id: "board_new", name: "旧看板迁移" };
+    const migrated: BoardDetail = {
+      ...created,
+      version: 2,
+      item_count: 1,
+      layout: {
+        version: 1,
+        items: [{ app_id: "app_1", x: 0, y: 0, w: 4, h: 4 }],
+      },
+    };
+    localStorage.setItem(
+      "octop:apps-board:v1",
+      JSON.stringify({ order: ["app_1"], sizes: { app_1: "2x4" } }),
     );
-    const pins = await openCatalog();
-    fireEvent.click(pins[0]);
+    vi.mocked(boardsApi.list).mockResolvedValue([]);
+    vi.mocked(boardsApi.create).mockResolvedValue(created);
+    vi.mocked(boardsApi.setLayout).mockResolvedValue(migrated);
+    vi.mocked(boardsApi.get).mockResolvedValue(migrated);
+
+    renderPage();
+
     await waitFor(() =>
-      expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(1),
+      expect(boardsApi.create).toHaveBeenCalledWith({ name: "我的看板" }),
     );
-
-    const widget = screen
-      .getByTestId("mini-app-frame")
-      .closest("[data-size]") as HTMLElement;
-    expect(widget.dataset.size).toBe("2x4");
-
-    const handle = screen.getByLabelText("拖动调整大小，或在顶部菜单选择尺寸");
-    fireEvent(
-      handle,
-      pointerEvent("pointerdown", { pointerId: 1, clientX: 0, clientY: 0 }),
-    );
-    fireEvent(
-      window,
-      pointerEvent("pointermove", {
-        pointerId: 1,
-        clientX: 100,
-        clientY: 100,
+    await waitFor(() =>
+      expect(boardsApi.setLayout).toHaveBeenCalledWith("board_new", {
+        version: 1,
+        items: [{ app_id: "app_1", x: 0, y: 0, w: 4, h: 4 }],
       }),
     );
-    fireEvent(
-      window,
-      pointerEvent("pointerup", { pointerId: 1, clientX: 100, clientY: 100 }),
+    await waitFor(() =>
+      expect(localStorage.getItem("octop:apps-board:v1")).toBeNull(),
     );
-
-    // Dragging two rows taller than the 2×4 default snaps to 2×6.
-    await waitFor(() => expect(widget.dataset.size).toBe("2x6"));
+    expect(await screen.findByText("旧看板迁移")).toBeInTheDocument();
   });
 
-  it("picks an exact size from the header menu", async () => {
-    render(
-      <MemoryRouter>
-        <AppsPage />
-      </MemoryRouter>,
+  it("renames the board through the actions menu", async () => {
+    vi.mocked(boardsApi.update).mockResolvedValue({
+      ...board,
+      name: "工作台 2",
+    });
+    renderPage();
+    await screen.findByText(/看板上还没有小程序/);
+
+    fireEvent.click(screen.getByRole("button", { name: "看板操作" }));
+    fireEvent.click(await screen.findByText("重命名看板"));
+    const input = await screen.findByLabelText("看板名称");
+    fireEvent.change(input, { target: { value: "工作台 2" } });
+    // Ant Design spaces two-character CJK button labels (“保 存”).
+    fireEvent.click(screen.getByRole("button", { name: /保\s*存/ }));
+
+    await waitFor(() =>
+      expect(boardsApi.update).toHaveBeenCalledWith("board_1", {
+        name: "工作台 2",
+      }),
     );
-    const pins = await openCatalog();
-    fireEvent.click(pins[0]);
+  });
+
+  it("opens the presentation view in a new tab", async () => {
+    const pinned = savedBoard([{ app_id: "app_1", x: 0, y: 0, w: 4, h: 4 }], 1);
+    vi.mocked(boardsApi.get).mockResolvedValue(pinned);
+    renderPage();
     await waitFor(() =>
       expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(1),
     );
 
-    const widget = screen
-      .getByTestId("mini-app-frame")
-      .closest("[data-size]") as HTMLElement;
-    fireEvent.click(screen.getByRole("button", { name: "尺寸" }));
-
-    // Every supported rectangle is offered, including the full-canvas one.
-    expect(
-      await screen.findByRole("button", { name: "6×6" }),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "3×3" }));
-
-    await waitFor(() => expect(widget.dataset.size).toBe("3x3"));
-  });
-
-  it("moves a pinned MiniApp without dragging", async () => {
-    render(
-      <MemoryRouter>
-        <AppsPage />
-      </MemoryRouter>,
+    fireEvent.click(screen.getByRole("button", { name: "全屏展示" }));
+    expect(window.open).toHaveBeenCalledWith(
+      "/apps/boards/board_1/view",
+      "_blank",
+      "noopener,noreferrer",
     );
-    const pins = await openCatalog();
-    fireEvent.click(pins[0]);
-    await waitFor(() =>
-      expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(1),
-    );
-    fireEvent.click(screen.getAllByRole("button", { name: "加入看板" })[0]);
-    await waitFor(() =>
-      expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(2),
-    );
-
-    expect(
-      screen.getAllByTestId("mini-app-frame").map((node) => node.dataset.appId),
-    ).toEqual(["app_1", "app_2"]);
-
-    // The second cell moves up through its own button.
-    fireEvent.click(screen.getAllByLabelText("上移")[1]);
-    await waitFor(() =>
-      expect(
-        screen
-          .getAllByTestId("mini-app-frame")
-          .map((node) => node.dataset.appId),
-      ).toEqual(["app_2", "app_1"]),
-    );
-  });
-
-  it("takes the board fullscreen and restores it", async () => {
-    render(
-      <MemoryRouter>
-        <AppsPage />
-      </MemoryRouter>,
-    );
-    // Nothing to expand until the board has a cell.
-    expect(screen.getByRole("button", { name: "全屏" })).toBeDisabled();
-
-    const pins = await openCatalog();
-    fireEvent.click(pins[0]);
-    await waitFor(() =>
-      expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(1),
-    );
-
-    const board = () =>
-      document.querySelector("[data-fullscreen]") as HTMLElement | null;
-
-    fireEvent.click(screen.getByRole("button", { name: "全屏" }));
-    await waitFor(() => expect(board()).not.toBeNull());
-    expect(board()?.dataset.fullscreen).toBe("true");
-
-    fireEvent.click(screen.getByRole("button", { name: "恢复" }));
-    await waitFor(() => expect(board()).toBeNull());
-
-    // Escape leaves fullscreen too.
-    fireEvent.click(screen.getByRole("button", { name: "全屏" }));
-    await waitFor(() => expect(board()).not.toBeNull());
-    fireEvent.keyDown(window, { key: "Escape" });
-    await waitFor(() => expect(board()).toBeNull());
   });
 });

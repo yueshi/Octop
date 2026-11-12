@@ -6,7 +6,12 @@ import {
   pathPermissionKeys,
   PERM,
 } from "../utils/permissions";
-import { isWorkbenchPath, resolveSelectedKey, routeConfigs } from "./index";
+import {
+  isBoardPresentPath,
+  isWorkbenchPath,
+  resolveSelectedKey,
+  routeConfigs,
+} from "./index";
 
 describe("pathPermissionKeys", () => {
   it("matches workbench and legacy aliases", () => {
@@ -136,6 +141,15 @@ describe("pathPermissionKeys", () => {
         "/admin/advanced",
       ),
     ).toBe(false);
+  });
+});
+
+describe("board presentation path", () => {
+  it("only matches the standalone /view route", () => {
+    expect(isBoardPresentPath("/apps/boards/board_1/view")).toBe(true);
+    expect(isBoardPresentPath("/apps/boards/board_1/view/")).toBe(true);
+    expect(isBoardPresentPath("/apps/boards/board_1")).toBe(false);
+    expect(isBoardPresentPath("/apps/app_1")).toBe(false);
   });
 });
 

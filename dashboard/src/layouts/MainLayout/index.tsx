@@ -15,6 +15,7 @@ import {
   FULLSCREEN_PATHS,
   MOBILE_FULLSCREEN_PATHS,
   SELF_HEADER_PATHS,
+  isBoardPresentPath,
   isWorkbenchPath,
 } from "../../routes";
 import { CHAT_HISTORY_RAIL_ID, isChatPath } from "../chatHistoryRail";
@@ -62,7 +63,9 @@ export default function MainLayout() {
   useDashboardPushToast();
   useKeyboardOffset();
   const isMinimalLayout = layoutMode === "minimal";
+  const isPresentation = isBoardPresentPath(currentPath);
   const isFullscreen =
+    isPresentation ||
     FULLSCREEN_PATHS.has(currentPath) ||
     [...FULLSCREEN_PATHS].some((p) => currentPath.startsWith(p + "/")) ||
     (isMobile && MOBILE_FULLSCREEN_PATHS.has(currentPath));
@@ -196,60 +199,65 @@ export default function MainLayout() {
             overflow: "hidden",
           }}
         >
-          {/* Mobile overlay backdrop */}
-          {isMobile && !collapsed && (
-            <div
-              onClick={toggleCollapsed}
-              style={{
-                position: "fixed",
-                inset: 0,
-                background: "rgba(0, 0, 0, 0.40)",
-                zIndex: 99,
-              }}
-            />
-          )}
+          {/* The presentation route owns the whole tab: no nav, rail, or header. */}
+          {!isPresentation && (
+            <>
+              {/* Mobile overlay backdrop */}
+              {isMobile && !collapsed && (
+                <div
+                  onClick={toggleCollapsed}
+                  style={{
+                    position: "fixed",
+                    inset: 0,
+                    background: "rgba(0, 0, 0, 0.40)",
+                    zIndex: 99,
+                  }}
+                />
+              )}
 
-          <div
-            style={{
-              position: "relative",
-              flexShrink: 0,
-              alignSelf: "stretch",
-              display: "flex",
-              minHeight: 0,
-            }}
-          >
-            <Sidebar
-              selectedKey={selectedKey}
-              collapsed={collapsed}
-              onToggle={toggleCollapsed}
-              isMobile={isMobile}
-            />
-            {!isMobile && (
-              <RailEdgeControl
-                expanded={!collapsed}
-                onToggle={handleNavRailToggle}
-                side="end"
-                placement={
-                  isChatRoute && !isMinimalLayout && !chatSidebarOpen
-                    ? "before"
-                    : "center"
-                }
-              />
-            )}
-          </div>
+              <div
+                style={{
+                  position: "relative",
+                  flexShrink: 0,
+                  alignSelf: "stretch",
+                  display: "flex",
+                  minHeight: 0,
+                }}
+              >
+                <Sidebar
+                  selectedKey={selectedKey}
+                  collapsed={collapsed}
+                  onToggle={toggleCollapsed}
+                  isMobile={isMobile}
+                />
+                {!isMobile && (
+                  <RailEdgeControl
+                    expanded={!collapsed}
+                    onToggle={handleNavRailToggle}
+                    side="end"
+                    placement={
+                      isChatRoute && !isMinimalLayout && !chatSidebarOpen
+                        ? "before"
+                        : "center"
+                    }
+                  />
+                )}
+              </div>
 
-          {isChatRoute && !isMinimalLayout && (
-            <div
-              id={CHAT_HISTORY_RAIL_ID}
-              style={{
-                flexShrink: 0,
-                display: "flex",
-                alignSelf: "stretch",
-                minHeight: 0,
-                height: "100%",
-                position: "relative",
-              }}
-            />
+              {isChatRoute && !isMinimalLayout && (
+                <div
+                  id={CHAT_HISTORY_RAIL_ID}
+                  style={{
+                    flexShrink: 0,
+                    display: "flex",
+                    alignSelf: "stretch",
+                    minHeight: 0,
+                    height: "100%",
+                    position: "relative",
+                  }}
+                />
+              )}
+            </>
           )}
 
           {/* Right column: mobile header (if any) + page content */}
@@ -264,6 +272,7 @@ export default function MainLayout() {
             }}
           >
             {isMobile &&
+              !isPresentation &&
               !(
                 SELF_HEADER_PATHS.has(currentPath) ||
                 [...SELF_HEADER_PATHS].some((p) =>

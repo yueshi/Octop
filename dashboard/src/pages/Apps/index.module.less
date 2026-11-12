@@ -1,80 +1,31 @@
-/* Workbench: a board of fixed-size MiniApp cells. The MiniApp catalog lives
-   in a drawer opened from the title row. */
+/* Workbench: named boards of MiniApp cells on a 12-column grid. The MiniApp
+   catalog lives in a drawer opened from the title row. */
 
-/* The board is a 6x6 canvas: a cell takes one of the supported rectangles. */
-.board {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  grid-auto-rows: 132px;
-  grid-auto-flow: row dense;
-  gap: 12px;
-  min-height: calc(6 * 132px + 5 * 12px);
+.boardRoot {
+  min-height: 100%;
+  padding: 4px 16px 32px;
 }
 
-/* Desktop: the six row tracks share the available height, so a board tiled
-   down to the sixth row fills the screen exactly — including fullscreen. */
-@media (min-width: 768px) {
-  .board {
-    height: 100%;
-    grid-template-rows: repeat(6, minmax(120px, 1fr));
-    min-height: calc(6 * 120px + 5 * 12px);
-  }
+.boardGrid {
+  min-height: 160px;
 }
 
-@media (max-width: 1199px) {
-  .board {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 991px) {
-  .board {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 767px) {
-  .board {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 575px) {
-  .board {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-/* Fullscreen: the board covers the whole window; Esc or 恢复 returns. */
-.boardFullscreen {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
-  padding: 16px;
-  overflow: auto;
-  background: var(--fn-bg-layout, var(--fn-bg-container));
-}
-
-/* Quiet exit affordance: a ghost button that blends into the board until
-   hovered, so it never competes with the MiniApps. */
-.fullscreenExit {
-  position: fixed;
-  top: 12px;
-  right: 12px;
-  z-index: 201;
-  opacity: 0.6;
-  transition: opacity 0.16s ease;
-
-  &:hover,
-  &:focus-visible {
-    opacity: 1;
-  }
-}
-
-.widget {
-  position: relative;
+/* Phones: a 12-column grid is too dense, so cells stack at a readable size. */
+.boardStack {
   display: flex;
   flex-direction: column;
+  gap: 12px;
+  padding: 4px 12px 24px;
+}
+
+.stackCell {
+  height: 420px;
+}
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -83,206 +34,64 @@
   background: var(--fn-bg-elevated);
 }
 
-/* The rectangles a cell can take on the 6x6 board canvas. Widths divide the
-   six columns evenly, so any picker combination tiles without gaps. */
-.size1x1 {
-  grid-column: span 1;
-  grid-row: span 1;
-}
-
-.size2x2 {
-  grid-column: span 2;
-  grid-row: span 2;
-}
-
-.size2x3 {
-  grid-column: span 2;
-  grid-row: span 3;
-}
-
-.size2x4 {
-  grid-column: span 2;
-  grid-row: span 4;
-}
-
-.size2x6 {
-  grid-column: span 2;
-  grid-row: span 6;
-}
-
-.size3x2 {
-  grid-column: span 3;
-  grid-row: span 2;
-}
-
-.size3x3 {
-  grid-column: span 3;
-  grid-row: span 3;
-}
-
-.size3x4 {
-  grid-column: span 3;
-  grid-row: span 4;
-}
-
-.size3x6 {
-  grid-column: span 3;
-  grid-row: span 6;
-}
-
-.size6x2 {
-  grid-column: span 6;
-  grid-row: span 2;
-}
-
-.size6x3 {
-  grid-column: span 6;
-  grid-row: span 3;
-}
-
-.size6x4 {
-  grid-column: span 6;
-  grid-row: span 4;
-}
-
-.size6x6 {
-  grid-column: span 6;
-  grid-row: span 6;
-}
-
-/* Narrower canvases cannot fit a three-column cell. */
-@media (max-width: 767px) {
-  .size3x2,
-  .size3x3,
-  .size3x4,
-  .size3x6,
-  .size6x2,
-  .size6x3,
-  .size6x4,
-  .size6x6 {
-    grid-column: span 2;
-  }
-}
-
-/* Phones show a single column: cells get a uniform height. */
-@media (max-width: 575px) {
-  .size1x1,
-  .size2x2,
-  .size2x3,
-  .size2x4,
-  .size2x6,
-  .size3x2,
-  .size3x3,
-  .size3x4,
-  .size3x6,
-  .size6x2,
-  .size6x3,
-  .size6x4,
-  .size6x6 {
-    grid-column: span 1;
-    grid-row: span 3;
-  }
-}
-
-/* Notch: a small handle on the top edge of the cell. Hovering it reveals the
-   header; the header itself then keeps it visible. */
-.notchZone {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  z-index: 2;
-  width: 120px;
-  height: 28px;
-  transform: translateX(-50%);
-
-  &::after {
-    content: "";
-    position: absolute;
-    top: 6px;
-    left: 50%;
-    width: 44px;
-    height: 5px;
-    border-radius: 999px;
-    background: var(--fn-color-brand-border);
-    opacity: 0.65;
-    transform: translateX(-50%);
-    transition:
-      opacity 0.16s ease,
-      background 0.16s ease;
-  }
-
-  &:hover::after {
-    background: var(--fn-text-tertiary);
-    opacity: 1;
-  }
-}
-
-/* The cell header floats over the app and only appears when the pointer
-   reaches the notch, so the MiniApp keeps the whole cell. */
-.widgetHead {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  z-index: 3;
+.cellHead {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 6px 6px 12px;
+  gap: 6px;
+  flex: none;
+  height: 34px;
+  padding: 0 4px 0 10px;
   border-bottom: 1px solid var(--fn-color-brand-border);
-  background: var(--fn-bg-elevated);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 12%);
-  opacity: 0;
-  transform: translateY(-100%);
-  transition:
-    opacity 0.16s ease,
-    transform 0.16s ease;
-  pointer-events: none;
-}
+  cursor: grab;
+  user-select: none;
 
-.notchZone:hover ~ .widgetHead,
-.widgetHead:hover,
-.widgetHead:focus-within {
-  opacity: 1;
-  transform: translateY(0);
-  pointer-events: auto;
-}
-
-/* Touch devices cannot hover: keep the name and actions reachable. */
-@media (hover: none) {
-  .notchZone {
-    display: none;
-  }
-
-  .widgetHead {
-    opacity: 1;
-    transform: none;
-    pointer-events: auto;
+  &:active {
+    cursor: grabbing;
   }
 }
 
-.widgetTitle {
+.cellGrip {
+  flex: none;
+  color: var(--fn-text-tertiary);
+}
+
+.cellIcon {
+  flex: none;
+  color: var(--fn-color-brand);
+}
+
+.cellTitle {
   flex: 1;
   min-width: 0;
   font-size: 13px;
+  font-weight: 500;
 }
 
-.widgetBody {
+.cellBody {
   position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   flex: 1;
   min-height: 0;
   background: #fff;
 }
 
+.boardHint {
+  padding-top: 10px;
+  font-size: 12px;
+  color: var(--fn-text-tertiary);
+}
+
 .boardEmpty {
+  margin: 24px 16px;
   padding: 32px;
   border: 1px dashed var(--fn-color-brand-border);
   border-radius: 10px;
   color: var(--fn-text-tertiary);
   text-align: center;
+}
+
+.savingHint {
+  font-size: 12px;
+  color: var(--fn-text-tertiary);
 }
 
 .list {
@@ -332,111 +141,41 @@
   margin-top: 2px;
 }
 
-/* Drag the corner handle to change how many grid cells the app takes. */
-.resizeHandle {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  z-index: 3;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  color: #fff;
-  background: rgb(0 0 0 / 32%);
-  cursor: nwse-resize;
-  opacity: 0;
-  touch-action: none;
-  transition:
-    opacity 0.16s ease,
-    background 0.16s ease;
-
-  &:hover {
-    background: var(--fn-color-brand);
-  }
-}
-
-.widget:hover .resizeHandle,
-.widget:focus-within .resizeHandle {
-  opacity: 1;
-}
-
-/* Touch devices cannot hover: keep the handle reachable. */
-@media (hover: none) {
-  .resizeHandle {
-    opacity: 0.75;
-  }
-}
-
 @media (max-width: 575px) {
   .listRow {
     flex-wrap: wrap;
   }
 }
 
-/* Size picker popover: proportional swatches grouped by column count. */
-.sizePicker {
+/* Presentation route: the board fills the viewport under a slim toolbar. */
+.presentRoot {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  height: 100%;
+  overflow: hidden;
+  background: var(--fn-bg-layout, var(--fn-bg-container));
 }
 
-.sizePickerGroup {
+.presentBar {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.sizePickerLabel {
-  font-size: 12px;
-  color: var(--fn-text-tertiary);
-}
-
-.sizePickerOptions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.sizePickerOption {
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  width: 54px;
-  padding: 6px 4px;
-  border: 1px solid var(--fn-color-brand-border);
-  border-radius: 6px;
+  gap: 12px;
+  flex: none;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--fn-color-brand-border);
   background: var(--fn-bg-elevated);
-  color: inherit;
-  cursor: pointer;
-
-  &:hover {
-    border-color: var(--fn-color-brand);
-  }
 }
 
-.sizePickerOptionActive {
-  border-color: var(--fn-color-brand);
-  background: var(--fn-color-brand-bg);
+.presentTitle {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
 }
 
-.sizeSwatch {
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--fn-text-tertiary);
-  border-radius: 2px;
-  background: var(--fn-bg-container);
-  color: var(--fn-color-brand);
-}
-
-.sizeSwatchLabel {
-  font-size: 11px;
-  line-height: 1;
-  color: var(--fn-text-secondary);
+.presentBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-top: 12px;
 }

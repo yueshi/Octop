@@ -6,6 +6,7 @@ const ExpertsPage = lazy(() => import("../pages/Experts"));
 const TeamBoardPage = lazy(() => import("../pages/Teams/TeamBoardPage"));
 const AppsPage = lazy(() => import("../pages/Apps"));
 const AppDetailPage = lazy(() => import("../pages/Apps/Detail"));
+const BoardViewPage = lazy(() => import("../pages/Apps/BoardView"));
 const CronJobsPage = lazy(() => import("../pages/Control/CronJobs"));
 const ConnectorsPage = lazy(() => import("../pages/Agent/Connectors"));
 const SkillPackagesPage = lazy(() => import("../pages/SkillPackages"));
@@ -126,6 +127,11 @@ export const SELF_HEADER_PATHS = new Set<string>([]);
 /** Mobile-only fullscreen pages (custom header + no content padding). */
 export const MOBILE_FULLSCREEN_PATHS = new Set<string>([]);
 
+/** Standalone board presentation: hide the dashboard shell in this tab. */
+export function isBoardPresentPath(pathname: string): boolean {
+  return /^\/apps\/boards\/[^/]+\/view\/?$/.test(pathname);
+}
+
 export function isWorkbenchPath(pathname: string): boolean {
   return pathname === "/workbench" || pathname.startsWith("/workbench/");
 }
@@ -163,6 +169,8 @@ export const routeConfigs: RouteConfig[] = [
 
   // Common
   { path: "/apps", element: <AppsPage /> },
+  { path: "/apps/boards/:boardId", element: <AppsPage /> },
+  { path: "/apps/boards/:boardId/view", element: <BoardViewPage /> },
   { path: "/apps/:appId", element: <AppDetailPage /> },
   { path: "/experts", element: <ExpertsPage /> },
   { path: "/teams/:teamId/board", element: <TeamBoardPage /> },
