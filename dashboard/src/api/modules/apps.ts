@@ -27,6 +27,7 @@ export interface AppSummary {
   has_preview: boolean;
   /** Page capabilities; absent in older payloads (legacy all-on). */
   capabilities?: string[];
+  previous_html_at?: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -387,6 +388,11 @@ export const appsApi = {
     request<AppDetail>(`/apps/${encodeId(appId)}/capabilities`, {
       method: "PUT",
       body: JSON.stringify({ capabilities }),
+    }),
+
+  restoreHtml: (appId: string) =>
+    request<AppDetail>(`/apps/${encodeId(appId)}/restore-html`, {
+      method: "POST",
     }),
 
   publication: (appId: string) =>

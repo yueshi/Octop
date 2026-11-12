@@ -1784,6 +1784,40 @@ async def test_public_link_freezes_html_until_republished(
     assert "<h1>v2</h1>" in r.json()["html"]
 
 
+async def test_restore_previous_html_swaps_versions(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+    service = _service(srv)
+    row = service.get(app_id)
+
+    r = await client.post(f"/api/apps/{app_id}/restore-html", headers=alice_auth)
+    assert r.status_code == 404
+
+    await service.write_html(row, "<html><body><h1>v1</h1></body></html>")
+    await service.write_html(row, "<html><body><h1>v2</h1></body></html>")
+
+    r = await client.get(f"/api/apps/{app_id}", headers=alice_auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["previous_html_at"] is not None
+
+    r = await client.post(f"/api/apps/{app_id}/restore-html", headers=bob_auth)
+    assert r.status_code == 403
+
+    r = await client.post(f"/api/apps/{app_id}/restore-html", headers=alice_auth)
+    assert r.status_code == 200, r.text
+    r = await client.get(f"/api/apps/{app_id}/html", headers=alice_auth)
+    assert r.status_code == 200, r.text
+    assert "<h1>v1</h1>" in r.text
+
+    # A second restore swaps back to the version that was just replaced.
+    r = await client.post(f"/api/apps/{app_id}/restore-html", headers=alice_auth)
+    assert r.status_code == 200, r.text
+    r = await client.get(f"/api/apps/{app_id}/html", headers=alice_auth)
+    assert "<h1>v2</h1>" in r.text
+
+
 async def test_alter_schema_can_mark_existing_columns_as_pii(
     env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
 ) -> None:

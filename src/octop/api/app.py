@@ -88,7 +88,15 @@ def _install_exception_handlers(app: FastAPI) -> None:
                 exc_info=exc,
             )
         locale = resolve_request_locale(request)
-        return JSONResponse(status_code=exc.status, content=exc.to_envelope(locale=locale))
+        headers = None
+        if exc.code is ErrorCode.APP_BUSY:
+            retry_after = int(exc.details.get("retry_after", 60))
+            headers = {"Retry-After": str(retry_after)}
+        return JSONResponse(
+            status_code=exc.status,
+            content=exc.to_envelope(locale=locale),
+            headers=headers,
+        )
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:

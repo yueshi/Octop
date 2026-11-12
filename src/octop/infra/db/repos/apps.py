@@ -38,6 +38,8 @@ class LightAppRow:
     data_bytes: int
     storage_version: int
     capabilities_json: str
+    previous_html: str
+    previous_html_at: int | None
     created_at: int
     updated_at: int
 
@@ -55,6 +57,10 @@ class LightAppRow:
             data_bytes=int(r["data_bytes"] or 0),
             storage_version=int(r["storage_version"] or 1),
             capabilities_json=str(r["capabilities_json"] or ""),
+            previous_html=str(r["previous_html"] or ""),
+            previous_html_at=(
+                int(r["previous_html_at"]) if r["previous_html_at"] is not None else None
+            ),
             created_at=int(r["created_at"]),
             updated_at=int(r["updated_at"]),
         )
@@ -808,6 +814,13 @@ class LightAppRepo:
             conn.execute(
                 "UPDATE light_apps SET capabilities_json = ?, updated_at = ? WHERE app_id = ?",
                 (capabilities_json, now_ts(), app_id),
+            )
+
+    def set_previous_html(self, app_id: str, html: str, saved_at: int) -> None:
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE light_apps SET previous_html = ?, previous_html_at = ? WHERE app_id = ?",
+                (html, saved_at, app_id),
             )
 
     def set_file_stats(

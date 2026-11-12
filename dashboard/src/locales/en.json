@@ -211,6 +211,7 @@
     "APP_SOURCE_INVALID": "Invalid data source configuration.",
     "APP_CAPABILITY_INVALID": "Invalid app capability configuration.",
     "APP_CAPABILITY_DENIED": "This MiniApp does not allow that page action.",
+    "APP_BUSY": "This MiniApp is handling too many requests. Please try again shortly.",
     "CHAT_IM_UNAVAILABLE": "The IM channel for this conversation is not connected; switch to Web-only or reconnect the channel.",
     "AVATAR_INVALID": "Avatar must be a PNG, JPEG, WebP, or GIF image.",
     "AVATAR_TOO_LARGE": "Avatar exceeds the 5 MB size limit.",
@@ -1887,6 +1888,9 @@
       "eventsEmit": "Send events and alerts",
       "schedulesManage": "Manage schedules"
     },
+    "composeEmpty": "Message is empty",
+    "composeTooLong": "Message is too long",
+    "composeUnavailable": "Message input is not available here",
     "board": {
       "empty": "No MiniApp on the board yet. Open “All MiniApps” at the top right to pin some.",
       "add": "Pin to board",
@@ -2159,6 +2163,10 @@
     "publishStaleHtml": "HTML changed",
     "publishStaleSchema": "Table structure changed",
     "publishStaleWorkspace": "Workspace unavailable",
+    "restoreHtml": "Restore previous",
+    "restoreHtmlTitle": "Restore the previous version?",
+    "restoreHtmlConfirm": "The current HTML will become the previous version.",
+    "restoreHtmlDone": "Previous version restored",
     "inspectCardInvalid": "No structured inspection data",
     "inspectRows": "{{count}} rows",
     "inspectSheet": "Sheet",

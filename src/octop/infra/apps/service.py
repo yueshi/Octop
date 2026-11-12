@@ -224,6 +224,12 @@ class AppRecord(Protocol):
     def capabilities_json(self) -> str: ...
 
     @property
+    def previous_html(self) -> str: ...
+
+    @property
+    def previous_html_at(self) -> int | None: ...
+
+    @property
     def created_at(self) -> int: ...
 
     @property
@@ -247,6 +253,7 @@ class AppView:
     updated_at: int
     has_preview: bool = False
     capabilities: tuple[str, ...] = ()
+    previous_html_at: int | None = None
 
     @property
     def has_html(self) -> bool:
@@ -759,6 +766,7 @@ class AppService:
             created_at=row.created_at,
             updated_at=row.updated_at,
             capabilities=tuple(app_capabilities.describe(row.capabilities_json)),
+            previous_html_at=row.previous_html_at,
         )
 
     def capabilities(self, row: AppRecord) -> frozenset[str]:
@@ -1769,11 +1777,29 @@ class AppService:
         async with _lock_for(row.app_id):
             self._require_live(row.app_id)
             ws = await self._workspace(row.agent_id)
+            previous = await ws.aread_text(app_path(row.app_id, FILE_HTML))
+            if previous and previous != content:
+                self._app_repo.set_previous_html(
+                    row.app_id,
+                    previous,
+                    int(time.time()),
+                )
             await ws.awrite_text(app_path(row.app_id, FILE_HTML), content)
             self._app_repo.touch(row.app_id)
             self._app_repo.set_file_stats(row.app_id, html_bytes=size)
             await self._refresh_manifest(ws, row.app_id)
         return size
+
+    async def restore_html(self, row: AppRecord) -> LightAppRow:
+        """Put the last replaced HTML back; calling it again swaps versions."""
+        current = self.get(row.app_id)
+        if not current.previous_html:
+            raise OctopError(
+                ErrorCode.APP_NOT_FOUND,
+                "no previous HTML to restore",
+            )
+        await self.write_html(current, current.previous_html)
+        return self.get(row.app_id)
 
     async def read_schema(self, row: AppRecord, table_key: str = MAIN_TABLE_KEY) -> Schema:
         key = self._require_table(row, table_key)

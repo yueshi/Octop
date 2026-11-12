@@ -31,6 +31,8 @@ class Metrics:
     light_app_assistant_total: int = 0
     light_app_generate_total: int = 0
     light_app_public_view_total: int = 0
+    light_app_llm_rejected_total: int = 0
+    light_app_public_rate_limited_total: int = 0
     agent_active: int = 0
     first_agent_created_total: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -69,6 +71,8 @@ class Metrics:
                 "light_app_assistant_total": self.light_app_assistant_total,
                 "light_app_generate_total": self.light_app_generate_total,
                 "light_app_public_view_total": self.light_app_public_view_total,
+                "light_app_llm_rejected_total": self.light_app_llm_rejected_total,
+                "light_app_public_rate_limited_total": self.light_app_public_rate_limited_total,
                 "agent_active": self.agent_active,
                 "first_agent_created_total": self.first_agent_created_total,
             }

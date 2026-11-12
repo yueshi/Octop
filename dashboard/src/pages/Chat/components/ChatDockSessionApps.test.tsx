@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import ChatDockSessionApps from "./ChatDockSessionApps";
@@ -27,23 +28,31 @@ const apps = [
   },
 ];
 
+function renderDock(dockApps: typeof apps) {
+  return render(
+    <MemoryRouter>
+      <ChatDockSessionApps apps={dockApps} />
+    </MemoryRouter>,
+  );
+}
+
 describe("ChatDockSessionApps", () => {
   it("explains when the conversation has no MiniApp", () => {
-    render(<ChatDockSessionApps apps={[]} />);
+    renderDock([]);
     expect(
       screen.getByText("No MiniApp in this conversation yet."),
     ).toBeInTheDocument();
   });
 
   it("lists the session MiniApps", () => {
-    render(<ChatDockSessionApps apps={apps} />);
+    renderDock(apps);
     expect(screen.getByText("客户台账")).toBeInTheDocument();
     expect(screen.getByText("业绩看板")).toBeInTheDocument();
     expect(screen.queryByTestId("mini-app-frame")).not.toBeInTheDocument();
   });
 
   it("runs the selected MiniApp inside the panel and goes back", () => {
-    render(<ChatDockSessionApps apps={apps} />);
+    renderDock(apps);
     fireEvent.click(screen.getByText("客户台账"));
 
     expect(screen.getByTestId("mini-app-frame")).toHaveAttribute(

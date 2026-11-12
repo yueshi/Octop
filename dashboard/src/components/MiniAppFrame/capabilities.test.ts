@@ -14,6 +14,8 @@ describe("MiniApp capabilities", () => {
     expect(isMethodAllowed("generate", [CAP.AI_GENERATE])).toBe(true);
     expect(isMethodAllowed("launchGame", [CAP.AI_GENERATE])).toBe(false);
     expect(isMethodAllowed("asset", [CAP.DATA_READ])).toBe(false);
+    expect(isMethodAllowed("composeMessage", [CAP.CHAT_COMPOSE])).toBe(true);
+    expect(isMethodAllowed("composeMessage", [CAP.DATA_READ])).toBe(false);
   });
 
   it("leaves untracked methods to the bridge switch", () => {

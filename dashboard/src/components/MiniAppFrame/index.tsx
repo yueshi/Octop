@@ -22,6 +22,8 @@ interface Props {
   onLaunchGame?: (gameId: string) => Promise<string>;
   /** Page capabilities; omit for legacy payloads (all page actions allowed). */
   capabilities?: readonly string[];
+  /** Fill the chat composer (never sends automatically). */
+  onComposeMessage?: (text: string) => void | Promise<void>;
 }
 
 interface BridgeParams {
@@ -34,6 +36,7 @@ interface BridgeParams {
   prompt?: string;
   system?: string;
   gameId?: string;
+  text?: string;
 }
 
 /**
@@ -48,6 +51,7 @@ export default function MiniAppFrame({
   fill = false,
   onLaunchGame,
   capabilities,
+  onComposeMessage,
 }: Props) {
   const { t } = useTranslation();
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -190,6 +194,24 @@ export default function MiniAppFrame({
               system: String(data.params?.system ?? ""),
             });
             reply({ ok: true, data: result });
+          } else if (data.method === "composeMessage") {
+            const text = String(data.params?.text ?? "").trim();
+            if (!text) {
+              throw new Error(t("apps.composeEmpty", "Message is empty"));
+            }
+            if (text.length > 4000) {
+              throw new Error(t("apps.composeTooLong", "Message is too long"));
+            }
+            if (!onComposeMessage) {
+              throw new Error(
+                t(
+                  "apps.composeUnavailable",
+                  "Message input is not available here",
+                ),
+              );
+            }
+            await onComposeMessage(text);
+            reply({ ok: true, data: { filled: true } });
           } else if (data.method === "launchGame") {
             const gameId = String(data.params?.gameId ?? "").trim();
             if (!gameId) throw new Error("gameId is required");
@@ -250,7 +272,7 @@ export default function MiniAppFrame({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [appId, capabilities, onLaunchGame, t]);
+  }, [appId, capabilities, onComposeMessage, onLaunchGame, t]);
 
   const srcDoc = useMemo(() => (html ? buildSrcDoc(html) : ""), [html]);
 

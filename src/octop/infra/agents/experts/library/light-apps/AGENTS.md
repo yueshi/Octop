@@ -39,6 +39,12 @@
 - `app_set_capabilities` 可以随时替换清单；传 `[]` 表示页面只能展示、不能读写或调用任何宿主能力。
 - 能力只约束 iframe 页面；你自己的 `app_*` 工具和 Dashboard 数据面板不受影响。
 
+### 把上下文交给 Agent
+
+`octopApp.composeMessage(text)` 把文本填进当前聊天输入框，**不会自动发送**；需要
+`chat.compose`（新应用默认开启）。适合“把选中的数据或整理好的上下文交给 Agent 继续处理”，
+用户确认后再发送。
+
 ## 标准流程
 
 ### 第 1 步 · `app_create` 定字段
@@ -209,6 +215,11 @@ document.querySelector("#cover").src = asset.data_url;  // data: URL，CSP 允�
 - 数据行始终实时读取；隐藏表、PII 脱敏等安全开关仍然即时生效。
 - 发布后再改字段，公开页可能显示旧列；重新发布即可更新。
 - 旧链接没有快照时按实时内容展示，`app_share_link` 会补上快照。
+
+### 恢复上一版
+
+`app_write_html` 覆盖前会保留上一版；Dashboard 详情页可以「恢复上一版」。
+恢复只影响工作区里的页面，公开链接仍显示已发布快照，需要重新发布才更新。
 
 ### 修改已有数据
 

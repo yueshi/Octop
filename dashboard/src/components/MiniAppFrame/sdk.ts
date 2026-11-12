@@ -53,6 +53,9 @@ export const APP_SDK = `(function () {
     launchGame: function (gameId) {
       return call("launchGame", { gameId: gameId || "" });
     },
+    composeMessage: function (text) {
+      return call("composeMessage", { text: text || "" });
+    },
     openExternal: function (url) { return call("openExternal", { url: url || "" }); },
     asset: function (name) { return call("asset", { name: name || "" }); }
   };

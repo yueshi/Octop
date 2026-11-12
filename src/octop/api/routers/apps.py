@@ -27,6 +27,7 @@ from octop.infra.apps import capabilities as app_capabilities
 from octop.infra.apps.assistant import AppAssistant
 from octop.infra.apps.game_sessions import create_game_token
 from octop.infra.apps.generation import AppGenerator
+from octop.infra.apps.limits import acquire_app_llm, app_llm_slot, release_app_llm
 from octop.infra.apps.models import MAIN_TABLE_KEY, Schema
 from octop.infra.apps.preview import validate_preview_svg
 from octop.infra.apps.service import (
@@ -86,6 +87,10 @@ class AppSummary(BaseModel):
     capabilities: list[str] = Field(
         default_factory=list,
         description="Page-facing capabilities the MiniApp may request from the host.",
+    )
+    previous_html_at: int | None = Field(
+        default=None,
+        description="Unix time of the last replaced HTML, when a restore is available.",
     )
     created_at: int
     updated_at: int
@@ -1461,6 +1466,31 @@ async def update_app_capabilities(
     return await _app_detail(service, row)
 
 
+@router.post(
+    "/{app_id}/restore-html",
+    response_model=AppDetail,
+    summary="Restore the previous MiniApp HTML",
+    description=(
+        "Puts back the HTML replaced by the last app_write_html. Calling it again "
+        "swaps the two versions. Requires edit_structure."
+    ),
+)
+async def restore_app_html(
+    app_id: str,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> AppDetail:
+    service, row, _permission = _row_access(server, user, app_id, "edit_structure")
+    restored = await service.restore_html(row)
+    _audit(
+        server,
+        actor=f"user:{user.id}",
+        action="light_app.html.restore",
+        target=app_id,
+    )
+    return await _app_detail(service, restored)
+
+
 @router.delete(
     "/{app_id}",
     response_model=DeleteAppResponse,
@@ -1815,9 +1845,16 @@ async def ask_app_assistant(
     # (agent not running, no usable model) surface as regular HTTP errors.
     prepared = assistant.prepare(row, user_id=user.id, question=question, locale=locale)
 
+    # Take the slot before the streaming response starts, so a busy app gets
+    # a real 429 instead of a broken 200 stream.
+    acquire_app_llm(row.app_id)
+
     async def gen() -> AsyncIterator[str]:
-        async for event in assistant.stream(prepared):
-            yield format_sse("chunk", event)
+        try:
+            async for event in assistant.stream(prepared):
+                yield format_sse("chunk", event)
+        finally:
+            release_app_llm(row.app_id)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -1870,13 +1907,14 @@ async def generate_app_text(
 
     METRICS.inc("light_app_generate_total")
     locale = resolve_request_locale(request)
-    generated = await _generator(server).generate(
-        row,
-        user_id=user.id,
-        prompt=prompt,
-        system=body.system,
-        locale=locale,
-    )
+    async with app_llm_slot(row.app_id):
+        generated = await _generator(server).generate(
+            row,
+            user_id=user.id,
+            prompt=prompt,
+            system=body.system,
+            locale=locale,
+        )
     # 成本归创建者，调用者身份单独留痕（可追溯，不参与计费归属）。
     assert server.services is not None
     server.services.audit_repo.write(

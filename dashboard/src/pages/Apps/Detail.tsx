@@ -38,6 +38,7 @@ import {
   Download,
   Edit3,
   FileCode,
+  History,
   Info,
   Link2,
   MessageSquareText,
@@ -447,6 +448,7 @@ export default function AppDetailPage() {
           prompt?: string;
           system?: string;
           gameId?: string;
+          text?: string;
         };
       } | null;
       if (
@@ -547,6 +549,19 @@ export default function AppDetailPage() {
               system: String(data.params?.system ?? ""),
             });
             reply({ ok: true, data: result });
+          } else if (data.method === "composeMessage") {
+            const text = String(data.params?.text ?? "").trim();
+            if (!text) {
+              throw new Error(t("apps.composeEmpty", "Message is empty"));
+            }
+            if (text.length > 4000) {
+              throw new Error(t("apps.composeTooLong", "Message is too long"));
+            }
+            const current = await appsApi.get(appId);
+            navigate(`/chat/${encodeURIComponent(current.agent_id)}`, {
+              state: { prefillInput: text },
+            });
+            reply({ ok: true, data: { filled: true } });
           } else if (data.method === "launchGame") {
             const gameId = String(data.params?.gameId ?? "").trim();
             if (!gameId) throw new Error("gameId is required");
@@ -611,7 +626,7 @@ export default function AppDetailPage() {
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [appId, t]);
+  }, [appId, navigate, t]);
 
   const srcDoc = useMemo(() => (html ? buildSrcDoc(html) : ""), [html]);
 
@@ -857,6 +872,18 @@ export default function AppDetailPage() {
       message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
     } finally {
       setPublicationBusy(false);
+    }
+  };
+
+  const restoreHtml = async () => {
+    try {
+      const updated = await appsApi.restoreHtml(appId);
+      setDetail(updated);
+      setHtml(await appsApi.getHtml(appId));
+      setHtmlReloadKey((value) => value + 1);
+      message.success(t("apps.restoreHtmlDone", "Previous version restored"));
+    } catch (err) {
+      message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
     }
   };
 
@@ -1322,6 +1349,25 @@ export default function AppDetailPage() {
               <Button icon={<Edit3 size={16} />} onClick={openRename}>
                 {t("apps.rename")}
               </Button>
+              {detail.previous_html_at ? (
+                <Popconfirm
+                  title={t(
+                    "apps.restoreHtmlTitle",
+                    "Restore the previous version?",
+                  )}
+                  description={t(
+                    "apps.restoreHtmlConfirm",
+                    "The current HTML will become the previous version.",
+                  )}
+                  okText={t("apps.restoreHtml", "Restore previous")}
+                  cancelText={t("common.cancel")}
+                  onConfirm={() => void restoreHtml()}
+                >
+                  <Button icon={<History size={16} />}>
+                    {t("apps.restoreHtml", "Restore previous")}
+                  </Button>
+                </Popconfirm>
+              ) : null}
               <Popconfirm
                 title={t("apps.deleteTitle")}
                 description={t("apps.deleteConfirm")}

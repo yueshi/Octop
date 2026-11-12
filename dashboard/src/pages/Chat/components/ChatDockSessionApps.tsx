@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button, Empty, Typography } from "antd";
 import { AppWindow, ChevronLeft, ChevronRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { appPreviewPath } from "../../../api/modules/apps";
 import MiniAppFrame from "../../../components/MiniAppFrame";
@@ -45,6 +46,8 @@ export default function ChatDockSessionApps({
   apps: readonly SessionApp[];
 }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = apps.find((app) => app.app_id === selectedId) ?? null;
 
@@ -87,6 +90,11 @@ export default function ChatDockSessionApps({
             appId={selected.app_id}
             title={selected.name}
             capabilities={selected.capabilities}
+            onComposeMessage={(text) =>
+              navigate(location.pathname, {
+                state: { prefillInput: text },
+              })
+            }
             fill
           />
         </div>

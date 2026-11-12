@@ -15,7 +15,7 @@
 >
 > 演示稿：[HTML](./miniapp-platform-roadmap.html) · [PPTX](./miniapp-platform-roadmap.pptx)。
 >
-> 实施进度：F1 页面能力清单、F2 发布快照已落地（2026-11-12）；F3–F5 待实施。
+> 实施进度：F1 页面能力清单、F2 发布快照、F3 composeMessage、F4 限流、F5 上一版回滚已落地（2026-11-12）；P1/P2 多 Board 待实施。
 
 ---
 

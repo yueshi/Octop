@@ -2,6 +2,7 @@ import { Button, Card, Space, Tag, Typography } from "antd";
 import { AppWindow, PanelRightOpen } from "lucide-react";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { appsApi, appPreviewPath } from "../../../api/modules/apps";
 import MiniAppFrame from "../../../components/MiniAppFrame";
@@ -18,6 +19,7 @@ interface AppCardData {
   has_html?: boolean;
   has_preview?: boolean;
   capabilities?: string[];
+  agent_id?: string;
 }
 
 function isAppCardData(data: unknown): data is AppCardData {
@@ -37,6 +39,8 @@ export function AppCard({
   docked,
 }: ToolRenderProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const location = useLocation();
   const app = isAppCardData(data) ? data : null;
   const appId = app?.app_id ?? "";
   const preview = usePreviewImage(
@@ -75,6 +79,17 @@ export function AppCard({
           appId={app.app_id}
           title={app.name}
           capabilities={app.capabilities}
+          onComposeMessage={(text) => {
+            if (location.pathname.startsWith("/chat/")) {
+              navigate(location.pathname, {
+                state: { prefillInput: text },
+              });
+            } else if (app.agent_id) {
+              navigate(`/chat/${encodeURIComponent(app.agent_id)}`, {
+                state: { prefillInput: text },
+              });
+            }
+          }}
           fill
           onLaunchGame={launchGame}
         />

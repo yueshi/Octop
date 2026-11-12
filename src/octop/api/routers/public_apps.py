@@ -7,15 +7,19 @@ iframe the dashboard uses, with a bridge that only supports reads.
 
 from __future__ import annotations
 
+import hashlib
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
+from octop.api.common.client_ip import resolve_client_ip
 from octop.api.deps import get_server
 from octop.api.routers.apps import _columns, _service
+from octop.infra.apps.limits import public_slot
 from octop.infra.apps.models import MAIN_TABLE_KEY
 from octop.infra.errors import ErrorCode, OctopError
 
@@ -53,6 +57,16 @@ def _audit_public(server: Any, app_id: str, action: str) -> None:
     server.services.audit_repo.write(actor="_public", action=action, target=app_id)
 
 
+def _public_key(token: str, request: Request) -> str:
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return f"{digest}:{resolve_client_ip(request)}"
+
+
+async def _public_limit(token: str, request: Request) -> AsyncIterator[None]:
+    async with public_slot(_public_key(token, request)):
+        yield
+
+
 def _public_app(server: Any, token: str) -> tuple[Any, Any]:
     service = _service(server)
     row = service.resolve_public_app(token)
@@ -85,7 +99,11 @@ async def _public_payload(service: Any, row: Any) -> tuple[str, list[dict[str, A
 
 
 @router.get("/{token}", response_model=PublicAppOut, summary="Get a public app")
-async def get_public_app(token: str, server: Any = Depends(get_server)) -> JSONResponse:
+async def get_public_app(
+    token: str,
+    _limit: None = Depends(_public_limit),
+    server: Any = Depends(get_server),
+) -> JSONResponse:
     from octop.infra.metrics import METRICS  # noqa: PLC0415
 
     METRICS.inc("light_app_public_view_total")
@@ -112,6 +130,7 @@ async def get_public_rows(
     table: str = Query(default=MAIN_TABLE_KEY),
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    _limit: None = Depends(_public_limit),
     server: Any = Depends(get_server),
 ) -> JSONResponse:
     from octop.infra.metrics import METRICS  # noqa: PLC0415
@@ -274,7 +293,11 @@ def _escape(text: str) -> str:
 
 
 @page_router.get("/p/{token}", response_class=HTMLResponse, include_in_schema=False)
-async def public_app_page(token: str, server: Any = Depends(get_server)) -> HTMLResponse:
+async def public_app_page(
+    token: str,
+    _limit: None = Depends(_public_limit),
+    server: Any = Depends(get_server),
+) -> HTMLResponse:
     from octop.infra.metrics import METRICS  # noqa: PLC0415
 
     METRICS.inc("light_app_public_view_total")

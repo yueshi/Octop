@@ -517,6 +517,7 @@
     "APP_SOURCE_INVALID": "数据源配置无效。",
     "APP_CAPABILITY_INVALID": "小程序能力配置无效。",
     "APP_CAPABILITY_DENIED": "该小程序未开放此页面操作。",
+    "APP_BUSY": "小程序当前请求过多，请稍后再试。",
     "CHAT_IM_UNAVAILABLE": "该对话的 IM 通道未连接；可以切换到“仅 Web”，或重新连接通道。",
     "AVATAR_INVALID": "头像须为 PNG、JPEG、WebP 或 GIF 图片。",
     "AVATAR_TOO_LARGE": "头像超过 5 MB 大小限制。",

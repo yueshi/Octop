@@ -8,6 +8,10 @@ ALTER TABLE light_app_tables ADD COLUMN public_visible INTEGER NOT NULL DEFAULT 
 -- Empty means a legacy app (all capabilities the original SDK exposed).
 ALTER TABLE light_apps ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '';
 
+-- The last HTML replaced by app_write_html, for a one-click restore.
+ALTER TABLE light_apps ADD COLUMN previous_html TEXT NOT NULL DEFAULT '';
+ALTER TABLE light_apps ADD COLUMN previous_html_at INTEGER;
+
 -- Published links freeze the HTML and public table structure; rows stay live.
 ALTER TABLE light_app_publications ADD COLUMN html_snapshot TEXT NOT NULL DEFAULT '';
 ALTER TABLE light_app_publications ADD COLUMN tables_snapshot_json TEXT NOT NULL DEFAULT '';

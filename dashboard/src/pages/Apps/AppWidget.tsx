@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Button, Dropdown, Popover, Space, Tooltip, Typography } from "antd";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import MiniAppFrame from "../../components/MiniAppFrame";
 import type { AppSummary } from "../../api/modules/apps";
@@ -110,6 +111,7 @@ export default function AppWidget({
   onSetSize,
 }: Props) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [reloadKey, setReloadKey] = useState(0);
   const [sizePickerOpen, setSizePickerOpen] = useState(false);
   const currentSizeLabel = sizeLabel(size);
@@ -254,6 +256,11 @@ export default function AppWidget({
           fill
           title={app.name}
           capabilities={app.capabilities}
+          onComposeMessage={(text) =>
+            navigate(`/chat/${encodeURIComponent(app.agent_id)}`, {
+              state: { prefillInput: text },
+            })
+          }
         />
       </div>
       <Tooltip
