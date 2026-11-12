@@ -25,6 +25,7 @@ interface ExpertCardProps {
   lang: "zh" | "en";
   isInstalled: boolean;
   onCreate: (expert: ExpertSummary) => void;
+  disabled?: boolean;
 }
 
 export const ExpertCard = memo(function ExpertCard({
@@ -32,6 +33,7 @@ export const ExpertCard = memo(function ExpertCard({
   lang,
   isInstalled,
   onCreate,
+  disabled = false,
 }: ExpertCardProps) {
   const { t } = useTranslation();
   const label = pickLocale(expert.label, lang) || expert.id;
@@ -42,8 +44,13 @@ export const ExpertCard = memo(function ExpertCard({
 
   return (
     <div
-      className={styles.expertTemplateCard}
-      onClick={() => onCreate(expert)}
+      className={`${styles.expertTemplateCard} ${
+        disabled ? styles.expertTemplateCardDisabled : ""
+      }`}
+      onClick={() => {
+        if (!disabled) onCreate(expert);
+      }}
+      aria-disabled={disabled || undefined}
       style={
         {
           "--expert-accent": accent,

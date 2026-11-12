@@ -869,6 +869,14 @@ class AgentManager:
             )
             row = self._repos.agent_repo.get(agent_id)
             assert row is not None
+            if (
+                spec.user_id is not None
+                and row.kind == "expert"
+                and self._repos.agent_repo.count_by_user(spec.user_id, kind="expert") == 1
+            ):
+                from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+                METRICS.inc("first_agent_created_total")
             if spec.is_shared:
                 self._repos.agent_repo.set_shared(agent_id, True)
                 row = self._repos.agent_repo.get(agent_id)

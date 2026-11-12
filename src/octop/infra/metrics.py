@@ -32,6 +32,7 @@ class Metrics:
     light_app_generate_total: int = 0
     light_app_public_view_total: int = 0
     agent_active: int = 0
+    first_agent_created_total: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def inc(self, name: str, n: int = 1) -> None:
@@ -69,6 +70,7 @@ class Metrics:
                 "light_app_generate_total": self.light_app_generate_total,
                 "light_app_public_view_total": self.light_app_public_view_total,
                 "agent_active": self.agent_active,
+                "first_agent_created_total": self.first_agent_created_total,
             }
 
 
