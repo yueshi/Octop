@@ -87,18 +87,17 @@ export default function BoardViewPage() {
       </div>
       <div className={styles.presentBody}>
         {loading ? (
-          <div style={{ padding: 48, textAlign: "center" }}>
+          <div className={styles.boardState}>
             <Spin />
           </div>
         ) : error || !board ? (
-          <Empty
-            description={error || t("apps.board.none", "No board yet.")}
-            style={{ padding: "64px 0" }}
-          >
-            <Button type="primary" onClick={() => navigate("/apps")}>
-              {t("apps.board.back", "Back to workbench")}
-            </Button>
-          </Empty>
+          <div className={styles.boardState}>
+            <Empty description={error || t("apps.board.none", "No board yet.")}>
+              <Button type="primary" onClick={() => navigate("/apps")}>
+                {t("apps.board.back", "Back to workbench")}
+              </Button>
+            </Empty>
+          </div>
         ) : (
           <BoardGrid
             items={board.layout.items}

@@ -638,6 +638,7 @@ export default function AppsPage() {
   return (
     <PageShell
       flush
+      fill
       title={t("apps.title", "Workbench")}
       subtitle={t("apps.subtitle", "MiniApps built by your agents")}
       actions={
@@ -676,6 +677,11 @@ export default function AppsPage() {
           <Button type="primary" onClick={() => setCreateOpen(true)}>
             {t("apps.create.button", "Create")}
           </Button>
+          {saving && (
+            <Text className={styles.savingHint}>
+              {t("apps.board.saving", "Saving…")}
+            </Text>
+          )}
           <Tooltip title={t("apps.board.presentHint", "Open in a new tab")}>
             <Button
               icon={<Maximize2 size={16} />}
@@ -689,40 +695,41 @@ export default function AppsPage() {
       }
     >
       {loading ? (
-        <div style={{ padding: 48, textAlign: "center" }}>
+        <div className={styles.boardState}>
           <Spin />
         </div>
       ) : apps.length === 0 ? (
-        <Empty
-          image={<AppWindow size={48} strokeWidth={1.2} opacity={0.45} />}
-          description={
-            <Space direction="vertical" size={4}>
-              <Text>{t("apps.empty", "No MiniApps yet.")}</Text>
-              <Text type="secondary">
-                {t(
-                  "apps.emptyHint",
-                  'Try: "make a reading list with title, author and status"',
-                )}
-              </Text>
+        <div className={styles.boardState}>
+          <Empty
+            image={<AppWindow size={48} strokeWidth={1.2} opacity={0.45} />}
+            description={
+              <Space direction="vertical" size={4}>
+                <Text>{t("apps.empty", "No MiniApps yet.")}</Text>
+                <Text type="secondary">
+                  {t(
+                    "apps.emptyHint",
+                    'Try: "make a reading list with title, author and status"',
+                  )}
+                </Text>
+              </Space>
+            }
+          >
+            <Space>
+              <Button type="primary" onClick={() => setCreateOpen(true)}>
+                {t("apps.create.button", "Create")}
+              </Button>
+              <Button
+                icon={<MessageSquareText size={16} />}
+                onClick={() => navigate("/chat")}
+              >
+                {t("apps.openChat", "Open chat")}
+              </Button>
             </Space>
-          }
-          style={{ padding: "64px 0" }}
-        >
-          <Space>
-            <Button type="primary" onClick={() => setCreateOpen(true)}>
-              {t("apps.create.button", "Create")}
-            </Button>
-            <Button
-              icon={<MessageSquareText size={16} />}
-              onClick={() => navigate("/chat")}
-            >
-              {t("apps.openChat", "Open chat")}
-            </Button>
-          </Space>
-        </Empty>
+          </Empty>
+        </div>
       ) : !board ? (
         detailLoading ? (
-          <div style={{ padding: 48, textAlign: "center" }}>
+          <div className={styles.boardState}>
             <Spin />
           </div>
         ) : (
@@ -753,13 +760,6 @@ export default function AppsPage() {
           onRemoveApp={unpinApp}
           onComposeMessage={composeMessage}
         />
-      )}
-      {saving && (
-        <div style={{ padding: "0 16px 16px" }}>
-          <Text className={styles.savingHint}>
-            {t("apps.board.saving", "Saving…")}
-          </Text>
-        </div>
       )}
 
       <Drawer

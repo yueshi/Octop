@@ -1,23 +1,26 @@
-import { useCallback, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Tooltip, Typography } from "antd";
 import { AppWindow, ExternalLink, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import ReactGridLayout, { type Layout } from "react-grid-layout/legacy";
-import { useContainerWidth } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 
 import MiniAppFrame from "../../components/MiniAppFrame";
 import type { AppSummary } from "../../api/modules/apps";
 import type { BoardItem } from "../../api/modules/boards";
+import {
+  BOARD_FALLBACK_ROW_HEIGHT,
+  BOARD_GRID_COLS,
+  BOARD_MARGIN_Y,
+  fitBoardRowHeight,
+} from "./boardLayout";
 import styles from "./index.module.less";
 import "./boardGrid.css";
 
 const { Text } = Typography;
 
-const GRID_COLS = 12;
-const ROW_HEIGHT = 64;
-const MARGIN: readonly [number, number] = [12, 12];
+const MARGIN: readonly [number, number] = [12, BOARD_MARGIN_Y];
 const MIN_W = 2;
 const MIN_H = 2;
 /** Below this width the 12-column grid is too dense; stack cells instead. */
@@ -145,7 +148,6 @@ export default function BoardGrid({
   className,
 }: Props) {
   const { t } = useTranslation();
-  const { width, containerRef, mounted } = useContainerWidth();
   const byId = new Map(apps.map((app) => [app.app_id, app]));
   const cells = items
     .map((item) => ({ item, app: byId.get(item.app_id) }))
@@ -154,70 +156,97 @@ export default function BoardGrid({
         entry.app !== undefined,
     );
 
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const [fill, setFill] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const element = canvasRef.current;
+    if (!element) return;
+    const measure = (rect?: { width: number; height: number }) => {
+      const next = rect ?? element.getBoundingClientRect();
+      setFill({ width: next.width, height: next.height });
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (rect) measure(rect);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
   const handleLayoutChange = useCallback(
     (layout: Layout) => onLayoutChange?.(fromLayout(layout)),
     [onLayoutChange],
   );
 
-  const narrow = mounted && width > 0 && width < NARROW_PX;
+  const narrow = fill.width > 0 && fill.width < NARROW_PX;
+  const gridWidth = fill.width > 0 ? fill.width : 1280;
+  // Stretch the row height so the occupied rows fill the page exactly; a
+  // dense board keeps a readable minimum and scrolls instead.
+  const rowCount = cells.reduce(
+    (max, cell) => Math.max(max, cell.item.y + cell.item.h),
+    1,
+  );
+  const rowHeight =
+    fill.height > 0
+      ? fitBoardRowHeight(fill.height, rowCount)
+      : BOARD_FALLBACK_ROW_HEIGHT;
 
   return (
     <div
-      // react-grid-layout ships React 19 ref types; React 18 accepts the same
-      // object structurally.
-      ref={containerRef as unknown as RefObject<HTMLDivElement>}
-      className={[className ?? "", narrow ? "" : styles.boardRoot]
-        .filter(Boolean)
-        .join(" ")}
+      className={[styles.boardRoot, className].filter(Boolean).join(" ")}
       data-board-root
     >
-      {narrow ? (
-        <div className={styles.boardStack}>
-          {cells.map(({ app }) => (
-            <div key={app.app_id} className={styles.stackCell}>
-              <BoardCell
-                app={app}
-                editable={editable}
-                onOpenApp={onOpenApp}
-                onRemoveApp={onRemoveApp}
-                onComposeMessage={onComposeMessage}
-              />
-            </div>
-          ))}
-        </div>
-      ) : (
-        <ReactGridLayout
-          className={styles.boardGrid}
-          width={width}
-          cols={GRID_COLS}
-          rowHeight={ROW_HEIGHT}
-          margin={MARGIN}
-          containerPadding={[0, 0]}
-          layout={toLayout(cells.map((cell) => cell.item))}
-          compactType="vertical"
-          isDraggable={editable}
-          isResizable={editable}
-          isBounded
-          resizeHandles={["se"]}
-          draggableHandle={`${styles.notchZone}, ${styles.cellHead}`}
-          draggableCancel="button,a,input,textarea,select"
-          onLayoutChange={handleLayoutChange}
-          onDragStop={(layout) => onCommit?.(fromLayout(layout))}
-          onResizeStop={(layout) => onCommit?.(fromLayout(layout))}
-        >
-          {cells.map(({ app }) => (
-            <div key={app.app_id}>
-              <BoardCell
-                app={app}
-                editable={editable}
-                onOpenApp={onOpenApp}
-                onRemoveApp={onRemoveApp}
-                onComposeMessage={onComposeMessage}
-              />
-            </div>
-          ))}
-        </ReactGridLayout>
-      )}
+      <div ref={canvasRef} className={styles.boardFill}>
+        {narrow ? (
+          <div className={styles.boardStack}>
+            {cells.map(({ app }) => (
+              <div key={app.app_id} className={styles.stackCell}>
+                <BoardCell
+                  app={app}
+                  editable={editable}
+                  onOpenApp={onOpenApp}
+                  onRemoveApp={onRemoveApp}
+                  onComposeMessage={onComposeMessage}
+                />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <ReactGridLayout
+            width={gridWidth}
+            cols={BOARD_GRID_COLS}
+            rowHeight={rowHeight}
+            margin={MARGIN}
+            containerPadding={[0, 0]}
+            layout={toLayout(cells.map((cell) => cell.item))}
+            compactType="vertical"
+            isDraggable={editable}
+            isResizable={editable}
+            isBounded
+            resizeHandles={["se"]}
+            draggableHandle={`${styles.notchZone}, ${styles.cellHead}`}
+            draggableCancel="button,a,input,textarea,select"
+            onLayoutChange={handleLayoutChange}
+            onDragStop={(layout) => onCommit?.(fromLayout(layout))}
+            onResizeStop={(layout) => onCommit?.(fromLayout(layout))}
+          >
+            {cells.map(({ app }) => (
+              <div key={app.app_id}>
+                <BoardCell
+                  app={app}
+                  editable={editable}
+                  onOpenApp={onOpenApp}
+                  onRemoveApp={onRemoveApp}
+                  onComposeMessage={onComposeMessage}
+                />
+              </div>
+            ))}
+          </ReactGridLayout>
+        )}
+      </div>
       {editable && !narrow && cells.length > 0 && (
         <div className={styles.boardHint}>
           {t(

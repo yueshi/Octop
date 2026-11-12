@@ -2,12 +2,18 @@
    catalog lives in a drawer opened from the title row. */
 
 .boardRoot {
-  min-height: 100%;
-  padding: 4px 16px 32px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 4px 16px 0;
 }
 
-.boardGrid {
-  min-height: 160px;
+/* The grid stretches its rows to this box; a dense board scrolls inside it. */
+.boardFill {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 /* Phones: a 12-column grid is too dense, so cells stack at a readable size. */
@@ -15,7 +21,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 4px 12px 24px;
+  padding: 0 0 24px;
 }
 
 .stackCell {
@@ -155,13 +161,30 @@
 }
 
 .boardHint {
-  padding-top: 10px;
+  flex: none;
+  padding: 8px 0 10px;
   font-size: 12px;
   color: var(--fn-text-tertiary);
 }
 
+/* Centered page states fill the content area instead of floating on top. */
+.boardState {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow: auto;
+}
+
 .boardEmpty {
-  margin: 24px 16px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  margin: 0 16px 12px;
   padding: 32px;
   border: 1px dashed var(--fn-color-brand-border);
   border-radius: 10px;
@@ -254,7 +277,9 @@
 }
 
 .presentBody {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-height: 0;
   overflow: auto;
   padding-top: 12px;
