@@ -25,7 +25,7 @@ import secrets
 import threading
 import time
 import zipfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
@@ -745,6 +745,36 @@ class AppService:
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
+
+    async def views_for_app_ids(
+        self, app_ids: Iterable[str], user_id: int, *, is_admin: bool
+    ) -> list[AppView]:
+        """Views for *app_ids* the user may open, preserving their order.
+
+        Ids that no longer resolve (deleted app) or that the user cannot see are
+        skipped. Used by the chat dock, whose ids come from the transcript.
+        """
+        owners: dict[int, str] = {}
+        candidates: list[tuple[AppRecord, str]] = []
+        for app_id in app_ids:
+            try:
+                row = self.get(app_id)
+            except OctopError:
+                continue
+            permission = self.permission_for(row, user_id, is_admin=is_admin)
+            if permission is None:
+                continue
+            candidates.append((row, permission))
+        # Preview reads hit the workspace; do them concurrently so the chat
+        # dock does not wait for one remote round trip per app.
+        previews = await asyncio.gather(*(self.has_preview(row) for row, _permission in candidates))
+        return [
+            replace(
+                self.view(row, permission, owners=owners),
+                has_preview=preview,
+            )
+            for (row, permission), preview in zip(candidates, previews, strict=True)
+        ]
 
     async def list_views_with_stats(self, user_id: int, *, is_admin: bool) -> list[AppView]:
         """List views, backfilling the cached file sizes for apps that predate them.

@@ -1350,6 +1350,49 @@
   gap: 8px;
 }
 
+/* Bottom collapse affordance for long thinking / tool bodies. Sticky inside
+   the message scrollport: it follows the reader down the fold, then settles
+   after the last step instead of overlapping the answer. */
+.processSummaryCollapse {
+  position: sticky;
+  bottom: 8px;
+  z-index: 1;
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  padding: 4px 12px;
+  border: 1px solid var(--fn-border-secondary, rgba(0, 0, 0, 0.08));
+  border-radius: 999px;
+  background: color-mix(
+    in srgb,
+    var(--fn-bg-elevated, var(--fn-bg-primary)) 90%,
+    transparent
+  );
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  backdrop-filter: blur(8px);
+  color: var(--fn-text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
+
+  &:hover {
+    color: var(--fn-text-primary);
+    background: var(--fn-bg-elevated, var(--fn-bg-primary));
+    border-color: var(--fn-border-primary, rgba(0, 0, 0, 0.12));
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--fn-color-brand);
+    outline-offset: 2px;
+  }
+}
+
 .processThinkingItem {
   padding: 8px 10px;
   border-radius: 8px;

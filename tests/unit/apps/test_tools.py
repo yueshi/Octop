@@ -554,9 +554,9 @@ async def test_app_open_returns_a_chat_card(world: World) -> None:
         )
         opened = json.loads(await open_app.ainvoke({"app_id": app_id}))
 
-    assert written["octop_ui"]["renderer"] == "app_card"
-    assert written["data"]["app_id"] == app_id
-    assert written["data"]["has_html"] is True
+    assert "octop_ui" not in written
+    assert written["app_id"] == app_id
+    assert written["has_html"] is True
     assert opened["octop_ui"]["renderer"] == "app_card"
     assert opened["data"]["app_id"] == app_id
     assert opened["data"]["name"] == "Card app"

@@ -259,6 +259,106 @@
   overflow: hidden;
 }
 
+/* Dock "apps" tab: MiniApps created in this conversation. */
+.sessionAppsList {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+}
+
+.sessionAppsRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--fn-color-brand-border);
+  border-radius: 8px;
+  background: var(--fn-bg-elevated);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--fn-transition-fast, 0.15s ease),
+    background var(--fn-transition-fast, 0.15s ease);
+
+  &:hover {
+    border-color: var(--fn-color-brand);
+    background: var(--fn-color-brand-bg);
+  }
+}
+
+.sessionAppThumb,
+.sessionAppThumbEmpty {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+}
+
+.sessionAppThumb {
+  object-fit: cover;
+}
+
+.sessionAppThumbEmpty {
+  display: grid;
+  place-items: center;
+  color: var(--fn-color-brand);
+  background: var(--fn-color-brand-bg);
+}
+
+.sessionAppsRowMain {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sessionAppsRowMeta {
+  font-size: 12px;
+}
+
+.sessionAppsRowChevron {
+  flex: none;
+  color: var(--fn-text-tertiary);
+}
+
+.sessionAppsEmpty {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding: 24px;
+}
+
+.sessionAppsOpen {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sessionAppsBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--fn-color-brand-border);
+}
+
+.sessionAppsFrame {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #fff;
+}
+
 .dockTerminalLoading {
   flex: 1;
   min-height: 0;

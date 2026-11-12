@@ -4,6 +4,8 @@ import type { MenuProps } from "antd";
 import { useTranslation } from "react-i18next";
 import {
   MoreVertical,
+  PanelRightClose,
+  PanelRightOpen,
   Pin,
   PinOff,
   Pencil,
@@ -30,6 +32,9 @@ interface ChatTitleBarProps {
   forkDisabled?: boolean;
   forkDisabledHint?: string;
   isTeam?: boolean;
+  /** Whether the MiniApp sidebar (dock "apps" tab) is showing. */
+  appsOpen?: boolean;
+  onToggleApps?: () => void;
   agent?: {
     bridge?: boolean | null;
     bridge_connection_name?: string | null;
@@ -47,9 +52,14 @@ export default function ChatTitleBar({
   forkDisabled,
   forkDisabledHint,
   isTeam = false,
+  appsOpen = false,
+  onToggleApps,
   agent = null,
 }: ChatTitleBarProps) {
   const { t } = useTranslation();
+  const appsToggleLabel = appsOpen
+    ? t("chat.sessionAppsClose", "收起小程序侧栏")
+    : t("chat.sessionAppsOpen", "打开小程序侧栏");
   const [collapseThinking, setCollapseThinking] = useCollapseThinking(isTeam);
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(title);
@@ -204,6 +214,24 @@ export default function ChatTitleBar({
           </div>
         )}
       </div>
+      {onToggleApps ? (
+        <button
+          type="button"
+          className={`${styles.chatTitleEditBtn} ${styles.chatTitleAppsBtn} ${
+            appsOpen ? styles.chatTitleAppsBtnActive : ""
+          }`}
+          onClick={onToggleApps}
+          aria-label={appsToggleLabel}
+          aria-pressed={appsOpen}
+          title={appsToggleLabel}
+        >
+          {appsOpen ? (
+            <PanelRightClose size={16} strokeWidth={2} aria-hidden />
+          ) : (
+            <PanelRightOpen size={16} strokeWidth={2} aria-hidden />
+          )}
+        </button>
+      ) : null}
     </div>
   );
 }

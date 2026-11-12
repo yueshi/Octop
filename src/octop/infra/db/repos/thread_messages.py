@@ -88,6 +88,16 @@ class ThreadMessageRepo:
             ).fetchall()
         return [ThreadMessageRow.from_row(row) for row in rows]
 
+    def rows_containing(self, thread_id: str, marker: str) -> list[ThreadMessageRow]:
+        """Rows whose stored JSON mentions *marker*, oldest first (cheap pre-filter)."""
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT seq,message_id,role,message_json,created_at FROM thread_messages "
+                "WHERE thread_id=? AND message_json LIKE ? ORDER BY seq",
+                (thread_id, f"%{marker}%"),
+            ).fetchall()
+        return [ThreadMessageRow.from_row(row) for row in rows]
+
     def append_legacy_interval(self, thread_id: str, messages: Sequence[ThreadMessageInput]) -> int:
         """Append rollback turns without claiming the old projection is complete."""
         with self._db.transaction() as conn:

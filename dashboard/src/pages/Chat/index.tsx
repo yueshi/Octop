@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import {
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   GraduationCap,
   Users,
   Globe,
@@ -55,6 +57,7 @@ import {
   WORKBENCH_BROWSER_PATH,
 } from "./utils/chromeInstallGate";
 import { isFileToolName } from "./constants";
+import { appsApi } from "../../api/modules/apps";
 import { browserApi } from "../../api/modules/browser";
 import { octopThreadsApi } from "../../api/modules/octopThreads";
 import type { TokenUsage } from "../../api/types";
@@ -88,6 +91,12 @@ import {
   type ChannelKey,
 } from "../Agent/Channels/components/constants";
 import ChatDockPanels from "./components/ChatDockPanels";
+import {
+  collectSessionApps,
+  mergeSessionApps,
+  sessionAppsFromSummaries,
+  type SessionApp,
+} from "./utils/sessionApps";
 import type { ChatDockAddTabHandlers } from "./components/ChatDockPanel";
 import { ChatFilePreviewProvider } from "./ChatFilePreviewContext";
 import { ChatAgentProfileProvider } from "./ChatAgentProfileContext";
@@ -468,12 +477,73 @@ function ChatPageInner() {
     toggleBrowserPanel,
     toggleWorkspacePanel,
     toggleTerminalPanel,
+    toggleSessionApps,
     openToolUiTab,
     focusToolUiTab,
     openGameTab,
     closeTab: closeDockTab,
     setActiveTab: setDockActiveTab,
   } = useChatDockPanel(isMobile, resolvedAgentId);
+
+  /** MiniApps created in this conversation — the dock "apps" tab. */
+  const transcriptSessionApps = useMemo(
+    () => collectSessionApps(messages),
+    [messages],
+  );
+  const transcriptAppIds = transcriptSessionApps
+    .map((app) => app.app_id)
+    .join("\u0000");
+  const sessionAppsOpen = dockOpen && activeTabId === "apps";
+  const sessionAppsThread = `${resolvedAgentId ?? ""}\u0000${
+    activeThreadId ?? ""
+  }`;
+  const [threadSessionApps, setThreadSessionApps] = useState<{
+    thread: string;
+    apps: SessionApp[];
+  } | null>(null);
+  // History only holds the latest page, so a MiniApp opened earlier in the
+  // conversation is absent from the transcript. Ask the server for the whole
+  // thread while the panel is shown; the transcript keeps live cards visible
+  // until that answer lands.
+  useEffect(() => {
+    if (!sessionAppsOpen || !resolvedAgentId || !activeThreadId) {
+      setThreadSessionApps(null);
+      return;
+    }
+    let alive = true;
+    appsApi
+      .inThread(resolvedAgentId, activeThreadId)
+      .then((data) => {
+        if (alive) {
+          setThreadSessionApps({
+            thread: sessionAppsThread,
+            apps: sessionAppsFromSummaries(data.apps),
+          });
+        }
+      })
+      .catch(() => {
+        if (alive) setThreadSessionApps(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [
+    sessionAppsOpen,
+    resolvedAgentId,
+    activeThreadId,
+    sessionAppsThread,
+    transcriptAppIds,
+  ]);
+  const sessionApps = useMemo(
+    () =>
+      mergeSessionApps(
+        threadSessionApps?.thread === sessionAppsThread
+          ? threadSessionApps.apps
+          : null,
+        transcriptSessionApps,
+      ),
+    [threadSessionApps, sessionAppsThread, transcriptSessionApps],
+  );
 
   const chromeCheckInFlightRef = useRef(false);
   const bridgeConnectionId =
@@ -1485,6 +1555,27 @@ function ChatPageInner() {
                   <div className={styles.mobileToolbarRight}>
                     <button
                       className={styles.menuBtn}
+                      onClick={toggleSessionApps}
+                      title={
+                        sessionAppsOpen
+                          ? t("chat.sessionAppsClose", "收起小程序侧栏")
+                          : t("chat.sessionAppsOpen", "打开小程序侧栏")
+                      }
+                      aria-label={
+                        sessionAppsOpen
+                          ? t("chat.sessionAppsClose", "收起小程序侧栏")
+                          : t("chat.sessionAppsOpen", "打开小程序侧栏")
+                      }
+                      aria-pressed={sessionAppsOpen}
+                    >
+                      {sessionAppsOpen ? (
+                        <PanelRightClose size={18} strokeWidth={1.8} />
+                      ) : (
+                        <PanelRightOpen size={18} strokeWidth={1.8} />
+                      )}
+                    </button>
+                    <button
+                      className={styles.menuBtn}
                       onClick={() => setAgentProfileOpen(true)}
                       title={profileOpenLabel}
                       aria-label={profileOpenLabel}
@@ -1545,6 +1636,8 @@ function ChatPageInner() {
                 forkDisabledHint={sessionForkDisabledHint}
                 isTeam={isTeamChat}
                 agent={activeAgent}
+                appsOpen={sessionAppsOpen}
+                onToggleApps={toggleSessionApps}
               />
             )}
 
@@ -1901,6 +1994,7 @@ function ChatPageInner() {
               onCancel={cancelStream}
               onNewChat={handleNewChat}
               isStreaming={isStreaming}
+              turnStartedAt={thinkingStartedAt}
               holdSend={membersStillTalking}
               isTeam={isTeamChat}
               disabled={!agentChatReady || noAgents || memoryMaintBlocking}
@@ -1962,6 +2056,7 @@ function ChatPageInner() {
             filePaths={sharedExpertViewer ? [] : panelFilePaths}
             agentNameById={dockAgentNameById}
             openTabs={openTabs}
+            sessionApps={sessionApps}
             activeTabId={activeTabId}
             onSelectTab={setDockActiveTab}
             onCloseTab={closeDockTab}

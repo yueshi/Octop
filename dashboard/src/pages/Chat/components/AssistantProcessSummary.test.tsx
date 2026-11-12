@@ -76,6 +76,21 @@ describe("thinking display preference", () => {
     expect(screen.getByText("Thinking content")).toBeInTheDocument();
   });
 
+  it("collapses expanded content from the bottom button", () => {
+    render(<AssistantProcessSummary split={thinkingSplit()} />);
+    expect(
+      screen.queryByRole("button", { name: "收起" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    expect(screen.getByText("Thinking content")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "收起" }));
+    expect(screen.queryByText("Thinking content")).not.toBeInTheDocument();
+    expect(screen.getByRole("button")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
   it("shows elapsed thinking time while streaming", () => {
     render(
       <AssistantProcessSummary

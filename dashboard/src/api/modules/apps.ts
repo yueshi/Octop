@@ -368,6 +368,14 @@ export function fetchTemplatePreview(
 export const appsApi = {
   list: () => request<{ apps: AppSummary[] }>("/apps"),
 
+  /** MiniApps referenced anywhere in a thread, most recently mentioned first. */
+  inThread: (agentId: string, threadId: string) =>
+    request<{ apps: AppSummary[] }>(
+      `/apps/in-thread?agent_id=${encodeURIComponent(
+        agentId,
+      )}&thread_id=${encodeURIComponent(threadId)}`,
+    ),
+
   get: (appId: string) => request<AppDetail>(`/apps/${encodeId(appId)}`),
 
   publication: (appId: string) =>

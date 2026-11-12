@@ -105,6 +105,38 @@ function permissionLabel(
   return t("apps.viewOnly");
 }
 
+const SOURCE_COLUMN_WIDTH = 90;
+const ACTIONS_COLUMN_WIDTH = 150;
+
+/**
+ * Fixed width for a data column, by its schema type.
+ *
+ * The data table must not use auto layout: a long free-text value (ex. the
+ * 内容 column of a reading tracker) would otherwise stretch its column to the
+ * full text width and push the whole table into a huge horizontal scroll.
+ * Every column gets an explicit width, and cells truncate with an ellipsis
+ * (the full value stays available as the cell tooltip and in the row editor).
+ */
+function dataColumnWidth(type: string): number {
+  switch (type) {
+    case "integer":
+    case "number":
+      return 110;
+    case "boolean":
+      return 100;
+    case "date":
+      return 130;
+    case "datetime":
+      return 170;
+    case "enum":
+      return 140;
+    case "text":
+      return 260;
+    default:
+      return 180;
+  }
+}
+
 const SOURCE_SCHEDULE_OPTIONS: { value: number; labelKey: string }[] = [
   { value: 0, labelKey: "apps.sourceScheduleManual" },
   { value: 300, labelKey: "apps.sourceSchedule5min" },
@@ -150,6 +182,13 @@ export default function AppDetailPage() {
   const [publishOpen, setPublishOpen] = useState(false);
   const [publication, setPublication] = useState<AppPublication | null>(null);
   const [publicationBusy, setPublicationBusy] = useState(false);
+  // The API returns the public origin (scheme/host/port) the server is reached
+  // at; fall back to the browser origin when the server has no public_base_url.
+  const publishUrl =
+    publication?.url ??
+    (publication?.token
+      ? `${window.location.origin}/p/${publication.token}`
+      : "");
   const [shareLoading, setShareLoading] = useState(false);
   const [savingShare, setSavingShare] = useState(false);
   const [shares, setShares] = useState<ShareDraft[]>([]);
@@ -455,6 +494,10 @@ export default function AppDetailPage() {
     detail?.columns ??
     [];
   const canEditRows = detail?.permission !== "view";
+  const dataTableWidth =
+    dataColumns.reduce((sum, column) => sum + dataColumnWidth(column.type), 0) +
+    SOURCE_COLUMN_WIDTH +
+    (canEditRows ? ACTIONS_COLUMN_WIDTH : 0);
   const dataQuery = dataSearch.trim().toLowerCase();
   const visibleRows = dataRows
     .map((row, index) => ({ row, meta: dataRowMeta[index] }))
@@ -1297,7 +1340,7 @@ export default function AppDetailPage() {
                     loading={dataLoading}
                     dataSource={visibleRows.map((item) => item.row)}
                     locale={{ emptyText: t("apps.emptyRows") }}
-                    scroll={{ x: true }}
+                    scroll={{ x: dataTableWidth }}
                     pagination={{
                       current: dataPage,
                       pageSize: dataPageSize,
@@ -1317,12 +1360,13 @@ export default function AppDetailPage() {
                         ),
                         dataIndex: column.name,
                         key: column.name,
+                        width: dataColumnWidth(column.type),
                         ellipsis: true,
                       })),
                       {
                         title: t("apps.source"),
                         key: "__source",
-                        width: 90,
+                        width: SOURCE_COLUMN_WIDTH,
                         render: (_: unknown, __: unknown, index: number) =>
                           visibleRows[index]?.meta?.source || "manual",
                       },
@@ -1331,7 +1375,7 @@ export default function AppDetailPage() {
                             {
                               title: t("apps.actions"),
                               key: "__actions",
-                              width: 150,
+                              width: ACTIONS_COLUMN_WIDTH,
                               render: (
                                 _: unknown,
                                 __: unknown,
@@ -1457,18 +1501,16 @@ export default function AppDetailPage() {
                 ? t("apps.publishActive")
                 : t("apps.publishInactive")}
             </Text>
-            {publication?.token && (
+            {publishUrl && (
               <Input
                 readOnly
-                value={`${window.location.origin}/p/${publication.token}`}
+                value={publishUrl}
                 addonAfter={
                   <Button
                     type="link"
                     size="small"
                     onClick={() => {
-                      void navigator.clipboard?.writeText(
-                        `${window.location.origin}/p/${publication.token}`,
-                      );
+                      void navigator.clipboard?.writeText(publishUrl);
                       message.success(t("apps.publishCopy"));
                     }}
                   >

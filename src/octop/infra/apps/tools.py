@@ -615,9 +615,20 @@ def build_app_tools(
             agent_id, user_id = _tool_ctx()
             row = _get_for_actor(service, app_id, agent_id, user_id, "edit_structure")
             size = await service.write_html(row, html)
-            card = await _app_card(service, row)
-            card["data"]["bytes"] = size
-            return _ok({**card["data"], **card})
+            # Writing the shell is an internal edit, not a "show the app" action.
+            # Only app_open/app_create_from_template return a chat card; emitting
+            # one here would duplicate the card whenever the agent opens the app.
+            return _ok(
+                {
+                    **_summary(row),
+                    "bytes": size,
+                    "has_html": True,
+                    "next_step": (
+                        "After the first complete usable version, call app_open once "
+                        "to show the entry; do not call app_open after later edits."
+                    ),
+                }
+            )
         except Exception as exc:
             return _err(exc)
 

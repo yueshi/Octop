@@ -32,6 +32,7 @@ import {
   type MessageGroup,
 } from "../utils/messageGrouping";
 import { resolveLiveSpeakerNames } from "../utils/liveSpeakerLabel";
+import { dedupeAppCardMessages } from "../utils/appCardDedupe";
 import { useAgent } from "../../../context/AgentContext";
 import {
   nextCanLoadOlder,
@@ -313,9 +314,16 @@ export default function MessageList(props: MessageListProps) {
   /** First group id when an older-page load starts. Appends must not count as prepends. */
   const prependAnchorIdRef = useRef<string | null>(null);
 
+  // One app card per MiniApp per conversation: the first explicit open wins,
+  // later opens (and internal app_write_html results) join the folded tools.
+  const displayMessages = useMemo(
+    () => dedupeAppCardMessages(messages),
+    [messages],
+  );
   const messageGroups = useMemo(
-    () => groupConsecutiveAssistantMessages(messages, agentId ?? undefined),
-    [messages, agentId],
+    () =>
+      groupConsecutiveAssistantMessages(displayMessages, agentId ?? undefined),
+    [displayMessages, agentId],
   );
   const messageGroupsRef = useRef(messageGroups);
   messageGroupsRef.current = messageGroups;

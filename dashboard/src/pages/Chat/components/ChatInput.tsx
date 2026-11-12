@@ -29,6 +29,7 @@ import MentionPickerMenu from "./MentionPickerMenu";
 import ChatInputPreviewBar from "./ChatInputPreviewBar";
 import ChatInputActionsRow from "./ChatInputActionsRow";
 import ChatQueuedMessages from "./ChatQueuedMessages";
+import TurnInProgressNotice from "./TurnInProgressNotice";
 import { useVoiceInput } from "../../../hooks/useVoiceInput";
 import { useChatAttachments } from "../hooks/useChatAttachments";
 import { onSteerRestore } from "../hooks/chatStore";
@@ -88,6 +89,8 @@ interface ChatInputProps {
   onStopBrowserRecording?: () => void;
   onReplayBrowserRecording?: () => void;
   isStreaming: boolean;
+  /** Current turn start timestamp for the in-progress reminder. */
+  turnStartedAt?: number | null;
   /**
    * Team members are still producing. Queue the next message instead of
    * starting another host turn on top of them.
@@ -165,6 +168,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       onStopBrowserRecording,
       onReplayBrowserRecording,
       isStreaming,
+      turnStartedAt = null,
       holdSend = false,
       isTeam = false,
       disabled,
@@ -864,6 +868,14 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         onDrop={handleDrop}
       >
         <div className={styles.inputWrapper}>
+          {isStreaming || holdSend ? (
+            <TurnInProgressNotice
+              startedAt={isStreaming ? turnStartedAt : null}
+              membersOnly={!isStreaming && holdSend}
+              queuedCount={queuedItems.length}
+              onStop={isStreaming ? onCancel : undefined}
+            />
+          ) : null}
           {showDrop && (
             <div className={styles.dropOverlay} data-testid="chat-drop-overlay">
               {t("upload.dropHint", "Drop files or a folder to upload")}

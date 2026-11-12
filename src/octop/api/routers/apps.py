@@ -7,6 +7,7 @@ rows. Ownership and sharing are enforced through ``AppService``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
@@ -17,6 +18,7 @@ from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, Up
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from octop.api.common.agent import require_agent_row
 from octop.api.common.upload_limit import read_upload_capped
 from octop.api.deps import current_user, get_server
 from octop.api.routers.chat.sse import format_sse
@@ -36,6 +38,7 @@ from octop.infra.apps.service import (
     ImportResult,
     SourceView,
 )
+from octop.infra.apps.session import app_card_ids
 from octop.infra.apps.sources import GatewayToolRunner
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.server import OctopServer
@@ -388,6 +391,17 @@ def _row_access(
     return service, row, permission
 
 
+def _public_link(server: OctopServer, token: str) -> str:
+    """Absolute public link when ``public_base_url`` is configured, else a relative path.
+
+    The dashboard copies this value verbatim, so it must carry the public origin
+    (scheme, host and port) the server is reached at — not the browser's.
+    """
+    base = (getattr(server.config, "public_base_url", "") or "").strip().rstrip("/")
+    path = f"/p/{token}"
+    return f"{base}{path}" if base else path
+
+
 def _assistant(server: OctopServer, service: AppService) -> AppAssistant:
     if server.services is None or server.app_runtime is None:
         raise OctopError(ErrorCode.INTERNAL_ERROR, "server is not started")
@@ -438,6 +452,40 @@ def _service_with_runner(server: OctopServer) -> AppService:
     )
 
 
+def _require_thread_access(server: OctopServer, agent_id: str, thread_id: str, user: User) -> None:
+    """The caller must own both the agent and the conversation."""
+    if server.app_runtime is None:
+        raise OctopError(ErrorCode.INTERNAL_ERROR, "server is not started")
+    require_agent_row(agent_id, user=user, as_user=None, server=server)
+    thread = server.app_runtime.gateway.thread_registry.get_thread(thread_id)
+    if thread is None or thread.agent_id != agent_id:
+        raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"thread {thread_id!r} not found")
+    if thread.user_id != user.id:
+        raise OctopError(ErrorCode.FORBIDDEN, "thread not owned by user")
+
+
+async def _thread_app_messages(server: OctopServer, agent_id: str, thread_id: str) -> list[Any]:
+    """Every stored message that can carry an ``app_card`` in this thread."""
+    if server.services is None or server.app_runtime is None:
+        raise OctopError(ErrorCode.INTERNAL_ERROR, "server is not started")
+    from octop.infra.history.service import HistoryArchive  # noqa: PLC0415
+
+    archive = getattr(server.app_runtime, "history_archive", None)
+    if isinstance(archive, HistoryArchive):
+        from octop.infra.history.reader import export_messages  # noqa: PLC0415
+
+        return await export_messages(
+            archive, server.app_runtime.agent_registry, agent_id, thread_id
+        )
+    repo = server.services.thread_message_repo
+    if await asyncio.to_thread(repo.projection_status, thread_id) != "ready":
+        # History is still being projected; the dashboard keeps its transcript
+        # snapshot until the next open instead of scanning the checkpoint here.
+        return []
+    rows = await asyncio.to_thread(repo.rows_containing, thread_id, "app_card")
+    return [json.loads(row.message_json) for row in rows]
+
+
 @router.get(
     "",
     response_model=AppListResponse,
@@ -455,6 +503,28 @@ async def list_apps(
             for view in await service.list_views_with_stats(user.id, is_admin=user.is_admin)
         ]
     )
+
+
+@router.get(
+    "/in-thread",
+    response_model=AppListResponse,
+    summary="List MiniApps in a conversation",
+    description=(
+        "Scans the whole thread transcript for ``app_card`` tool results and returns "
+        "the MiniApps it referenced, most recently mentioned first. The chat dock's "
+        "MiniApps tab needs this because it only keeps the latest history page."
+    ),
+)
+async def list_in_thread_apps(
+    agent_id: str = Query(description="Agent that owns the conversation."),
+    thread_id: str = Query(description="Conversation thread id."),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> AppListResponse:
+    _require_thread_access(server, agent_id, thread_id, user)
+    app_ids = app_card_ids(await _thread_app_messages(server, agent_id, thread_id))
+    views = await _service(server).views_for_app_ids(app_ids, user.id, is_admin=user.is_admin)
+    return AppListResponse(apps=[_summary_from_view(view) for view in views])
 
 
 class AppTemplateOut(BaseModel):
@@ -1478,7 +1548,7 @@ async def create_app_publication(
     )
     return PublicationOut(
         active=True,
-        url=f"/p/{token}",
+        url=_public_link(server, token),
         token=token,
         expires_at=expires_at,
     )

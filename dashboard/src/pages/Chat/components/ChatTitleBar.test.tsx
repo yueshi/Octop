@@ -34,6 +34,43 @@ describe("ChatTitleBar", () => {
     expect(heading.parentElement).toContainElement(more);
   });
 
+  it("toggles the MiniApp sidebar from the title bar", () => {
+    const onToggleApps = vi.fn();
+    const { rerender } = render(
+      <ChatTitleBar
+        session={session}
+        title="Weekly recap"
+        onRename={noop}
+        onPin={noop}
+        onFork={noop}
+        onDelete={noop}
+        appsOpen={false}
+        onToggleApps={onToggleApps}
+      />,
+    );
+
+    const open = screen.getByRole("button", { name: "打开小程序侧栏" });
+    expect(open).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(open);
+    expect(onToggleApps).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ChatTitleBar
+        session={session}
+        title="Weekly recap"
+        onRename={noop}
+        onPin={noop}
+        onFork={noop}
+        onDelete={noop}
+        appsOpen
+        onToggleApps={onToggleApps}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "收起小程序侧栏" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("marks the title bar as a Wails drag region", () => {
     const { container } = render(
       <ChatTitleBar

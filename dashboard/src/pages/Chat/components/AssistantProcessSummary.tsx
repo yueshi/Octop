@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Scale } from "lucide-react";
+import { ChevronRight, ChevronUp, Scale } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import Markdown from "../../../components/Markdown/LazyMarkdown";
@@ -351,6 +351,17 @@ function AssistantProcessSummary({
               </div>
             ),
           )}
+          {/* Long thoughts push the header far off-screen. This sticks to the
+              bottom of the message scrollport until the fold ends, so the
+              content can be collapsed without scrolling back up. */}
+          <button
+            type="button"
+            className={styles.processSummaryCollapse}
+            onClick={() => setExpanded(false)}
+          >
+            <ChevronUp size={14} strokeWidth={2} aria-hidden />
+            <span>{t("chat.processCollapse", { defaultValue: "收起" })}</span>
+          </button>
         </div>
       )}
     </div>

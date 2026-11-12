@@ -1,6 +1,7 @@
 import type { PanelMode } from "../../../components/BrowserWorkspace";
 import type { DisplayEnvironment } from "../../../api/types/browser";
 import type { DockTab, DockTabId } from "../hooks/useChatDockPanel";
+import type { SessionApp } from "../utils/sessionApps";
 import styles from "../index.module.less";
 import ChatDockPanel, { type ChatDockAddTabHandlers } from "./ChatDockPanel";
 
@@ -14,6 +15,7 @@ interface ChatDockPanelsProps {
   filePaths: Array<string | { path: string; agentId?: string }>;
   agentNameById?: Record<string, string>;
   openTabs: DockTab[];
+  sessionApps?: readonly SessionApp[];
   activeTabId: DockTabId | null;
   onSelectTab: (id: DockTabId) => void;
   onCloseTab: (id: DockTabId) => void;
@@ -51,6 +53,7 @@ export default function ChatDockPanels({
   filePaths,
   agentNameById,
   openTabs,
+  sessionApps,
   activeTabId,
   onSelectTab,
   onCloseTab,
@@ -90,6 +93,7 @@ export default function ChatDockPanels({
       filePaths={filePaths}
       agentNameById={agentNameById}
       openTabs={openTabs}
+      sessionApps={sessionApps}
       activeTabId={activeTabId}
       onSelectTab={onSelectTab}
       onCloseTab={onCloseTab}

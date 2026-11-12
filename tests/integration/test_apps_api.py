@@ -1086,6 +1086,26 @@ async def test_public_link_is_read_only_and_revocable(
     assert r.status_code == 404
 
 
+async def test_publication_url_uses_configured_public_base_url(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    """The dashboard copies this URL verbatim — it must carry the server's public origin."""
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+
+    assert srv.config is not None
+    srv.config = replace(srv.config, public_base_url="https://octop.example.test:8088")
+
+    r = await client.post(
+        f"/api/apps/{app_id}/publication",
+        headers=alice_auth,
+        json={"ttl_days": 0},
+    )
+    assert r.status_code == 200, r.text
+    token = r.json()["token"]
+    assert r.json()["url"] == f"https://octop.example.test:8088/p/{token}"
+
+
 async def test_backup_download_and_restore_api(
     env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
 ) -> None:
@@ -1632,3 +1652,77 @@ async def test_alter_schema_can_mark_existing_columns_as_pii(
     assert r.status_code == 200, r.text
     columns = {item["name"]: item for item in r.json()["columns"]}
     assert columns["title"]["pii"] == "phone"
+
+
+async def test_in_thread_apps_scan_the_whole_history(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    """The dock list must find apps opened before the latest history page."""
+    from octop.infra.db.repos.thread_messages import ThreadMessageInput
+
+    client, srv, alice_auth, bob_auth, agent_id = env_alice_bob_agent
+    assert srv.services is not None
+    first = await _create_app(srv, agent_id, "alice")
+    owner = srv.services.user_repo.get_by_username("alice")
+    assert owner is not None
+    second = await _service(srv).create(
+        agent_id=agent_id,
+        owner_user_id=owner.id,
+        name="Second",
+        description="",
+        columns=COLUMNS,
+    )
+
+    created = await client.post(f"/api/agents/{agent_id}/threads", headers=alice_auth)
+    assert created.status_code == 201, created.text
+    thread_id = created.json()["thread_id"]
+
+    def card(app_id: str) -> str:
+        return json.dumps(
+            {
+                "type": "tool",
+                "data": {
+                    "content": json.dumps(
+                        {
+                            "octop_ui": {"renderer": "app_card", "version": 1},
+                            "data": {"app_id": app_id, "name": app_id},
+                        }
+                    ),
+                    "tool_call_id": f"call_{app_id}",
+                    "name": "app_open",
+                },
+            }
+        )
+
+    repo = srv.services.thread_message_repo
+    repo.append_legacy_interval(
+        thread_id,
+        [
+            ThreadMessageInput(
+                message_id="m-old", role="tool", message_json=card(first), created_at=1
+            ),
+            ThreadMessageInput(
+                message_id="m-new",
+                role="tool",
+                message_json=card(second.app_id),
+                created_at=2,
+            ),
+        ],
+    )
+    repo.mark_projection(thread_id, "ready")
+
+    r = await client.get(
+        "/api/apps/in-thread",
+        headers=alice_auth,
+        params={"agent_id": agent_id, "thread_id": thread_id},
+    )
+    assert r.status_code == 200, r.text
+    assert [item["app_id"] for item in r.json()["apps"]] == [second.app_id, first]
+    assert r.json()["apps"][1]["name"] == "Tracker"
+
+    r = await client.get(
+        "/api/apps/in-thread",
+        headers=bob_auth,
+        params={"agent_id": agent_id, "thread_id": thread_id},
+    )
+    assert r.status_code == 403, r.text

@@ -11,6 +11,7 @@ import React, {
 import { Dropdown, Spin, Tooltip } from "antd";
 import type { MenuProps } from "antd";
 import {
+  AppWindow,
   BookOpen,
   Check,
   FilePen,
@@ -42,6 +43,8 @@ import ChatDockFileList from "./ChatDockFileList";
 import FilePanelContent from "./FilePanelContent";
 import KnowledgeCitationPanelContent from "./KnowledgeCitationPanelContent";
 import ChatDockToolUiContent from "./ChatDockToolUiContent";
+import ChatDockSessionApps from "./ChatDockSessionApps";
+import type { SessionApp } from "../utils/sessionApps";
 
 const TerminalPage = lazy(() => import("../../Control/Terminal"));
 
@@ -65,6 +68,8 @@ interface ChatDockPanelProps {
   filePaths: Array<string | { path: string; agentId?: string }>;
   agentNameById?: Record<string, string>;
   openTabs: DockTab[];
+  /** MiniApps created in this conversation (the dock "apps" tab). */
+  sessionApps?: readonly SessionApp[];
   activeTabId: DockTabId | null;
   onSelectTab: (id: DockTabId) => void;
   onCloseTab: (id: DockTabId) => void;
@@ -199,6 +204,7 @@ const ChatDockPanel: React.FC<ChatDockPanelProps> = ({
   filePaths,
   agentNameById,
   openTabs,
+  sessionApps = [],
   activeTabId,
   onSelectTab,
   onCloseTab,
@@ -414,6 +420,11 @@ const ChatDockPanel: React.FC<ChatDockPanelProps> = ({
                 <Terminal size={16} strokeWidth={2} aria-hidden />
                 <span>{t("chat.dockTerminalTitle", "终端")}</span>
               </>
+            ) : tab.kind === "apps" ? (
+              <>
+                <AppWindow size={16} strokeWidth={2} aria-hidden />
+                <span>{t("chat.dockMiniApps", "小程序")}</span>
+              </>
             ) : tab.kind === "toolUi" ? (
               <>
                 <Puzzle size={16} strokeWidth={2} aria-hidden />
@@ -534,6 +545,18 @@ const ChatDockPanel: React.FC<ChatDockPanelProps> = ({
       overlayMenuOpen={addTabMenuOpen}
     >
       <div className={styles.dockTabBodies}>
+        {openTabs.some((tab) => tab.kind === "apps") && (
+          <div
+            className={styles.dockTabBody}
+            hidden={activeTab?.kind !== "apps"}
+            style={{
+              display: activeTab?.kind === "apps" ? "flex" : "none",
+            }}
+          >
+            <ChatDockSessionApps apps={sessionApps} />
+          </div>
+        )}
+
         {openTabs.some((tab) => tab.kind === "files") && (
           <div
             className={styles.dockTabBody}

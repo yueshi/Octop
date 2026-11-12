@@ -22,6 +22,8 @@ const LEGACY_BROWSER_SIZE_KEY = "octop:browser-panel:size";
 
 export type DockTab =
   | { id: "files"; kind: "files" }
+  /** MiniApps created in this conversation. */
+  | { id: "apps"; kind: "apps" }
   | { id: "workspace"; kind: "workspace" }
   | { id: "browser"; kind: "browser" }
   | { id: "terminal"; kind: "terminal" }
@@ -318,7 +320,12 @@ export function useChatDockPanel(isMobile: boolean, agentId?: string | null) {
 
   /** Toggle dock open/closed around a dedicated tab. */
   const toggleDockTab = useCallback(
-    (tab: Extract<DockTab, { kind: "browser" | "terminal" | "workspace" }>) => {
+    (
+      tab: Extract<
+        DockTab,
+        { kind: "browser" | "terminal" | "workspace" | "apps" }
+      >,
+    ) => {
       setDockOpen((prevOpen) => {
         if (prevOpen && activeTabId === tab.id) {
           return false;
@@ -339,6 +346,10 @@ export function useChatDockPanel(isMobile: boolean, agentId?: string | null) {
 
   const toggleWorkspacePanel = useCallback(() => {
     toggleDockTab({ id: "workspace", kind: "workspace" });
+  }, [toggleDockTab]);
+
+  const toggleSessionApps = useCallback(() => {
+    toggleDockTab({ id: "apps", kind: "apps" });
   }, [toggleDockTab]);
 
   const toggleBrowserPanel = useCallback(() => {
@@ -408,6 +419,7 @@ export function useChatDockPanel(isMobile: boolean, agentId?: string | null) {
     openKnowledgeCitation,
     openWorkspaceTab,
     toggleWorkspacePanel,
+    toggleSessionApps,
     openBrowserTab,
     toggleBrowserPanel,
     openTerminalTab,

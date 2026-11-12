@@ -100,6 +100,59 @@
   }
 }
 
+.turnInProgressNotice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--fn-color-brand-border, rgba(22, 119, 255, 0.24));
+  border-radius: 12px;
+  background: var(--fn-color-brand-bg, rgba(22, 119, 255, 0.08));
+  color: var(--fn-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.turnInProgressDots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+
+.turnInProgressText {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.turnInProgressTitle {
+  color: var(--fn-text-primary);
+  font-weight: 600;
+}
+
+.turnInProgressBody {
+  color: var(--fn-text-secondary);
+}
+
+.turnInProgressStop {
+  flex: none;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--fn-color-brand);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
 .inputRow {
   display: flex;
   align-items: flex-end;
