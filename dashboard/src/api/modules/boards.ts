@@ -7,6 +7,8 @@ export interface BoardItem {
   y: number;
   w: number;
   h: number;
+  /** Keep this cell in place during auto-arrange; disables drag and resize. */
+  locked?: boolean;
 }
 
 export interface BoardLayout {

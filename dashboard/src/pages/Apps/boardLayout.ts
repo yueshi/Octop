@@ -28,6 +28,95 @@ export function fitBoardRowHeight(
 const AUTO_FILL_BAND = 2;
 const AUTO_FILL_MAX_COLS = 4;
 
+/** Quick size choices offered per cell. Labels live in the dashboard locale. */
+export interface BoardSizePreset {
+  key: string;
+  w: number;
+  h: number;
+}
+
+export const BOARD_SIZE_PRESETS: readonly BoardSizePreset[] = [
+  { key: "small", w: 3, h: 2 },
+  { key: "medium", w: 4, h: 3 },
+  { key: "large", w: 6, h: 4 },
+  { key: "wide", w: 12, h: 3 },
+  { key: "tall", w: 3, h: 6 },
+];
+
+function overlaps(left: BoardItem, right: BoardItem): boolean {
+  return (
+    left.x < right.x + right.w &&
+    left.x + left.w > right.x &&
+    left.y < right.y + right.h &&
+    left.y + left.h > right.y
+  );
+}
+
+function sortByPosition(items: BoardItem[]): BoardItem[] {
+  return [...items].sort(
+    (left, right) =>
+      left.y - right.y ||
+      left.x - right.x ||
+      left.app_id.localeCompare(right.app_id),
+  );
+}
+
+/**
+ * Resize one cell to a preset, keeping it as close to its current position as
+ * possible. If the new rectangle would overlap a neighbour it moves down until
+ * it fits; RGL then compacts it upward normally.
+ */
+export function placeBoardItem(
+  items: BoardItem[],
+  appId: string,
+  w: number,
+  h: number,
+): BoardItem[] {
+  const target = items.find((item) => item.app_id === appId);
+  if (!target) return items;
+  const nextW = Math.min(BOARD_GRID_COLS, Math.max(1, Math.round(w)));
+  const nextH = Math.min(BOARD_GRID_COLS, Math.max(1, Math.round(h)));
+  const x = Math.max(0, Math.min(target.x, BOARD_GRID_COLS - nextW));
+  const others = items.filter((item) => item.app_id !== appId);
+  let y = Math.max(0, target.y);
+  let candidate: BoardItem = { ...target, x, y, w: nextW, h: nextH };
+  while (others.some((other) => overlaps(candidate, other))) {
+    y += 1;
+    candidate = { ...candidate, y };
+  }
+  return items.map((item) => (item.app_id === appId ? candidate : item));
+}
+
+/**
+ * Locked cells stay exactly where they are; unlocked cells keep their chosen
+ * sizes and fill the first free rectangle around those anchors.
+ */
+function packUnlockedAroundLocks(items: BoardItem[]): BoardItem[] {
+  const locked = sortByPosition(items.filter((item) => item.locked));
+  const placed: BoardItem[] = locked.map((item) => ({
+    ...item,
+    w: Math.min(BOARD_GRID_COLS, Math.max(1, item.w)),
+    h: Math.min(BOARD_GRID_COLS, Math.max(1, item.h)),
+  }));
+  const unlocked = sortByPosition(items.filter((item) => !item.locked));
+  for (const item of unlocked) {
+    const w = Math.min(BOARD_GRID_COLS, Math.max(1, item.w));
+    const h = Math.min(BOARD_GRID_COLS, Math.max(1, item.h));
+    let spot: { x: number; y: number } | null = null;
+    for (let y = 0; !spot && y < 256; y += 1) {
+      for (let x = 0; x <= BOARD_GRID_COLS - w; x += 1) {
+        const candidate = { ...item, x, y, w, h };
+        if (!placed.some((other) => overlaps(candidate, other))) {
+          spot = { x, y };
+          break;
+        }
+      }
+    }
+    placed.push({ ...item, ...(spot ?? { x: 0, y: 256 }), w, h });
+  }
+  return sortByPosition(placed);
+}
+
 /** Split 12 columns across `parts` cells as evenly as possible. */
 export function splitBoardColumns(parts: number): number[] {
   const count = Math.max(1, parts);
@@ -49,12 +138,10 @@ export function splitBoardColumns(parts: number): number[] {
 export function autoFillBoardLayout(items: BoardItem[]): BoardItem[] {
   const count = items.length;
   if (count === 0) return [];
-  const ordered = [...items].sort(
-    (left, right) =>
-      left.y - right.y ||
-      left.x - right.x ||
-      left.app_id.localeCompare(right.app_id),
-  );
+  if (items.some((item) => item.locked)) {
+    return packUnlockedAroundLocks(items);
+  }
+  const ordered = sortByPosition(items);
 
   let bestCols = 1;
   let bestScore = Number.POSITIVE_INFINITY;

@@ -68,6 +68,22 @@ describe("BoardGrid drag configuration", () => {
     }
   });
 
+  it("marks locked cells static so RGL cannot move them", () => {
+    render(
+      <BoardGrid
+        items={[{ app_id: "app_1", x: 0, y: 0, w: 4, h: 4, locked: true }]}
+        apps={[app]}
+        editable
+      />,
+    );
+
+    const layout = captured.props?.layout as Array<{
+      i: string;
+      static?: boolean;
+    }>;
+    expect(layout[0]).toMatchObject({ i: "app_1", static: true });
+  });
+
   it("does not bound dragging to the auto-sized canvas", () => {
     render(
       <BoardGrid

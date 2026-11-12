@@ -73,7 +73,21 @@ def _item(value: object, *, strict: bool) -> dict[str, Any] | None:
         if strict:
             raise _invalid("invalid board item rectangle", item=value)
         return None
-    return {"app_id": app_id.strip(), "x": x, "y": y, "w": w, "h": h}
+    locked_raw = value.get("locked", False)
+    if not isinstance(locked_raw, bool):
+        if strict:
+            raise _invalid("board item locked must be a boolean", item=value)
+        locked_raw = False
+    item: dict[str, Any] = {
+        "app_id": app_id.strip(),
+        "x": x,
+        "y": y,
+        "w": w,
+        "h": h,
+    }
+    if locked_raw:
+        item["locked"] = True
+    return item
 
 
 def _sorted(items: list[dict[str, Any]]) -> list[dict[str, Any]]:

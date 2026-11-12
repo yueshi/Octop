@@ -21,6 +21,11 @@
   opacity: 1;
 }
 
+/* Locked cells are static: RGL still renders the handle, so hide it. */
+.react-grid-item.static > .react-resizable-handle {
+  display: none;
+}
+
 .react-grid-item > .react-resizable-handle::after {
   border-right-width: 2px;
   border-bottom-width: 2px;

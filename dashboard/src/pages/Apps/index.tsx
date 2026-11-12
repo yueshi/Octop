@@ -34,6 +34,7 @@ import {
   MoreHorizontal,
   Plus,
   Table2,
+  Undo2,
   User,
 } from "lucide-react";
 import type { TFunction } from "i18next";
@@ -55,7 +56,7 @@ import {
 import PageShell from "../../layouts/PageShell";
 import CreateMiniAppModal from "./CreateMiniAppModal";
 import BoardGrid from "./BoardGrid";
-import { autoFillBoardLayout } from "./boardLayout";
+import { autoFillBoardLayout, placeBoardItem } from "./boardLayout";
 import {
   APP_BOARD_SPANS,
   DEFAULT_APP_BOARD_SIZE,
@@ -101,7 +102,9 @@ function legacyBoardItems(
 function sameLayout(left: BoardItem[], right: BoardItem[]): boolean {
   if (left.length !== right.length) return false;
   const signature = (item: BoardItem) =>
-    `${item.app_id}:${item.x}:${item.y}:${item.w}:${item.h}`;
+    `${item.app_id}:${item.x}:${item.y}:${item.w}:${item.h}:${
+      item.locked ? 1 : 0
+    }`;
   return (
     left.map(signature).sort().join("|") ===
     right.map(signature).sort().join("|")
@@ -187,9 +190,12 @@ export default function AppsPage() {
   const [items, setItems] = useState<BoardItem[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [undoDepth, setUndoDepth] = useState(0);
 
   const boardRef = useRef<BoardDetail | null>(null);
   const itemsRef = useRef<BoardItem[]>([]);
+  /** Snapshots for the last layout edits, newest last (max 20). */
+  const historyRef = useRef<BoardItem[][]>([]);
   /** Apps the caller can currently open; stale board cells are dropped. */
   const availableAppsRef = useRef<Set<string>>(new Set());
   const pendingRef = useRef<BoardItem[] | null>(null);
@@ -389,6 +395,8 @@ export default function AppsPage() {
   // so skip the redundant fetch.
   useEffect(() => {
     pendingRef.current = null;
+    historyRef.current = [];
+    setUndoDepth(0);
     if (!activeId) {
       boardRef.current = null;
       setBoard(null);
@@ -439,28 +447,48 @@ export default function AppsPage() {
     [navigate],
   );
 
+  const snapshot = useCallback(() => {
+    historyRef.current = [
+      ...historyRef.current.slice(-19),
+      itemsRef.current.map((item) => ({ ...item })),
+    ];
+    setUndoDepth(historyRef.current.length);
+  }, []);
+
+  const undoLayout = useCallback(() => {
+    const previous = historyRef.current.pop();
+    setUndoDepth(historyRef.current.length);
+    if (!previous) return;
+    itemsRef.current = previous;
+    setItems(previous);
+    queueSave(previous);
+    message.success(t("apps.board.undoDone", "Undid the last layout change"));
+  }, [queueSave, t]);
+
   const pinApp = useCallback(
     (appId: string) => {
       const current = boardRef.current;
       if (!current) return;
       if (itemsRef.current.some((item) => item.app_id === appId)) return;
+      snapshot();
       const next = [...itemsRef.current, nextItem(itemsRef.current, appId)];
       itemsRef.current = next;
       setItems(next);
       queueSave(next);
     },
-    [queueSave],
+    [queueSave, snapshot],
   );
 
   const unpinApp = useCallback(
     (appId: string) => {
       if (!boardRef.current) return;
+      snapshot();
       const next = itemsRef.current.filter((item) => item.app_id !== appId);
       itemsRef.current = next;
       setItems(next);
       queueSave(next);
     },
-    [queueSave],
+    [queueSave, snapshot],
   );
 
   const onGridLayoutChange = useCallback((next: BoardItem[]) => {
@@ -477,16 +505,45 @@ export default function AppsPage() {
     [queueSave],
   );
 
-  const autoFillBoard = useCallback(() => {
+  const applySizePreset = useCallback(
+    (appId: string, w: number, h: number) => {
+      if (!boardRef.current) return;
+      const target = itemsRef.current.find((item) => item.app_id === appId);
+      if (!target || target.locked) return;
+      snapshot();
+      const next = placeBoardItem(itemsRef.current, appId, w, h);
+      itemsRef.current = next;
+      setItems(next);
+      queueSave(next);
+    },
+    [queueSave, snapshot],
+  );
+
+  const toggleAppLock = useCallback(
+    (appId: string) => {
+      if (!boardRef.current) return;
+      snapshot();
+      const next = itemsRef.current.map((item) =>
+        item.app_id === appId
+          ? { ...item, locked: item.locked ? undefined : true }
+          : item,
+      );
+      itemsRef.current = next;
+      setItems(next);
+      queueSave(next);
+    },
+    [queueSave, snapshot],
+  );
+
+  const arrangeBoard = useCallback(() => {
     if (!boardRef.current || itemsRef.current.length === 0) return;
+    snapshot();
     const next = autoFillBoardLayout(itemsRef.current);
     itemsRef.current = next;
     setItems(next);
     queueSave(next);
-    message.success(
-      t("apps.board.fillDone", "Board rearranged to fill the page"),
-    );
-  }, [queueSave, t]);
+    message.success(t("apps.board.arrangeDone", "Board rearranged"));
+  }, [queueSave, snapshot, t]);
 
   const openCreateBoard = () => {
     boardForm.resetFields();
@@ -693,18 +750,26 @@ export default function AppsPage() {
           </Button>
           <Popconfirm
             title={t(
-              "apps.board.fillConfirm",
-              "Rearrange every MiniApp to fill the board?",
+              "apps.board.arrangeConfirm",
+              "Rearrange the board? Locked cells stay; unlocked cells fill the gaps.",
             )}
-            okText={t("apps.board.fillConfirmOk", "Arrange")}
+            okText={t("apps.board.arrangeOk", "Rearrange")}
             cancelText={t("common.cancel", "Cancel")}
-            onConfirm={autoFillBoard}
+            onConfirm={arrangeBoard}
             disabled={items.length === 0}
           >
             <Button icon={<Grid2x2 size={16} />} disabled={items.length === 0}>
-              {t("apps.board.fill", "Auto-fill")}
+              {t("apps.board.arrange", "Auto-arrange")}
             </Button>
           </Popconfirm>
+          <Tooltip title={t("apps.board.undo", "Undo the last layout change")}>
+            <Button
+              aria-label={t("apps.board.undo", "Undo the last layout change")}
+              icon={<Undo2 size={16} />}
+              disabled={undoDepth === 0}
+              onClick={undoLayout}
+            />
+          </Tooltip>
           {saving && (
             <Text className={styles.savingHint}>
               {t("apps.board.saving", "Saving…")}
@@ -784,6 +849,9 @@ export default function AppsPage() {
           editable
           onLayoutChange={onGridLayoutChange}
           onCommit={onGridCommit}
+          onEditStart={snapshot}
+          onResizeApp={applySizePreset}
+          onToggleLock={toggleAppLock}
           onOpenApp={openApp}
           onRemoveApp={unpinApp}
           onComposeMessage={composeMessage}

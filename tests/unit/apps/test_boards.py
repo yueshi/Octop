@@ -99,6 +99,24 @@ def test_validate_layout_rejects_too_many_items(env: dict[str, object]) -> None:
     assert _code(exc) is ErrorCode.BOARD_LAYOUT_INVALID
 
 
+def test_validate_layout_preserves_locked_cells(env: dict[str, object]) -> None:
+    layout = validate_layout([{**_item(str(env["alice_app"])), "locked": True}])
+    assert layout["items"][0]["locked"] is True
+
+
+def test_validate_layout_rejects_non_boolean_lock(env: dict[str, object]) -> None:
+    with pytest.raises(OctopError) as exc:
+        validate_layout([{**_item(str(env["alice_app"])), "locked": "yes"}])
+    assert _code(exc) is ErrorCode.BOARD_LAYOUT_INVALID
+
+
+def test_parse_layout_preserves_locked_cells() -> None:
+    layout = parse_layout(
+        '{"version":1,"items":[{"app_id":"a","x":0,"y":0,"w":4,"h":4,"locked":true}]}'
+    )
+    assert layout["items"][0]["locked"] is True
+
+
 def test_parse_layout_drops_bad_rows_instead_of_failing() -> None:
     layout = parse_layout(
         '{"version":1,"items":[{"app_id":"a","x":0,"y":0,"w":4,"h":4},'

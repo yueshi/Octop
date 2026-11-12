@@ -141,6 +141,34 @@
   cursor: default;
 }
 
+/* Per-cell size presets: five quick rectangles, current one highlighted. */
+.sizeMenu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
+}
+
+.sizeOption {
+  padding: 6px 10px;
+  border: 1px solid var(--fn-color-brand-border);
+  border-radius: 6px;
+  background: var(--fn-bg-elevated);
+  color: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--fn-color-brand);
+  }
+}
+
+.sizeOptionActive {
+  border-color: var(--fn-color-brand);
+  background: var(--fn-color-brand-bg);
+}
+
 .cellIcon {
   flex: none;
   color: var(--fn-color-brand);

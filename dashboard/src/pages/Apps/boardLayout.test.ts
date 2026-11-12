@@ -7,6 +7,7 @@ import {
   BOARD_MARGIN_Y,
   BOARD_MIN_ROW_HEIGHT,
   fitBoardRowHeight,
+  placeBoardItem,
   splitBoardColumns,
 } from "./boardLayout";
 
@@ -115,5 +116,54 @@ describe("autoFillBoardLayout", () => {
     expect(splitBoardColumns(2)).toEqual([6, 6]);
     expect(splitBoardColumns(3)).toEqual([4, 4, 4]);
     expect(splitBoardColumns(4)).toEqual([3, 3, 3, 3]);
+  });
+
+  it("keeps locked cells fixed while filling around them", () => {
+    const result = autoFillBoardLayout([
+      { app_id: "locked", x: 0, y: 0, w: 6, h: 4, locked: true },
+      { app_id: "free", x: 0, y: 4, w: 4, h: 2 },
+    ]);
+    const locked = result.find((item) => item.app_id === "locked");
+    const free = result.find((item) => item.app_id === "free");
+    expect(locked).toEqual({
+      app_id: "locked",
+      x: 0,
+      y: 0,
+      w: 6,
+      h: 4,
+      locked: true,
+    });
+    expect(free).toEqual({ app_id: "free", x: 6, y: 0, w: 4, h: 2 });
+  });
+});
+
+describe("placeBoardItem", () => {
+  it("resizes the cell in place when there is room", () => {
+    const result = placeBoardItem(apps(1), "app_0", 6, 4);
+    expect(result[0]).toEqual({ app_id: "app_0", x: 0, y: 0, w: 6, h: 4 });
+  });
+
+  it("moves the cell down when the new size would overlap", () => {
+    const result = placeBoardItem(
+      [
+        { app_id: "a", x: 0, y: 0, w: 4, h: 4 },
+        { app_id: "b", x: 4, y: 0, w: 4, h: 4 },
+      ],
+      "a",
+      6,
+      4,
+    );
+    expect(result[0]).toEqual({ app_id: "a", x: 0, y: 4, w: 6, h: 4 });
+    expect(result[1]).toEqual({ app_id: "b", x: 4, y: 0, w: 4, h: 4 });
+  });
+
+  it("clamps a full-width cell back inside the grid", () => {
+    const result = placeBoardItem(
+      [{ app_id: "a", x: 8, y: 0, w: 3, h: 2 }],
+      "a",
+      12,
+      3,
+    );
+    expect(result[0]).toEqual({ app_id: "a", x: 0, y: 0, w: 12, h: 3 });
   });
 });

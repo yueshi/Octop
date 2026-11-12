@@ -20,6 +20,10 @@ class BoardItemIn(BaseModel):
     y: int = Field(ge=0, description="Zero-based row; grows downward.")
     w: int = Field(ge=1, le=12, description="Width in grid columns.")
     h: int = Field(ge=1, le=12, description="Height in grid rows.")
+    locked: bool = Field(
+        default=False,
+        description="Keep this cell out of auto-arrange and disable drag/resize.",
+    )
 
 
 class BoardLayoutOut(BaseModel):

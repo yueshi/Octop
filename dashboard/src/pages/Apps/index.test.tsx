@@ -224,13 +224,77 @@ describe("workbench board", () => {
       expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(1),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "自动铺满" }));
+    fireEvent.click(screen.getByRole("button", { name: "自动整理" }));
     fireEvent.click(await screen.findByRole("button", { name: "重新排列" }));
 
     await waitFor(() =>
       expect(boardsApi.setLayout).toHaveBeenCalledWith("board_1", {
         version: 1,
         items: [{ app_id: "app_1", x: 0, y: 0, w: 12, h: 2 }],
+      }),
+    );
+  });
+
+  it("resizes a cell through the size presets", async () => {
+    const pinned = savedBoard([{ app_id: "app_1", x: 0, y: 0, w: 2, h: 2 }], 1);
+    vi.mocked(boardsApi.get).mockResolvedValue(pinned);
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(1),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "尺寸" }));
+    fireEvent.click(await screen.findByRole("button", { name: "大 6×4" }));
+
+    await waitFor(() =>
+      expect(boardsApi.setLayout).toHaveBeenCalledWith("board_1", {
+        version: 1,
+        items: [{ app_id: "app_1", x: 0, y: 0, w: 6, h: 4 }],
+      }),
+    );
+  });
+
+  it("locks a cell and persists the flag", async () => {
+    const pinned = savedBoard([{ app_id: "app_1", x: 0, y: 0, w: 2, h: 2 }], 1);
+    vi.mocked(boardsApi.get).mockResolvedValue(pinned);
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(1),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "锁定位置和尺寸" }));
+
+    await waitFor(() =>
+      expect(boardsApi.setLayout).toHaveBeenCalledWith("board_1", {
+        version: 1,
+        items: [{ app_id: "app_1", x: 0, y: 0, w: 2, h: 2, locked: true }],
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "解锁" }),
+    ).toBeInTheDocument();
+  });
+
+  it("undoes the last layout change", async () => {
+    const pinned = savedBoard([{ app_id: "app_1", x: 0, y: 0, w: 2, h: 2 }], 1);
+    vi.mocked(boardsApi.get).mockResolvedValue(pinned);
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(1),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "自动整理" }));
+    fireEvent.click(await screen.findByRole("button", { name: "重新排列" }));
+    await waitFor(() => expect(boardsApi.setLayout).toHaveBeenCalledTimes(1));
+
+    const undo = screen.getByRole("button", { name: "撤销上一次布局" });
+    await waitFor(() => expect(undo).toBeEnabled());
+    fireEvent.click(undo);
+
+    await waitFor(() =>
+      expect(boardsApi.setLayout).toHaveBeenLastCalledWith("board_1", {
+        version: 2,
+        items: [{ app_id: "app_1", x: 0, y: 0, w: 2, h: 2 }],
       }),
     );
   });

@@ -92,6 +92,30 @@ async def test_board_crud_and_layout_flow(
     assert r.json()["error"]["code"] == "BOARD_NOT_FOUND"
 
 
+async def test_layout_round_trips_locked_cells(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = _app_id(srv, "alice", agent_id, "Tracker")
+
+    r = await client.post("/api/boards", headers=alice_auth, json={"name": "Home"})
+    board_id = r.json()["board_id"]
+
+    r = await client.put(
+        f"/api/boards/{board_id}/layout",
+        headers=alice_auth,
+        json={
+            "version": 1,
+            "items": [{**_item(app_id), "locked": True}],
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["layout"]["items"][0]["locked"] is True
+
+    r = await client.get(f"/api/boards/{board_id}", headers=alice_auth)
+    assert r.json()["layout"]["items"][0]["locked"] is True
+
+
 async def test_board_is_private_to_its_owner(
     env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
 ) -> None:
