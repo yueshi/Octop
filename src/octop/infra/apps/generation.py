@@ -19,6 +19,7 @@ from octop.i18n import tr
 from octop.infra.apps.model_access import AppModelSource, resolve_app_model
 from octop.infra.apps.service import AppRecord
 from octop.infra.errors import ErrorCode, OctopError
+from octop.infra.users.resource_policy import assert_token_quota_available
 from octop.infra.utils.llm_text import llm_text_content
 from octop.infra.utils.locale import Locale
 
@@ -41,11 +42,30 @@ class GeneratedText:
 
 
 class AppGenerator:
-    """Runs one prompt against the app owner's default model."""
+    """Runs one prompt against the app owner's default model.
 
-    def __init__(self, *, agents: AppModelSource, usage_repo: Any | None = None) -> None:
+    Cost attribution: the model, the token usage and the quota gate all belong
+    to the **app's owner** (its creator agent / owner user) — never to whoever
+    happened to trigger the call. A visitor with read access spends the owner's
+    budget, and the owner's quota is the gate that stops it.
+    """
+
+    def __init__(
+        self,
+        *,
+        agents: AppModelSource,
+        usage_repo: Any | None = None,
+        policy_repo: Any | None = None,
+    ) -> None:
         self._agents = agents
         self._usage_repo = usage_repo
+        self._policy_repo = policy_repo
+
+    def _check_owner_quota(self, row: AppRecord) -> None:
+        """Gate on the owner's lifetime token quota, not the caller's."""
+        if self._policy_repo is None or self._usage_repo is None:
+            return
+        assert_token_quota_available(self._policy_repo, self._usage_repo, row.owner_user_id)
 
     async def generate(
         self,
@@ -60,6 +80,8 @@ class AppGenerator:
         if not question:
             raise OctopError(ErrorCode.APP_PROMPT_INVALID, "prompt must not be empty")
         llm, model_ref = resolve_app_model(self._agents, row.agent_id)
+        # 额度闸门归属创建者：调用者再多人，也共用创建者的一条额度线。
+        self._check_owner_quota(row)
         messages = [
             SystemMessage(content=self._system_prompt(row, system, locale)),
             HumanMessage(content=question[:MAX_PROMPT_LEN]),
@@ -111,7 +133,8 @@ class AppGenerator:
         try:
             self._usage_repo.record(
                 agent_id=row.agent_id,
-                user_id=user_id,
+                # 归属创建者：谁点的按钮不重要，账记在小程序所有者头上。
+                user_id=row.owner_user_id,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 model=model_ref,

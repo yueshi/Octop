@@ -410,6 +410,7 @@ def _assistant(server: OctopServer, service: AppService) -> AppAssistant:
         app_repo=server.services.light_app_repo,
         agents=server.app_runtime.agent_registry,
         usage_repo=server.services.usage_repo,
+        policy_repo=server.services.user_policy_repo,
     )
 
 
@@ -419,6 +420,7 @@ def _generator(server: OctopServer) -> AppGenerator:
     return AppGenerator(
         agents=server.app_runtime.agent_registry,
         usage_repo=server.services.usage_repo,
+        policy_repo=server.services.user_policy_repo,
     )
 
 
@@ -1779,6 +1781,24 @@ async def generate_app_text(
         prompt=prompt,
         system=body.system,
         locale=locale,
+    )
+    # 成本归创建者，调用者身份单独留痕（可追溯，不参与计费归属）。
+    assert server.services is not None
+    server.services.audit_repo.write(
+        actor=user.username,
+        action="app.generate",
+        target=row.app_id,
+        payload=json.dumps(
+            {
+                "owner_agent_id": row.agent_id,
+                "owner_user_id": row.owner_user_id,
+                "caller_user_id": user.id,
+                "model": generated.model_ref,
+                "input_tokens": generated.input_tokens,
+                "output_tokens": generated.output_tokens,
+            },
+            ensure_ascii=False,
+        ),
     )
     return GenerateResponse(
         text=generated.text,

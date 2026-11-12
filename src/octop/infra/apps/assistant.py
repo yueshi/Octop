@@ -37,6 +37,7 @@ from octop.infra.db.repos.apps import (
     LightAppRepo,
 )
 from octop.infra.errors import OctopError
+from octop.infra.users.resource_policy import assert_token_quota_available
 from octop.infra.utils.llm_text import llm_text_content
 from octop.infra.utils.locale import Locale
 
@@ -113,11 +114,19 @@ class AppAssistant:
         app_repo: LightAppRepo,
         agents: AppModelSource,
         usage_repo: Any | None = None,
+        policy_repo: Any | None = None,
     ) -> None:
         self._service = service
         self._app_repo = app_repo
         self._agents = agents
         self._usage_repo = usage_repo
+        self._policy_repo = policy_repo
+
+    def _check_owner_quota(self, row: AppRecord) -> None:
+        """助手同样按创建者计费与限额（会话历史仍按调用者分区）。"""
+        if self._policy_repo is None or self._usage_repo is None:
+            return
+        assert_token_quota_available(self._policy_repo, self._usage_repo, row.owner_user_id)
 
     # ----- history -----
 
@@ -166,6 +175,7 @@ class AppAssistant:
         """Yield ``token`` / ``tool`` / ``chart`` / ``done`` / ``error`` events."""
         row, user_id, question = prepared.row, prepared.user_id, prepared.question
         try:
+            self._check_owner_quota(row)
             messages = await self._messages_for(row, user_id, question, prepared.locale)
             charts: list[dict[str, Any]] = []
             bound = prepared.llm.bind_tools(self._build_tools(row, charts, prepared.locale))
@@ -553,7 +563,8 @@ class AppAssistant:
         try:
             self._usage_repo.record(
                 agent_id=row.agent_id,
-                user_id=user_id,
+                # 归属创建者（对话历史仍按调用者分区）
+                user_id=row.owner_user_id,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 model=model_ref,
