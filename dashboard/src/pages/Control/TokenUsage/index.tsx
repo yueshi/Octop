@@ -40,6 +40,7 @@ import PageShell from "../../../layouts/PageShell";
 import { useIsMobile } from "../../../hooks/useIsMobile";
 import { UsageStats, type UsageStatItem } from "./UsageStats";
 import { useUserRole } from "../../../hooks/useUserRole";
+import { useCurrentUser } from "../../../hooks/useCurrentUser";
 import { request, requestBlob } from "../../../api/request";
 import { useAgent } from "../../../context/AgentContext";
 import { useTheme } from "../../../context/ThemeContext";
@@ -411,7 +412,7 @@ function toPieData(buckets: UsageBucket[], limit = 8) {
   ];
 }
 
-function fetchSummary(
+export function fetchSummary(
   windowKey: string,
   granularity: string,
   agentFilter: string | "all",
@@ -431,7 +432,7 @@ function fetchSummary(
   return request<UsageSummary>(`/usage/summary?${params}`);
 }
 
-function usageExportPath(
+export function usageExportPath(
   windowKey: string,
   agentFilter: string | "all",
   userFilter: number | "all" | null,
@@ -832,14 +833,24 @@ export default function TokenUsagePage() {
   const { agents } = useAgent();
   const role = useUserRole();
   const isAdmin = role === "admin";
+  const currentUser = useCurrentUser();
   const isMobile = useIsMobile();
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(() =>
     defaultLast30dRange(),
   );
   const [view, setView] = useState<ViewMode>("summary");
   const [agentFilter, setAgentFilter] = useState<string | "all">("all");
-  const [userFilter, setUserFilter] = useState<number | "all">("all");
+  // ``null`` while the signed-in user resolves; then defaults to that user so
+  // an admin opens on their own usage, not the whole instance.
+  const [userFilter, setUserFilter] = useState<number | "all" | null>(null);
   const [users, setUsers] = useState<UsageUserOption[]>([]);
+
+  useEffect(() => {
+    // Never fall back to "all": while the id is unknown the page keeps
+    // querying the caller-scoped endpoint, which cannot leak other users.
+    if (userFilter !== null || role === null || currentUser?.id == null) return;
+    setUserFilter(currentUser.id);
+  }, [currentUser?.id, role, userFilter]);
   const [exporting, setExporting] = useState(false);
 
   const [totals, setTotals] = useState<UsageSummary | null>(null);
@@ -1039,7 +1050,7 @@ export default function TokenUsagePage() {
           <div className={styles.toolbarFilters}>
             {isAdmin && (
               <Select
-                value={userFilter}
+                value={userFilter ?? undefined}
                 onChange={(v) => setUserFilter(v)}
                 className={styles.toolbarFilterSelect}
                 style={{ width: isMobile ? undefined : 160 }}
