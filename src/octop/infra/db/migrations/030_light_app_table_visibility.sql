@@ -18,6 +18,21 @@ ALTER TABLE light_app_publications ADD COLUMN tables_snapshot_json TEXT NOT NULL
 ALTER TABLE light_app_publications ADD COLUMN snapshot_digest TEXT NOT NULL DEFAULT '';
 ALTER TABLE light_app_publications ADD COLUMN snapshot_at INTEGER;
 
+-- Personal workbench boards: one named 12-column layout per row.
+CREATE TABLE IF NOT EXISTS miniapp_boards (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  board_id      TEXT NOT NULL UNIQUE,
+  owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  description   TEXT NOT NULL DEFAULT '',
+  layout_json   TEXT NOT NULL DEFAULT '{"version":1,"items":[]}',
+  version       INTEGER NOT NULL DEFAULT 1,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_miniapp_boards_owner
+  ON miniapp_boards(owner_user_id);
+
 UPDATE light_app_tables
 SET public_visible = CASE WHEN table_key = 'main' THEN 1 ELSE 0 END;
 

@@ -11,6 +11,7 @@ from octop.infra.db.repos.apps import LightAppRepo
 from octop.infra.db.repos.audit import AuditRepo
 from octop.infra.db.repos.autonomy_policy import AutonomyPolicyRepo
 from octop.infra.db.repos.backends import BackendRepo
+from octop.infra.db.repos.boards import LightAppBoardRepo
 from octop.infra.db.repos.bridge_connections import BridgeConnectionRepo
 from octop.infra.db.repos.care_push import CarePushRepo
 from octop.infra.db.repos.channels import ChannelRepo
@@ -76,6 +77,7 @@ class RepoBundle:
     published_expert_repo: PublishedExpertRepo
     knowledge_repo: KnowledgeRepo
     light_app_repo: LightAppRepo
+    light_app_board_repo: LightAppBoardRepo
     voice_provider_repo: VoiceProviderRepo
     care_push_repo: CarePushRepo
     proactive_care_config_repo: ProactiveCareConfigRepo
@@ -122,6 +124,7 @@ class RepoBundle:
             published_expert_repo=PublishedExpertRepo(db),
             knowledge_repo=KnowledgeRepo(db),
             light_app_repo=LightAppRepo(db),
+            light_app_board_repo=LightAppBoardRepo(db),
             voice_provider_repo=VoiceProviderRepo(db),
             care_push_repo=CarePushRepo(db),
             proactive_care_config_repo=ProactiveCareConfigRepo(db),
@@ -241,6 +244,10 @@ class SharedServices:
     @property
     def light_app_repo(self) -> LightAppRepo:
         return self.repos.light_app_repo
+
+    @property
+    def light_app_board_repo(self) -> LightAppBoardRepo:
+        return self.repos.light_app_board_repo
 
     @property
     def voice_provider_repo(self) -> VoiceProviderRepo:

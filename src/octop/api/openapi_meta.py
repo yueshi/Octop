@@ -74,6 +74,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "description": "MiniApps built by agents: single-file HTML UIs backed by a validated CSV table, with owner/collaborator access control.",
     },
     {
+        "name": "boards",
+        "description": "Personal workbench boards: named 12-column layouts of MiniApps with CAS-guarded edits.",
+    },
+    {
         "name": "chat",
         "description": "Dashboard chat: WebSocket streaming, threads, conversation history, trajectory ledger, and text-push toasts.",
     },

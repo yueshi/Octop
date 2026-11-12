@@ -1967,6 +1967,32 @@ def _ensure_light_app_publications_schema(db: DatabasePool) -> None:
     _ensure_column(db, "light_app_publications", "snapshot_at", "INTEGER")
 
 
+def _ensure_miniapp_boards_schema(db: DatabasePool) -> None:
+    """Create the personal workbench board table when a DB predates it."""
+    if not _table_exists(db, "users"):
+        return
+    pk = _integer_pk_sql(db)
+    with db.connect() as conn:
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS miniapp_boards (
+              id            {pk},
+              board_id      TEXT NOT NULL UNIQUE,
+              owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              name          TEXT NOT NULL,
+              description   TEXT NOT NULL DEFAULT '',
+              layout_json   TEXT NOT NULL DEFAULT '{{"version":1,"items":[]}}',
+              version       INTEGER NOT NULL DEFAULT 1,
+              created_at    INTEGER NOT NULL,
+              updated_at    INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_miniapp_boards_owner ON miniapp_boards(owner_user_id)"
+        )
+
+
 def _ensure_team_board_schema(db: DatabasePool) -> None:
     """Create the v25 team board tables when a DB recorded the version without them."""
     pk = _integer_pk_sql(db)
@@ -2792,6 +2818,7 @@ def run_migrations(db: DatabasePool) -> None:
     _ensure_light_app_rows_schema(db)
     _ensure_light_app_table_visibility(db)
     _ensure_light_app_publications_schema(db)
+    _ensure_miniapp_boards_schema(db)
     _ensure_team_board_schema(db)
     _ensure_goal_deliverables_schema(db)
     _ensure_autonomy_schema(db)
