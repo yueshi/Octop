@@ -42,6 +42,11 @@ interface PageShellProps {
   showTeams?: boolean;
   /** When true, the content area does not scroll; children fill remaining height. */
   fill?: boolean;
+  /**
+   * Drop the page/card padding so the content fills the viewport edges.
+   * Used by pages whose own layout is the canvas (e.g. the workbench board).
+   */
+  flush?: boolean;
   children: React.ReactNode;
 }
 
@@ -98,13 +103,14 @@ function PageShell({
   agentScoped,
   showTeams,
   fill,
+  flush,
   children,
 }: PageShellProps) {
   const isMobile = useIsMobile();
   const { activeAgent } = useAgent();
-  const outerPad = isMobile ? 12 : 32;
-  const outerPadTop = isMobile ? 12 : 24;
-  const contentPad = isMobile ? 12 : 24;
+  const outerPad = flush ? (isMobile ? 8 : 12) : isMobile ? 12 : 32;
+  const outerPadTop = flush ? (isMobile ? 8 : 12) : isMobile ? 12 : 24;
+  const contentPad = flush ? 0 : isMobile ? 12 : 24;
   /** Fill layout, or mobile path-tabs that must stay pinned above the body. */
   const pinBody = Boolean(fill || (isMobile && pathTabs));
   /**
@@ -192,8 +198,10 @@ function PageShell({
         className={DESKTOP_NO_DRAG_CLASS}
         style={{
           flex: 1,
-          background: "var(--fn-bg-container, var(--fn-bg-elevated))",
-          borderRadius: 8,
+          background: flush
+            ? "transparent"
+            : "var(--fn-bg-container, var(--fn-bg-elevated))",
+          borderRadius: flush ? 0 : 8,
           padding: contentPad,
           paddingBottom: pinBody
             ? contentPad
