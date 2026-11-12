@@ -1,0 +1,1464 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Octop MiniApp 平台路线图：多视图、外部集成与分发。"
+    />
+    <title>Octop｜MiniApp 平台路线图</title>
+    <style>
+      :root {
+        --ink: #eaf3ff;
+        --muted: #9cadc6;
+        --dim: #6f819b;
+        --line: rgba(174, 209, 255, 0.16);
+        --line-soft: rgba(174, 209, 255, 0.08);
+        --surface: rgba(16, 30, 52, 0.78);
+        --surface-strong: #0e1f38;
+        --blue: #61a7ff;
+        --cyan: #65e6d1;
+        --violet: #a597ff;
+        --orange: #ffbd72;
+        --red: #fc8298;
+        --green: #7ee2a8;
+        --bg: #050d18;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Noto Sans CJK SC",
+          "PingFang SC",
+          "Microsoft YaHei",
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+        print-color-adjust: exact;
+        -webkit-print-color-adjust: exact;
+      }
+      #stage {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 1280px;
+        height: 720px;
+        transform-origin: center center;
+        background:
+          radial-gradient(circle at 82% 8%, rgba(72, 145, 255, 0.26), transparent 32%),
+          radial-gradient(circle at 10% 88%, rgba(62, 216, 186, 0.12), transparent 34%),
+          linear-gradient(135deg, #050d18 0%, #081626 55%, #050d18 100%);
+        overflow: hidden;
+        border-radius: 2px;
+      }
+      #stage::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.24;
+        background-image:
+          linear-gradient(rgba(122, 183, 255, 0.12) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(122, 183, 255, 0.12) 1px, transparent 1px);
+        background-size: 48px 48px;
+        mask-image: linear-gradient(to bottom, black, transparent 88%);
+      }
+      .slide {
+        position: absolute;
+        inset: 0;
+        display: none;
+        flex-direction: column;
+        padding: 52px 64px 46px;
+        z-index: 1;
+      }
+      .slide.active {
+        display: flex;
+      }
+      .kicker {
+        color: var(--cyan);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 10px 0 0;
+        font-size: 70px;
+        line-height: 1.06;
+        letter-spacing: -0.045em;
+        font-weight: 700;
+      }
+      h2 {
+        margin: 8px 0 0;
+        font-size: 42px;
+        line-height: 1.12;
+        letter-spacing: -0.035em;
+        font-weight: 700;
+      }
+      h3 {
+        margin: 0;
+        font-size: 20px;
+        line-height: 1.25;
+        font-weight: 650;
+      }
+      .lead {
+        margin: 14px 0 0;
+        max-width: 900px;
+        color: var(--muted);
+        font-size: 19px;
+        line-height: 1.55;
+      }
+      .subtitle {
+        margin: 10px 0 0;
+        color: var(--blue);
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+      .slide-head {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 24px;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 14px;
+        margin-bottom: 22px;
+        flex: none;
+      }
+      .slide-head .head-note {
+        color: var(--dim);
+        font-size: 13px;
+        text-align: right;
+        line-height: 1.4;
+        white-space: nowrap;
+      }
+      .slide-body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .slide-footer {
+        margin-top: auto;
+        padding-top: 12px;
+        padding-right: 176px;
+        display: flex;
+        justify-content: space-between;
+        color: var(--dim);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        flex: none;
+      }
+      .cols {
+        display: grid;
+        gap: 18px;
+        min-height: 0;
+      }
+      .cols.c2 {
+        grid-template-columns: 1fr 1fr;
+      }
+      .cols.c3 {
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .cols.c4 {
+        grid-template-columns: repeat(4, 1fr);
+      }
+      .cols.split {
+        grid-template-columns: 1.15fr 0.85fr;
+      }
+      .cards {
+        display: grid;
+        gap: 14px;
+        min-height: 0;
+      }
+      .cards.c2 {
+        grid-template-columns: 1fr 1fr;
+      }
+      .cards.c3 {
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .cards.c4 {
+        grid-template-columns: repeat(4, 1fr);
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 16px 18px;
+        min-width: 0;
+      }
+      .card.tight {
+        padding: 13px 15px;
+      }
+      .card .num {
+        color: var(--cyan);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+      }
+      .card h3 {
+        margin: 5px 0 6px;
+      }
+      .card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.5;
+      }
+      .card p + p {
+        margin-top: 6px;
+      }
+      .card.accent-blue {
+        border-color: rgba(97, 167, 255, 0.34);
+      }
+      .card.accent-cyan {
+        border-color: rgba(101, 230, 209, 0.34);
+      }
+      .card.accent-violet {
+        border-color: rgba(165, 151, 255, 0.34);
+      }
+      .card.accent-orange {
+        border-color: rgba(255, 189, 114, 0.34);
+      }
+      .pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 11px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.2;
+        white-space: nowrap;
+      }
+      .pill.blue {
+        color: var(--blue);
+        border-color: rgba(97, 167, 255, 0.38);
+        background: rgba(97, 167, 255, 0.08);
+      }
+      .pill.cyan {
+        color: var(--cyan);
+        border-color: rgba(101, 230, 209, 0.38);
+        background: rgba(101, 230, 209, 0.07);
+      }
+      .pill.violet {
+        color: var(--violet);
+        border-color: rgba(165, 151, 255, 0.38);
+        background: rgba(165, 151, 255, 0.07);
+      }
+      .pill.orange {
+        color: var(--orange);
+        border-color: rgba(255, 189, 114, 0.38);
+        background: rgba(255, 189, 114, 0.07);
+      }
+      .pill.red {
+        color: var(--red);
+        border-color: rgba(252, 130, 152, 0.38);
+        background: rgba(252, 130, 152, 0.07);
+      }
+      .pill.green {
+        color: var(--green);
+        border-color: rgba(126, 226, 168, 0.38);
+        background: rgba(126, 226, 168, 0.07);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 15.5px;
+        line-height: 1.4;
+      }
+      th {
+        text-align: left;
+        color: var(--cyan);
+        font-size: 11.5px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        border-bottom: 1px solid var(--line);
+        padding: 7px 10px;
+        white-space: nowrap;
+      }
+      td {
+        padding: 7px 10px;
+        border-bottom: 1px solid var(--line-soft);
+        vertical-align: top;
+        color: var(--ink);
+      }
+      td.muted {
+        color: var(--muted);
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+      td.center,
+      th.center {
+        text-align: center;
+      }
+      .callout {
+        border: 1px solid rgba(101, 230, 209, 0.3);
+        background: rgba(101, 230, 209, 0.06);
+        border-radius: 12px;
+        padding: 11px 15px;
+        color: var(--muted);
+        font-size: 14.5px;
+        line-height: 1.5;
+      }
+      .callout strong {
+        color: var(--cyan);
+      }
+      .callout.warn {
+        border-color: rgba(255, 189, 114, 0.34);
+        background: rgba(255, 189, 114, 0.06);
+      }
+      .callout.warn strong {
+        color: var(--orange);
+      }
+      code {
+        background: rgba(97, 167, 255, 0.1);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        padding: 1px 5px;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 0.9em;
+        color: #cfe4ff;
+        white-space: nowrap;
+      }
+      pre {
+        margin: 0;
+        background: #07172a;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 14px;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 12.5px;
+        line-height: 1.55;
+        color: #cfe4ff;
+        overflow: hidden;
+      }
+      .flow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .flow .node {
+        background: var(--surface-strong);
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 8px 11px;
+        font-size: 13.5px;
+        line-height: 1.3;
+        color: var(--ink);
+      }
+      .flow .arrow {
+        color: var(--dim);
+        font-size: 15px;
+      }
+      .flow.vertical {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .flow.vertical .arrow {
+        text-align: center;
+        line-height: 1;
+      }
+      .list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+      .list li {
+        position: relative;
+        padding-left: 18px;
+        color: var(--muted);
+        font-size: 14.5px;
+        line-height: 1.45;
+      }
+      .list li::before {
+        content: "";
+        position: absolute;
+        left: 2px;
+        top: 0.52em;
+        width: 7px;
+        height: 7px;
+        border-radius: 2px;
+        background: var(--cyan);
+        opacity: 0.75;
+      }
+      .list li strong {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .big-number {
+        font-size: 34px;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        line-height: 1;
+        color: var(--blue);
+      }
+      .big-number.cyan {
+        color: var(--cyan);
+      }
+      .big-number.violet {
+        color: var(--violet);
+      }
+      .big-number.orange {
+        color: var(--orange);
+      }
+      .metric-label {
+        margin-top: 5px;
+        color: var(--dim);
+        font-size: 12px;
+        letter-spacing: 0.05em;
+      }
+      .divider {
+        height: 1px;
+        background: var(--line);
+        margin: 2px 0;
+      }
+      .cover {
+        justify-content: center;
+        padding-left: 82px;
+        padding-right: 82px;
+      }
+      .cover .glow {
+        position: absolute;
+        width: 620px;
+        height: 620px;
+        right: -160px;
+        top: -180px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(97, 167, 255, 0.22), transparent 62%);
+        pointer-events: none;
+      }
+      .cover .subtitle {
+        margin-top: 14px;
+      }
+      .cover .lead {
+        margin-top: 12px;
+        max-width: 780px;
+        font-size: 18px;
+      }
+      .cover .pill-row {
+        margin-top: 26px;
+      }
+      .cover-meta {
+        margin-top: 26px;
+        display: flex;
+        gap: 22px;
+        color: var(--dim);
+        font-size: 13px;
+        letter-spacing: 0.05em;
+      }
+      .phase-strip {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-top: 2px;
+      }
+      .phase {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 14px;
+        background: rgba(14, 31, 56, 0.6);
+      }
+      .phase .tag {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+      }
+      .phase h3 {
+        margin: 4px 0 3px;
+        font-size: 17px;
+      }
+      .phase p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .phase.r1 .tag {
+        color: var(--blue);
+      }
+      .phase.r2 .tag {
+        color: var(--cyan);
+      }
+      .phase.r3 .tag {
+        color: var(--violet);
+      }
+      .acceptance {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 2px;
+      }
+      .check {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 13px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 5px 10px;
+      }
+      .check::before {
+        content: "✓";
+        color: var(--green);
+        font-weight: 700;
+      }
+      .matrix td:first-child {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .two-col-list {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px 20px;
+      }
+      .note {
+        color: var(--dim);
+        font-size: 12.5px;
+        line-height: 1.45;
+      }
+      .note strong {
+        color: var(--muted);
+      }
+      .controls {
+        position: fixed;
+        right: 18px;
+        bottom: 16px;
+        display: flex;
+        gap: 6px;
+        z-index: 20;
+      }
+      .controls button {
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
+        border: 1px solid rgba(174, 209, 255, 0.22);
+        background: rgba(10, 22, 40, 0.82);
+        color: var(--ink);
+        font-size: 15px;
+        cursor: pointer;
+        line-height: 1;
+      }
+      .controls button:hover {
+        border-color: rgba(101, 230, 209, 0.55);
+        color: var(--cyan);
+      }
+      .progress {
+        position: fixed;
+        left: 0;
+        top: 0;
+        height: 3px;
+        width: 0;
+        background: linear-gradient(90deg, var(--blue), var(--cyan));
+        z-index: 30;
+        transition: width 0.18s ease;
+      }
+      .hint {
+        position: fixed;
+        left: 50%;
+        bottom: 13px;
+        transform: translateX(-50%);
+        z-index: 20;
+        color: var(--dim);
+        font-size: 12px;
+        letter-spacing: 0.03em;
+        white-space: nowrap;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(5, 13, 24, 0.72);
+        pointer-events: none;
+      }
+      .hint kbd {
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 0 5px;
+        font-family: inherit;
+        color: var(--muted);
+      }
+      @media print {
+        html,
+        body {
+          overflow: visible;
+          background: var(--bg);
+        }
+        #stage {
+          position: static;
+          width: 1280px;
+          height: auto;
+          transform: none !important;
+          border-radius: 0;
+        }
+        .slide {
+          position: relative;
+          display: flex !important;
+          width: 1280px;
+          height: 720px;
+          page-break-after: always;
+          break-after: page;
+        }
+        .slide:last-child {
+          page-break-after: auto;
+          break-after: auto;
+        }
+        .controls,
+        .progress,
+        .hint {
+          display: none !important;
+        }
+        @page {
+          size: 1280px 720px;
+          margin: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="progress" id="progress"></div>
+    <div id="stage">
+      <!-- 01 -->
+      <section class="slide cover active">
+        <div class="glow"></div>
+        <div class="kicker">OCTOP · MINIAPP PLATFORM</div>
+        <h1>MiniApp 平台路线图</h1>
+        <p class="subtitle">多视图 · 外部集成 · 分发</p>
+        <p class="lead">
+          从“Agent 生成的数据视图”到“可编排、可连接、可分发”的展示面。
+          页面保持无状态，凭据不进入页面，外部 I/O 全部由宿主代调。
+        </p>
+        <div class="pill-row">
+          <span class="pill blue">R1 基础与展示</span>
+          <span class="pill cyan">R2 集成</span>
+          <span class="pill violet">R3 分发</span>
+        </div>
+        <div class="cover-meta">
+          <span>2026-11-12</span>
+          <span>决策已确认</span>
+          <span>R1 待实施</span>
+        </div>
+      </section>
+
+      <!-- 02 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">EXECUTIVE SUMMARY</div>
+            <h2>一页结论</h2>
+          </div>
+          <div class="head-note">6 个需求 · 3 层能力 · 3 个里程碑</div>
+        </div>
+        <div class="slide-body">
+          <div class="cols c2">
+            <div class="cards c3" style="gap: 10px">
+              <div class="card accent-blue tight">
+                <div class="num">01 · 展示层</div>
+                <h3>多工作台视图</h3>
+                <p>多 Board、拖拽缩放、独立 Tab、对外展示。</p>
+              </div>
+              <div class="card accent-cyan tight">
+                <div class="num">02 · 集成层</div>
+                <h3>连接外部世界</h3>
+                <p>实时外部数据、事件进出、统一定时任务。</p>
+              </div>
+              <div class="card accent-violet tight">
+                <div class="num">03 · 分发层</div>
+                <h3>可搬运、多入口</h3>
+                <p>跨主机迁移、IM 全功能与认证。</p>
+              </div>
+            </div>
+            <div class="card" style="display: flex; flex-direction: column; gap: 10px">
+              <div class="num" style="color: var(--orange)">地基 · 能力清单</div>
+              <p style="font-size: 15px">
+                没有 capability manifest，实时外部调用、事件发送、IM 认证链接都会各自成为新的越权入口。
+              </p>
+              <div class="phase-strip">
+                <div class="phase r1">
+                  <div class="tag">R1</div>
+                  <h3>基础与展示</h3>
+                  <p>能力、快照、compose、限流、回滚、多 Board</p>
+                </div>
+                <div class="phase r2">
+                  <div class="tag">R2</div>
+                  <h3>集成</h3>
+                  <p>外部数据、事件、调度、对外看板</p>
+                </div>
+                <div class="phase r3">
+                  <div class="tag">R3</div>
+                  <h3>分发</h3>
+                  <p>迁移包、IM 认证与渠道身份</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="callout">
+            <strong>贯穿原则：</strong>页面无状态 iframe · 凭据只在服务端 · 能力先声明后使用 · 一个事件面 · 一个 App 调度器 · 一个连接器通道。
+          </div>
+        </div>
+      </section>
+
+      <!-- 03 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">DECISIONS 01–05</div>
+            <h2>决策日志（上）</h2>
+          </div>
+          <div class="head-note">布局、权限、外部数据、公开实时、事件</div>
+        </div>
+        <div class="slide-body">
+          <table>
+            <thead>
+              <tr><th style="width: 46px">#</th><th style="width: 170px">决策点</th><th>结论</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="center">1</td>
+                <td>Board 布局</td>
+                <td><strong>12 列自由网格 + react-grid-layout</strong>；服务端存 <code>{x,y,w,h}</code>，保存做 CAS。</td>
+              </tr>
+              <tr>
+                <td class="center">2</td>
+                <td>对外看板权限</td>
+                <td><strong>每个应用必须已发布</strong>；看板 token 只授权布局，未发布单元格显示占位。</td>
+              </tr>
+              <tr>
+                <td class="center">3</td>
+                <td>实时外部数据</td>
+                <td><strong>先通用 http-extract + URL 白名单，豆瓣 adapter 后置。</strong></td>
+              </tr>
+              <tr>
+                <td class="center">4</td>
+                <td>公开实时</td>
+                <td><strong>结构化 adapter + 缓存优先 + 限流</strong>；通用 http-extract 只服务登录态。</td>
+              </tr>
+              <tr>
+                <td class="center">5</td>
+                <td>事件范围</td>
+                <td><strong>复用 infra/events，分阶段</strong>；MVP 做 inbox + webhook + Agent 通知，渠道直投后置。</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="callout warn">
+            <strong>决策 4 的顺序影响：</strong>I1a 通用服务（登录态） → I1b 豆瓣 adapter + public_live（公开实时）；I1b 可整体滑到 R3。
+          </div>
+        </div>
+      </section>
+
+      <!-- 04 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">DECISIONS 06–09</div>
+            <h2>决策日志（下）</h2>
+          </div>
+          <div class="head-note">调度、迁移、IM、发布节奏</div>
+        </div>
+        <div class="slide-body">
+          <table>
+            <thead>
+              <tr><th style="width: 46px">#</th><th style="width: 170px">决策点</th><th>结论</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="center">6</td>
+                <td>定时任务</td>
+                <td><strong>新建 light_app_schedules + 扩展 AppSourceScheduler</strong>；cron + 服务器时区；迁移 schedule_seconds。</td>
+              </tr>
+              <tr>
+                <td class="center">7</td>
+                <td>跨主机迁移</td>
+                <td><strong>Bundle v2：内容 + 声明，不带凭据/token</strong>；目标机重新绑定 connector，调度默认停用。</td>
+              </tr>
+              <tr>
+                <td class="center">8</td>
+                <td>IM 全功能</td>
+                <td><strong>先 owner 认证链接，后渠道身份绑定</strong>；私聊 owner 发一次性链接，群聊/非 owner 只读。</td>
+              </tr>
+              <tr>
+                <td class="center">9</td>
+                <td>发布节奏</td>
+                <td><strong>R1 / R2 / R3 三个独立里程碑</strong>；每阶段可独立合并、验收、回滚。</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="cols c3" style="gap: 10px">
+            <div class="card tight"><div class="num">安全边界</div><p>公开面只读；页面不能指定投递目标或任意 URL。</p></div>
+            <div class="card tight"><div class="num">兼容边界</div><p>旧应用全开；旧发布回退实时；旧 schedule_seconds 自动迁移。</p></div>
+            <div class="card tight"><div class="num">可滑档项</div><p>I1b 豆瓣 adapter + 公开实时可整体从 R2 滑到 R3。</p></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 05 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">INVARIANTS</div>
+            <h2>架构不变量</h2>
+          </div>
+          <div class="head-note">新增需求也不能破坏的 7 条</div>
+        </div>
+        <div class="slide-body">
+          <div class="cards c2" style="gap: 10px">
+            <div class="card tight"><div class="num">01</div><h3>页面是无状态 iframe</h3><p>没有每应用进程、没有本地端口、没有 JWT；所有外部 I/O 由宿主代调。</p></div>
+            <div class="card tight"><div class="num">02</div><h3>凭据只在服务端</h3><p>页面拿到数据或短期能力，不拿 connector token、IM token、发布 token。</p></div>
+            <div class="card tight"><div class="num">03</div><h3>能力先声明后使用</h3><p>external.fetch、events.emit、chat.compose、ai.generate 都进 manifest。</p></div>
+            <div class="card tight"><div class="num">04</div><h3>一个事件面</h3><p>扩展 infra/events，不新建第二套事件总线。</p></div>
+            <div class="card tight"><div class="num">05</div><h3>一个 App 调度器</h3><p>light_app_schedules 统一应用级定时任务，替代 schedule_seconds。</p></div>
+            <div class="card tight"><div class="num">06</div><h3>一个连接器通道</h3><p>GatewayToolRunner + catalog adapter；不开放页面任意 URL。</p></div>
+            <div class="card tight"><div class="num">07</div><h3>公开面只读且可缓存</h3><p>公开链接/看板不写数据；公开实时仅限结构化 adapter + 缓存优先 + 限流。</p></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 06 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">RELATIONSHIP</div>
+            <h2>与既有设计的关系</h2>
+          </div>
+          <div class="head-note">复用，而不是另起一套</div>
+        </div>
+        <div class="slide-body">
+          <table>
+            <thead>
+              <tr><th style="width: 280px">既有文档</th><th>关系</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>light-apps-architecture.md</td><td>F1/F2 的数据与发布基础；本路线图扩展能力清单、发布快照和多 Board。</td></tr>
+              <tr><td>light-apps-enhancement-plan.md</td><td>数据源、备份/恢复、应用交接、模板等已落地；本路线图接续实时服务与 Bundle v2。</td></tr>
+              <tr><td>miniapp-event-api-design.md</td><td>事件平面的长期设计；R2 只取最小子集（inbox + 最小出站），app-scoped key、CloudEvents、契约、ordering 后置。</td></tr>
+              <tr><td>miniapp-im-optimization.md</td><td>IM 快速路径已落地；R3 增加认证 WebView；“不在聊天里渲染完整 Dashboard”仍是非目标。</td></tr>
+              <tr><td>miniapp-creation-modes-design.md</td><td>创建路径不变；新建应用会带上 capability 默认集。</td></tr>
+            </tbody>
+          </table>
+          <div class="callout">
+            <strong>原则：</strong>已有事件 plane、source/subscription/delivery/retry 不重写；已有 IM 快速路径不改；新能力挂在同一套 ACL 和事件模型上。
+          </div>
+        </div>
+      </section>
+
+      <!-- 07 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">R1 · FOUNDATION &amp; PRESENTATION</div>
+            <h2>R1 · 基础与展示</h2>
+          </div>
+          <div class="head-note">先让平台更安全、更好用</div>
+        </div>
+        <div class="slide-body">
+          <div class="cards c3" style="gap: 10px">
+            <div class="card tight"><div class="num">F1</div><h3>能力清单</h3><p>页面能力声明、默认拒绝、宿主裁剪。</p></div>
+            <div class="card tight"><div class="num">F2</div><h3>发布快照</h3><p>HTML + 结构冻结；数据行实时；隐藏表/PII 即时生效。</p></div>
+            <div class="card tight"><div class="num">F3</div><h3>composeMessage</h3><p>应用把上下文填入聊天输入框，不自动发送。</p></div>
+            <div class="card tight"><div class="num">F4</div><h3>限流</h3><p>应用级 LLM 并发/频率；公开链接限流。</p></div>
+            <div class="card tight"><div class="num">F5</div><h3>上一版回滚</h3><p>previous_html + restore 接口；审计。</p></div>
+            <div class="card tight"><div class="num">P1/P2</div><h3>多 Board</h3><p>服务端多 Board、12 列拖拽缩放、独立 Tab 全屏。</p></div>
+          </div>
+          <div class="acceptance">
+            <span class="check">旧应用零回归</span>
+            <span class="check">能力可裁剪</span>
+            <span class="check">公开链接可冻结/重发布</span>
+            <span class="check">多 Board 独立 Tab</span>
+            <span class="check">make all 全绿</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 08 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">R1 · F1</div>
+            <h2>页面能力清单</h2>
+          </div>
+          <div class="head-note">能力只约束页面，不约束宿主 UI 和 Agent 工具</div>
+        </div>
+        <div class="slide-body">
+          <table>
+            <thead>
+              <tr><th style="width: 180px">能力</th><th style="width: 120px">新应用默认</th><th style="width: 100px">旧应用</th><th>强制点</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>data.read</td><td><span class="pill green">开</span></td><td>开</td><td>宿主 bridge</td></tr>
+              <tr><td>data.write</td><td><span class="pill green">开</span></td><td>开</td><td><strong>仅 bridge</strong>（详情页数据面板也走 POST /rows）</td></tr>
+              <tr><td>asset.read / external.open / chat.compose / events.read</td><td><span class="pill green">开</span></td><td>开</td><td>宿主 bridge</td></tr>
+              <tr><td>ai.generate</td><td><span class="pill orange">关</span></td><td>开</td><td>bridge + 服务端 /generate</td></tr>
+              <tr><td>game.launch</td><td><span class="pill orange">关</span></td><td>开</td><td>bridge + 服务端 /game-sessions</td></tr>
+              <tr><td>external.fetch / events.emit / schedules.manage</td><td><span class="pill orange">关</span></td><td>开</td><td>bridge + 服务端</td></tr>
+            </tbody>
+          </table>
+          <div class="cols c2" style="gap: 10px">
+            <div class="callout"><strong>为什么 data.write 只拦 bridge：</strong>详情页数据面板也调用 POST /rows；页面没有 JWT、CSP 禁网，只能走 bridge，所以 bridge 是充分强制点。</div>
+            <div class="callout warn"><strong>错误与接口：</strong>APP_CAPABILITY_DENIED（403）；PUT /apps/{id}/capabilities，owner/admin 可改，审计留痕。</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 09 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">R1 · F2</div>
+            <h2>发布快照：数据实时，结构冻结</h2>
+          </div>
+          <div class="head-note">公开链接不再随 Agent 编辑而静默改变</div>
+        </div>
+        <div class="slide-body">
+          <div class="cols split">
+            <div class="cards" style="gap: 10px">
+              <div class="card tight"><div class="num">冻结</div><p>HTML + 公开表结构（表清单、列定义、标签、公开可见性）。</p></div>
+              <div class="card tight"><div class="num">实时</div><p>数据行继续实时读；PII 脱敏和 public_visible 永远用实时值，隐藏表立即失效。</p></div>
+              <div class="card tight"><div class="num">兼容</div><p>旧发布无快照时回退实时；状态提示“尚未固定内容”，不做迁移期扫描。</p></div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 10px">
+              <div class="card">
+                <div class="flow vertical" style="gap: 6px">
+                  <div class="node">草稿 HTML / schema</div>
+                  <div class="arrow">↓ 发布</div>
+                  <div class="node" style="border-color: rgba(101,230,209,.45)">发布快照（HTML + 表结构）</div>
+                  <div class="arrow">↓</div>
+                  <div class="node">公开链接 / 看板单元格</div>
+                  <div class="arrow">＋ 实时行 / PII / 可见性</div>
+                </div>
+              </div>
+              <div class="note"><strong>API：</strong>POST /publication/publish · GET /publication → published_at / snapshot_stale / stale_reasons</div>
+            </div>
+          </div>
+          <div class="callout"><strong>关键：</strong>app_share_link 先发布快照再返回链接，保证 Agent 发出的链接就是刚交付的版本。</div>
+        </div>
+      </section>
+
+      <!-- 10 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">R1 · F3 / F4 / F5</div>
+            <h2>交互、边界与恢复</h2>
+          </div>
+          <div class="head-note">三个小能力，补齐体验与安全</div>
+        </div>
+        <div class="slide-body">
+          <div class="cards c3" style="gap: 14px">
+            <div class="card">
+              <div class="num" style="color: var(--blue)">F3 · composeMessage</div>
+              <h3>应用 → 输入框</h3>
+              <ul class="list">
+                <li>页面调用 <code>octopApp.composeMessage(text)</code></li>
+                <li>宿主预填聊天输入框，<strong>不自动发送</strong></li>
+                <li>复用现有 prefillInput 机制</li>
+                <li>公开链接不暴露</li>
+              </ul>
+            </div>
+            <div class="card">
+              <div class="num" style="color: var(--cyan)">F4 · 限流</div>
+              <h3>应用级 + 公开</h3>
+              <ul class="list">
+                <li>每应用 2 个并发 LLM 调用</li>
+                <li>每应用 30 次/分钟</li>
+                <li>公开链接 120 次/分钟 per token+IP</li>
+                <li>超限 APP_BUSY（429）+ Retry-After</li>
+              </ul>
+            </div>
+            <div class="card">
+              <div class="num" style="color: var(--orange)">F5 · 回滚</div>
+              <h3>上一版 HTML</h3>
+              <ul class="list">
+                <li>覆盖前保存 previous_html</li>
+                <li>POST /apps/{id}/restore-html</li>
+                <li>edit_structure + 审计</li>
+                <li>公开链接需重新发布才更新</li>
+              </ul>
+            </div>
+          </div>
+          <div class="callout warn"><strong>注意：</strong>限流是每进程的；多实例下是每实例限流，文档需注明，不为此引入分布式锁。</div>
+        </div>
+      </section>
+
+      <!-- 11 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">R1 · P1 / P2</div>
+            <h2>多 Board 与独立 Tab</h2>
+          </div>
+          <div class="head-note">从本地单 Board 到服务端多视图</div>
+        </div>
+        <div class="slide-body">
+          <div class="cols split">
+            <div style="display: flex; flex-direction: column; gap: 10px">
+              <pre>miniapp_boards (
+  board_id, owner_user_id, name,
+  layout_json,              -- {x,y,w,h}
+  share_token_hash,         -- 公开看板
+  created_at, updated_at
+)</pre>
+              <div class="note"><strong>布局：</strong>12 列网格，item = {app_id, x, y, w, h}；保存做 CAS；app 必须对 board owner 可访问。</div>
+            </div>
+            <div class="cards" style="gap: 10px">
+              <div class="card tight"><div class="num">前端</div><p>react-grid-layout 拖拽/缩放；Board 切换器；新建/改名/删除。</p></div>
+              <div class="card tight"><div class="num">路由</div><p><code>/apps/board/:id</code> 带外壳；<code>/apps/board/:id/view</code> 全屏；<code>/p/board/:token</code> 公开看板。</p></div>
+              <div class="card tight"><div class="num">迁移</div><p>首次加载把 localStorage 的 <code>octop:apps-board:v1</code> 迁移为默认 Board。</p></div>
+              <div class="card tight"><div class="num">多 Tab</div><p>每个 Board 稳定 URL，独立 Tab 各开一个；服务端状态避免 localStorage 互相覆盖。</p></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 12 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">R2 · INTEGRATION</div>
+            <h2>R2 · 集成</h2>
+          </div>
+          <div class="head-note">让 MiniApp 连接外部世界</div>
+        </div>
+        <div class="slide-body">
+          <div class="cards c3" style="gap: 10px">
+            <div class="card tight"><div class="num">I1a</div><h3>通用外部服务</h3><p>http-extract + 白名单 + 缓存 + 封面 asset；仅登录态。</p></div>
+            <div class="card tight"><div class="num">I1b</div><h3>豆瓣 adapter</h3><p>结构化工具 + public_live + 缓存优先 + 限流；公开实时。</p></div>
+            <div class="card tight"><div class="num">I2</div><h3>事件收件箱</h3><p>app.inbox；事件落库，页面轮询/宿主推送。</p></div>
+            <div class="card tight"><div class="num">I3</div><h3>出站告警</h3><p>emitEvent → webhook + Agent 通知；渠道直投后置。</p></div>
+            <div class="card tight"><div class="num">I4</div><h3>定时任务</h3><p>light_app_schedules；cron + 时区；迁移 schedule_seconds。</p></div>
+            <div class="card tight"><div class="num">P3</div><h3>对外看板</h3><p>Board token；每个应用必须已发布；只读。</p></div>
+          </div>
+          <div class="acceptance">
+            <span class="check">读书记录台实时查书 + 封面</span>
+            <span class="check">外部事件进入应用</span>
+            <span class="check">页面发送告警</span>
+            <span class="check">定时同步统一管理</span>
+            <span class="check">对外看板可撤销</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 13 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">R2 · I1</div>
+            <h2>实时外部数据：宿主代调</h2>
+          </div>
+          <div class="head-note">页面永远不直接访问外部服务</div>
+        </div>
+        <div class="slide-body">
+          <div class="cols split">
+            <div class="card">
+              <div class="flow vertical" style="gap: 6px">
+                <div class="node">页面 <code>octopApp.service("douban").call("get_book", {isbn})</code></div>
+                <div class="arrow">↓</div>
+                <div class="node">宿主 bridge · 检查 external.fetch + 服务声明</div>
+                <div class="arrow">↓</div>
+                <div class="node">POST /apps/{id}/services/{name}/call</div>
+                <div class="arrow">↓ 工具白名单 / 参数 schema / URL 前缀</div>
+                <div class="node">GatewayToolRunner → connector adapter</div>
+                <div class="arrow">↓</div>
+                <div class="node" style="border-color: rgba(101,230,209,.45)">缓存 JSON / 封面存 asset → 返回页面</div>
+              </div>
+            </div>
+            <div class="cards" style="gap: 10px">
+              <div class="card tight"><div class="num">安全</div><p>只读工具；SSRF 校验；响应 ≤5MB；超时 20s；每服务限流；无凭证进页面。</p></div>
+              <div class="card tight"><div class="num">封面</div><p>服务端拉取图片 → <code>assets/</code> → asset 名；页面用 <code>octopApp.asset()</code>。</p></div>
+              <div class="card tight"><div class="num">公开</div><p>只读缓存；I1b 只允许结构化 adapter + public_live + 缓存优先 + 限流。</p></div>
+            </div>
+          </div>
+          <div class="callout warn"><strong>禁止：</strong>通用 http-extract 不参与公开实时；公开页不能传任意 URL；页面不能指定 connector 实例。</div>
+        </div>
+      </section>
+
+      <!-- 14 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">R2 · I2 / I3</div>
+            <h2>事件进出：复用现有事件面</h2>
+          </div>
+          <div class="head-note">不重写 outbox · 不新建第二套总线</div>
+        </div>
+        <div class="slide-body">
+          <div class="cols c2">
+            <div class="card">
+              <div class="num">入站 · app.inbox</div>
+              <div class="flow vertical" style="gap: 6px; margin-top: 8px">
+                <div class="node">外部 webhook / connector poll</div>
+                <div class="arrow">↓</div>
+                <div class="node">infra/events 订阅过滤 + 去重 + 重试</div>
+                <div class="arrow">↓</div>
+                <div class="node">light_app_events（收件箱）</div>
+                <div class="arrow">↓</div>
+                <div class="node">页面 events() / onEvent()</div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="num">出站 · emitEvent</div>
+              <div class="flow vertical" style="gap: 6px; margin-top: 8px">
+                <div class="node">页面 <code>emitEvent(type, payload)</code></div>
+                <div class="arrow">↓</div>
+                <div class="node">POST /apps/{id}/events · events.emit</div>
+                <div class="arrow">↓</div>
+                <div class="node">隐藏 app source → 订阅 → delivery/retry</div>
+                <div class="arrow">↓</div>
+                <div class="node">webhook / Agent 通知（渠道后置）</div>
+              </div>
+            </div>
+          </div>
+          <div class="cols c3" style="gap: 10px">
+            <div class="callout"><strong>SDK：</strong>events / onEvent / emitEvent；宿主 5–10 秒轮询。</div>
+            <div class="callout"><strong>目标：</strong>owner 配置，页面不能指定；webhook HMAC + 私网校验。</div>
+            <div class="callout warn"><strong>边界：</strong>payload ≤64KB；每 app 30 条/分钟；保留 30 天 / 500 条。</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 15 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">R2 · I4</div>
+            <h2>统一定时任务</h2>
+          </div>
+          <div class="head-note">一个 App 入口 · cron + 服务器时区</div>
+        </div>
+        <div class="slide-body">
+          <div class="cols split">
+            <div style="display: flex; flex-direction: column; gap: 10px">
+              <pre>light_app_schedules (
+  schedule_id, app_id, name,
+  action, payload_json,
+  schedule_spec, timezone,
+  next_run_at, lease_until,
+  last_run_at, last_status
+)</pre>
+              <div class="note"><strong>复用：</strong>APScheduler CronTrigger 计算 next_run；30 秒扫描 + 条件 UPDATE 租约，多实例只执行一次。</div>
+            </div>
+            <div class="cards" style="gap: 10px">
+              <div class="card tight"><div class="num">动作</div><p>sync_source · snapshot_publication；P2 加 run_agent、refresh_service_cache。</p></div>
+              <div class="card tight"><div class="num">迁移</div><p>schedule_seconds &gt; 0 自动生成 sync_source 调度，停止扫描旧列，保留一个版本。</p></div>
+              <div class="card tight"><div class="num">UI</div><p>App 详情“自动化”页签；cron 预设、下次运行、最近状态、启用/停用、立即运行。</p></div>
+              <div class="card tight"><div class="num">工具</div><p>app_schedule_create/list/update/delete/run_now。</p></div>
+            </div>
+          </div>
+          <div class="callout"><strong>不改 cron_jobs：</strong>避免 SQLite CHECK 约束重建和 Agent 回合语义耦合；App 侧只保留一个调度入口。</div>
+        </div>
+      </section>
+
+      <!-- 16 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">R2 · P3</div>
+            <h2>对外看板</h2>
+          </div>
+          <div class="head-note">看板 token 只授权布局，不绕过应用发布</div>
+        </div>
+        <div class="slide-body">
+          <div class="cols c2">
+            <div class="cards" style="gap: 10px">
+              <div class="card tight"><div class="num">规则</div><p>每个单元格检查该 app 是否有有效发布快照；未发布显示占位。</p></div>
+              <div class="card tight"><div class="num">只读</div><p>无写入、无事件、无任意 URL；公开实时仅限 public_live + 结构化 adapter。</p></div>
+              <div class="card tight"><div class="num">撤销</div><p>Board token 可撤销/轮换；Cache-Control: no-store；按 token+IP 限流。</p></div>
+            </div>
+            <div class="card">
+              <div class="flow vertical" style="gap: 6px">
+                <div class="node">看板 token</div>
+                <div class="arrow">↓</div>
+                <div class="node">读取 layout + 每个单元格的 app 发布状态</div>
+                <div class="arrow">↓</div>
+                <div class="node">已发布 → 快照 HTML + 实时行</div>
+                <div class="arrow">↓</div>
+                <div class="node">未发布 → “未发布”占位</div>
+              </div>
+            </div>
+          </div>
+          <div class="callout"><strong>分享体验：</strong>提供“批量发布看板内应用”的便捷操作；授权仍落在每个应用上，撤销仍然有效。</div>
+        </div>
+      </section>
+
+      <!-- 17 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">R3 · PORTABILITY</div>
+            <h2>跨主机迁移：Bundle v2</h2>
+          </div>
+          <div class="head-note">内容 + 声明；凭据和 token 不跨主机</div>
+        </div>
+        <div class="slide-body">
+          <div class="cols c2">
+            <div>
+              <table>
+                <thead><tr><th>迁移</th><th>不迁移</th></tr></thead>
+                <tbody>
+                  <tr><td>HTML / schema / 行数据 / assets / preview</td><td>connector 凭据</td></tr>
+                  <tr><td>capabilities / 模板来源标识</td><td>发布 token（目标机重新发布）</td></tr>
+                  <tr><td>services / sources / schedules 声明（无 secret）</td><td>IM 身份绑定、审计历史</td></tr>
+                  <tr><td>可选助手历史</td><td>Board 布局（单独 bundle）</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="cards" style="gap: 10px">
+              <div class="card tight"><div class="num">导入</div><p>新 app_id、目标 agent；恢复表/资产/HTML/capabilities。</p></div>
+              <div class="card tight"><div class="num">重绑定</div><p>services/sources/schedules 默认停用；connector 缺失标 needs_binding。</p></div>
+              <div class="card tight"><div class="num">接口</div><p>GET /apps/{id}/export · POST /apps/import；CLI embedded server。</p></div>
+              <div class="card tight"><div class="num">安全</div><p>PII 提示；64MB/256MB 上限；可选密码加密放 P2。</p></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 18 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">R3 · DISTRIBUTION</div>
+            <h2>IM 全功能与认证</h2>
+          </div>
+          <div class="head-note">聊天是入口；完整交互在认证 WebView</div>
+        </div>
+        <div class="slide-body">
+          <div class="cols split">
+            <div class="cards" style="gap: 10px">
+              <div class="callout warn"><strong>现状：</strong>所有外部 IM 成员都按 Agent owner 处理（message_keys.py:86-107），没有 per-IM-user 身份。</div>
+              <div class="card tight"><div class="num">D3 · owner 认证链接</div><p>私聊 owner 发一次性 code（60s、单次）→ /auth/app → JWT → WebView；群聊/非 owner 只读。</p></div>
+              <div class="card tight"><div class="num">D4 · 渠道身份绑定</div><p>/bind + channel_identities；默认 identity_mode=owner；开启 bound 后按 IM 用户 ACL。</p></div>
+            </div>
+            <div>
+              <table class="matrix">
+                <thead><tr><th>渠道</th><th>卡片/按钮</th><th>WebView</th><th>MVP</th></tr></thead>
+                <tbody>
+                  <tr><td>Feishu/Lark</td><td>交互卡片</td><td>支持</td><td>首选</td></tr>
+                  <tr><td>WeCom/WeChat</td><td>有限</td><td>H5</td><td>链接 + 只读回退</td></tr>
+                  <tr><td>DingTalk</td><td>支持</td><td>支持</td><td>同 Feishu</td></tr>
+                  <tr><td>Telegram</td><td>URL 按钮</td><td>外部浏览器</td><td>认证链接</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="callout"><strong>与既有 IM 优化的关系：</strong>聊天内仍是“文本 + 预览图 + 链接”；“不在聊天里渲染完整 Dashboard”仍是非目标，完整应用在 WebView 打开。</div>
+        </div>
+      </section>
+
+      <!-- 19 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">CROSS-CUTTING</div>
+            <h2>横切与风险</h2>
+          </div>
+          <div class="head-note">每个里程碑都要过同一套质量门槛</div>
+        </div>
+        <div class="slide-body">
+          <div class="cols c2">
+            <div class="cards" style="gap: 10px">
+              <div class="card tight"><div class="num">i18n</div><p>新错误码 en/zh 同步；dashboard apiErrors 对齐。</p></div>
+              <div class="card tight"><div class="num">OpenAPI</div><p>Board/Service/Event/Schedule/Access Link 全部 summary + response_model。</p></div>
+              <div class="card tight"><div class="num">指标与审计</div><p>服务调用/缓存、事件投递、调度执行、看板访问、认证链接。</p></div>
+              <div class="card tight"><div class="num">测试</div><p>单元：capability/service/event/schedule/board/bundle；集成：白名单、缓存、公开只读、重试、租约、导入、单次消费。</p></div>
+            </div>
+            <div>
+              <table>
+                <thead><tr><th>风险</th><th>缓解</th></tr></thead>
+                <tbody>
+                  <tr><td>能力默认收紧导致应用报错</td><td>专家手册 + app_create 显式声明 + owner 可开启；旧应用全开</td></tr>
+                  <tr><td>快照改变“改完即生效”预期</td><td>状态页提示 + app_share_link 自动发布</td></tr>
+                  <tr><td>公开实时被滥用</td><td>仅结构化 adapter + public_live + 缓存 + 限流 + 熔断</td></tr>
+                  <tr><td>IM 身份改造回归</td><td>D3 先 owner-only；D4 按渠道 opt-in；默认 owner</td></tr>
+                  <tr><td>迁移包含 PII</td><td>导出提示 + 大小上限 + 可选加密</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="callout warn"><strong>可滑档：</strong>I1b（豆瓣 adapter + 公开实时）可整体从 R2 滑到 R3；R2 先交付登录态实时 + 缓存版公开页。</div>
+        </div>
+      </section>
+
+      <!-- 20 -->
+      <section class="slide">
+        <div class="slide-head">
+          <div>
+            <div class="kicker">NEXT</div>
+            <h2>下一步</h2>
+          </div>
+          <div class="head-note">先拿 R1 反馈，再启动 R2</div>
+        </div>
+        <div class="slide-body">
+          <div class="cols split">
+            <div class="cards" style="gap: 10px">
+              <div class="card tight"><div class="num">01</div><h3>整理当前工作区</h3><p>提交/评审现有 feature/light-apps 改动，避免与 R1 的 diff 混合。</p></div>
+              <div class="card tight"><div class="num">02</div><h3>R1 实施顺序</h3><p>F1 能力清单 → F2 发布快照 → F3/F4/F5 → P1/P2 多 Board。</p></div>
+              <div class="card tight"><div class="num">03</div><h3>每阶段验证</h3><p>单元 + 集成 + i18n + 前端 typecheck + make all；预提交跑 dashboard build。</p></div>
+              <div class="card tight"><div class="num">04</div><h3>再启动 R2</h3><p>R1 合并并收集反馈后，再决定 I1b/P3 是否滑档。</p></div>
+            </div>
+            <div class="card">
+              <div class="num">VERIFY</div>
+              <pre style="margin-top: 8px">uv run pytest tests/unit/apps tests/unit/db -q
+uv run pytest tests/integration/test_apps_api.py -q
+uv run pytest tests/unit/i18n -q
+cd dashboard &amp;&amp; npx tsc -b
+make all</pre>
+              <p style="margin-top: 10px">文档：<code>docs/miniapp-platform-roadmap.md</code></p>
+            </div>
+          </div>
+          <div class="callout"><strong>一句话：</strong>先把能力契约和发布快照做扎实，再把外部世界接进来，最后才做迁移和 IM。</div>
+        </div>
+      </section>
+    </div>
+
+    <div class="controls">
+      <button id="prev" aria-label="上一页" title="上一页（←）">←</button>
+      <button id="next" aria-label="下一页" title="下一页（→ / 空格）">→</button>
+      <button id="full" aria-label="全屏" title="全屏（F）">⛶</button>
+      <button id="print" aria-label="打印/PDF" title="打印 / 导出 PDF（P）">⎙</button>
+    </div>
+    <div class="hint">
+      <kbd>←</kbd> <kbd>→</kbd> 翻页 · <kbd>F</kbd> 全屏 · <kbd>P</kbd> 打印/PDF
+    </div>
+
+    <script>
+      (function () {
+        var slides = Array.prototype.slice.call(document.querySelectorAll(".slide"));
+        var stage = document.getElementById("stage");
+        var progress = document.getElementById("progress");
+        var index = 0;
+
+        function fromHash() {
+          var n = parseInt((location.hash || "").replace("#", ""), 10);
+          return Number.isFinite(n) && n >= 1 && n <= slides.length ? n - 1 : 0;
+        }
+
+        function fit() {
+          var scale = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
+          stage.style.transform =
+            "translate(-50%, -50%) scale(" + Math.max(scale, 0.1) + ")";
+        }
+
+        function show(n, updateHash) {
+          index = Math.max(0, Math.min(slides.length - 1, n));
+          slides.forEach(function (slide, i) {
+            slide.classList.toggle("active", i === index);
+            slide.setAttribute("aria-hidden", i === index ? "false" : "true");
+          });
+          progress.style.width =
+            ((index + 1) / slides.length) * 100 + "%";
+          if (updateHash !== false) {
+            history.replaceState(null, "", "#" + (index + 1));
+          }
+        }
+
+        function next() {
+          show(index + 1);
+        }
+
+        function prev() {
+          show(index - 1);
+        }
+
+        document.getElementById("next").addEventListener("click", next);
+        document.getElementById("prev").addEventListener("click", prev);
+        document.getElementById("full").addEventListener("click", function () {
+          if (document.fullscreenElement) {
+            document.exitFullscreen();
+          } else if (document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen();
+          }
+        });
+        document.getElementById("print").addEventListener("click", function () {
+          window.print();
+        });
+
+        window.addEventListener("keydown", function (event) {
+          var tag = (event.target && event.target.tagName) || "";
+          if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return;
+          if (event.key === "ArrowRight" || event.key === "PageDown" || event.key === " ") {
+            event.preventDefault();
+            next();
+          } else if (event.key === "ArrowLeft" || event.key === "PageUp") {
+            event.preventDefault();
+            prev();
+          } else if (event.key === "Home") {
+            event.preventDefault();
+            show(0);
+          } else if (event.key === "End") {
+            event.preventDefault();
+            show(slides.length - 1);
+          } else if (event.key === "f" || event.key === "F") {
+            document.getElementById("full").click();
+          } else if (event.key === "p" || event.key === "P") {
+            window.print();
+          }
+        });
+
+        var touchX = null;
+        window.addEventListener(
+          "touchstart",
+          function (event) {
+            touchX = event.changedTouches[0].clientX;
+          },
+          { passive: true }
+        );
+        window.addEventListener(
+          "touchend",
+          function (event) {
+            if (touchX === null) return;
+            var dx = event.changedTouches[0].clientX - touchX;
+            if (Math.abs(dx) > 48) {
+              if (dx < 0) next();
+              else prev();
+            }
+            touchX = null;
+          },
+          { passive: true }
+        );
+
+        window.addEventListener("hashchange", function () {
+          show(fromHash(), false);
+        });
+        window.addEventListener("resize", fit);
+
+        // Page numbers / footer on every slide.
+        slides.forEach(function (slide, i) {
+          var footer = document.createElement("footer");
+          footer.className = "slide-footer";
+          footer.innerHTML =
+            "<span>Octop · MiniApp 平台路线图 · 2026-11-12</span><span>" +
+            String(i + 1).padStart(2, "0") +
+            " / " +
+            String(slides.length).padStart(2, "0") +
+            "</span>";
+          slide.appendChild(footer);
+        });
+
+        fit();
+        show(fromHash(), false);
+      })();
+    </script>
+  </body>
+</html>

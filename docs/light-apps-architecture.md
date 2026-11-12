@@ -299,7 +299,7 @@ WHERE app_id = ? AND storage_version = 1;
 | `app.html` | 保留，Agent 唯一必写产物 |
 | `schema.json` | 只读镜像，创建/改结构时 best-effort 写一次 |
 | `manifest.json` | 只读镜像，标注 `data_storage: "control-plane-db"` |
-| `preview.svg` | Agent 画的封面（`app_set_preview`），工作台卡片和模板画廊当缩略图展示 |
+| `preview.svg` | Agent 画的封面（`app_set_preview`），工作台「全部小程序」列表和模板画廊当缩略图展示 |
 | `data.csv` | 不再随 append 重写；由导出接口或 `app_export_csv` 按需生成 |
 
 配套修改：

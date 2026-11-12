@@ -3,6 +3,8 @@
 > 状态：Phase 0–3 已实现（2026-10-27）：webhook + connector poll、expert/team/app target、
 > 管理 API + 最小 UI、30 天保留。Phase 4 可选增强未做。适用 MiniApp、团队、专家三端。
 > 前置阅读：`docs/team-drive-v2.md`、`docs/light-apps-assistant-and-import-design.md`、`docs/connectors.md`。
+>
+> 后续评估（对外开放、MiniApp 级寻址）：[miniapp-event-api-design.md](./miniapp-event-api-design.md)。
 
 > 目标：用一套外部事件入口、订阅和投递机制，替代三端各自做 webhook/poller 的方案。
 
