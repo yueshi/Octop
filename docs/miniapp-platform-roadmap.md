@@ -1,6 +1,6 @@
 # MiniApp 平台路线图：多视图、外部集成与分发
 
-> 状态：决策已确认，R1 待实施（2026-11-12）
+> 状态：R1 已实施（2026-11-12）；R2/R3 待实施
 >
 > 范围：工作台多 Board、实时外部数据、事件进出、统一定时任务、跨主机迁移、IM 全功能与认证。
 >
@@ -15,7 +15,7 @@
 >
 > 演示稿：[HTML](./miniapp-platform-roadmap.html) · [PPTX](./miniapp-platform-roadmap.pptx)。
 >
-> 实施进度：F1 页面能力清单、F2 发布快照、F3 composeMessage、F4 限流、F5 上一版回滚已落地（2026-11-12）；P1/P2 多 Board 待实施。
+> 实施进度（2026-11-12）：F1 页面能力清单、F2 发布快照、F3 composeMessage、F4 限流、F5 上一版回滚、P1/P2 服务端多 Board 均已落地。当前实现为个人看板（每个用户多个 Board、12 列拖拽/缩放、CAS 保存、独立 Tab 展示、旧本地布局无损迁移）；§5.6 中的公开看板分享（share token、`/p/board/*`）留到 P3 与公开实时数据一起做。
 
 ---
 
@@ -193,6 +193,8 @@ snapshot_at          INTEGER
 
 ### 5.6 P1/P2 多 Board
 
+> 实施状态：已完成个人看板部分（`miniapp_boards`、`/api/boards*`、12 列网格与独立展示页）。`share_token_hash` 列与下方公开看板接口尚未加入，属于 P3「对外看板」；当前不做公开分享。
+
 **数据模型**
 
 ```sql
@@ -238,7 +240,7 @@ miniapp_boards (
 
 - 工作台从“单个 localStorage Board”升级为“服务端 Board 列表 + 切换器”。
 - 12 列网格拖拽/缩放，使用 `react-grid-layout`（新增依赖）。
-- 路由：`/apps/board/{board_id}`（带外壳）、`/apps/board/{board_id}/view`（全屏、无侧栏/顶栏）。
+- 路由：`/apps/boards/{board_id}`（带工作台外壳）、`/apps/boards/{board_id}/view`（全屏、无侧栏/顶栏，在新标签页打开）。
 - 每个 Board 有稳定 URL，多 Tab 可各开一个；服务端状态避免 localStorage 跨 Tab 互相覆盖。
 - 首次加载时把旧 `octop:apps-board:v1` 迁移为默认 Board。
 
