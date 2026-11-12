@@ -1920,7 +1920,7 @@
       "loadFailed": "Could not load this board",
       "conflict": "This board changed elsewhere; reloaded the latest layout.",
       "none": "No board yet.",
-      "dragHint": "Drag a cell header to move it; drag its corner to resize.",
+      "dragHint": "Drag the top handle to move; hover it to reveal the header, or drag the corner to resize.",
       "refresh": "Refresh",
       "open": "Open detail",
       "menu": "Board actions"

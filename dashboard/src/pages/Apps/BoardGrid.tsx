@@ -1,6 +1,6 @@
 import { useCallback, type RefObject } from "react";
 import { Button, Tooltip, Typography } from "antd";
-import { AppWindow, ExternalLink, GripVertical, X } from "lucide-react";
+import { AppWindow, ExternalLink, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import ReactGridLayout, { type Layout } from "react-grid-layout/legacy";
 import { useContainerWidth } from "react-grid-layout";
@@ -76,15 +76,18 @@ function BoardCell({
   const { t } = useTranslation();
   return (
     <div className={styles.cell} data-app-id={app.app_id}>
-      <div className={styles.cellHead} title={app.name}>
-        {editable && (
-          <GripVertical
-            size={14}
-            aria-hidden
-            className={styles.cellGrip}
-            data-testid="board-cell-grip"
-          />
-        )}
+      <span
+        className={[styles.notchZone, editable ? "" : styles.notchZoneStatic]
+          .filter(Boolean)
+          .join(" ")}
+        aria-hidden
+      />
+      <div
+        className={[styles.cellHead, editable ? "" : styles.cellHeadStatic]
+          .filter(Boolean)
+          .join(" ")}
+        title={app.name}
+      >
         <AppWindow size={13} className={styles.cellIcon} />
         <Text ellipsis className={styles.cellTitle}>
           {app.name}
@@ -196,7 +199,7 @@ export default function BoardGrid({
           isResizable={editable}
           isBounded
           resizeHandles={["se"]}
-          draggableHandle={`.${styles.cellHead}`}
+          draggableHandle={`${styles.notchZone}, ${styles.cellHead}`}
           draggableCancel="button,a,input,textarea,select"
           onLayoutChange={handleLayoutChange}
           onDragStop={(layout) => onCommit?.(fromLayout(layout))}

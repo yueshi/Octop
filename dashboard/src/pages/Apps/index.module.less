@@ -23,6 +23,7 @@
 }
 
 .cell {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -34,14 +35,71 @@
   background: var(--fn-bg-elevated);
 }
 
+/* Notch: the always-present drag handle on the top edge. Hovering it (or the
+   header) slides the header down; the MiniApp otherwise owns the whole cell. */
+.notchZone {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 3;
+  width: 120px;
+  height: 28px;
+  transform: translateX(-50%);
+  cursor: grab;
+
+  &::after {
+    content: "";
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    width: 44px;
+    height: 5px;
+    border-radius: 999px;
+    background: var(--fn-color-brand-border);
+    opacity: 0.65;
+    transform: translateX(-50%);
+    transition:
+      opacity 0.16s ease,
+      background 0.16s ease;
+  }
+
+  &:hover::after {
+    background: var(--fn-text-tertiary);
+    opacity: 1;
+  }
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+/* Read-only presentation keeps the notch as a hover reveal, not a handle. */
+.notchZoneStatic {
+  cursor: default;
+}
+
+/* The header floats over the app and only appears while the notch/header is
+   hovered or focused, so the MiniApp keeps the whole cell. */
 .cellHead {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 4;
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: none;
   height: 34px;
   padding: 0 4px 0 10px;
   border-bottom: 1px solid var(--fn-color-brand-border);
+  background: var(--fn-bg-elevated);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 12%);
+  opacity: 0;
+  transform: translateY(-100%);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+  pointer-events: none;
   cursor: grab;
   user-select: none;
 
@@ -50,9 +108,31 @@
   }
 }
 
-.cellGrip {
-  flex: none;
-  color: var(--fn-text-tertiary);
+.notchZone:hover ~ .cellHead,
+.cellHead:hover,
+.cellHead:focus-within,
+:global(.react-grid-item.react-draggable-dragging) .cellHead,
+:global(.react-grid-item.resizing) .cellHead {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* Touch devices cannot hover: keep the name, actions and drag header usable. */
+@media (hover: none) {
+  .notchZone {
+    display: none;
+  }
+
+  .cellHead {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
+}
+
+.cellHeadStatic {
+  cursor: default;
 }
 
 .cellIcon {
