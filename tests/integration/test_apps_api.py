@@ -1704,6 +1704,21 @@ async def test_public_link_only_exposes_public_tables(
     assert r.status_code == 200, r.text
     assert r.json()["public_visible"] is True
 
+    # The published surface is frozen: a newly public table appears only
+    # after the owner republishes.
+    r = await client.get(f"/api/public/apps/{token}")
+    assert r.status_code == 200, r.text
+    assert [item["table_key"] for item in r.json()["tables"]] == ["main"]
+
+    r = await client.get(f"/api/public/apps/{token}/rows?table=members")
+    assert r.status_code == 404, r.text
+
+    r = await client.post(
+        f"/api/apps/{app_id}/publication/publish",
+        headers=alice_auth,
+    )
+    assert r.status_code == 200, r.text
+
     r = await client.get(f"/api/public/apps/{token}")
     assert r.status_code == 200, r.text
     assert [item["table_key"] for item in r.json()["tables"]] == ["main", "members"]
@@ -1711,6 +1726,62 @@ async def test_public_link_only_exposes_public_tables(
     r = await client.get(f"/api/public/apps/{token}/rows?table=members")
     assert r.status_code == 200, r.text
     assert r.json()["rows"] == []
+
+    # Hiding it is a kill switch: it takes effect without republishing.
+    r = await client.patch(
+        f"/api/apps/{app_id}/tables/members",
+        headers=alice_auth,
+        json={"public_visible": False},
+    )
+    assert r.status_code == 200, r.text
+    r = await client.get(f"/api/public/apps/{token}")
+    assert [item["table_key"] for item in r.json()["tables"]] == ["main"]
+    r = await client.get(f"/api/public/apps/{token}/rows?table=members")
+    assert r.status_code == 404, r.text
+
+
+async def test_public_link_freezes_html_until_republished(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+    service = _service(srv)
+    row = service.get(app_id)
+    await service.write_html(row, "<html><body><h1>v1</h1></body></html>")
+
+    r = await client.post(
+        f"/api/apps/{app_id}/publication",
+        headers=alice_auth,
+        json={"ttl_days": 0},
+    )
+    assert r.status_code == 200, r.text
+    token = r.json()["token"]
+
+    r = await client.get(f"/api/public/apps/{token}")
+    assert r.status_code == 200, r.text
+    assert "<h1>v1</h1>" in r.json()["html"]
+
+    await service.write_html(row, "<html><body><h1>v2</h1></body></html>")
+    r = await client.get(f"/api/public/apps/{token}")
+    assert r.status_code == 200, r.text
+    assert "<h1>v1</h1>" in r.json()["html"]
+    assert "<h1>v2</h1>" not in r.json()["html"]
+
+    r = await client.get(f"/api/apps/{app_id}/publication", headers=alice_auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["snapshot_stale"] is True
+    assert "html" in r.json()["stale_reasons"]
+
+    r = await client.post(
+        f"/api/apps/{app_id}/publication/publish",
+        headers=alice_auth,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["snapshot_stale"] is False
+
+    r = await client.get(f"/api/public/apps/{token}")
+    assert r.status_code == 200, r.text
+    assert "<h1>v2</h1>" in r.json()["html"]
 
 
 async def test_alter_schema_can_mark_existing_columns_as_pii(

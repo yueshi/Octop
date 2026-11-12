@@ -61,13 +61,12 @@ def _public_app(server: Any, token: str) -> tuple[Any, Any]:
     return service, row
 
 
-@router.get("/{token}", response_model=PublicAppOut, summary="Get a public app")
-async def get_public_app(token: str, server: Any = Depends(get_server)) -> JSONResponse:
-    from octop.infra.metrics import METRICS  # noqa: PLC0415
-
-    METRICS.inc("light_app_public_view_total")
-    service, row = _public_app(server, token)
-    _audit_public(server, row.app_id, "light_app.public.view")
+async def _public_payload(service: Any, row: Any) -> tuple[str, list[dict[str, Any]]]:
+    """The frozen published version, or the live app for a legacy publication."""
+    snapshot = service.public_snapshot(row)
+    if snapshot is not None:
+        frozen_html, frozen_tables = snapshot
+        return str(frozen_html), list(frozen_tables)
     tables: list[dict[str, Any]] = []
     for table in service.list_tables(row):
         if not table.public_visible:
@@ -82,11 +81,22 @@ async def get_public_app(token: str, server: Any = Depends(get_server)) -> JSONR
                 "columns": [column.model_dump() for column in _columns(schema)],
             }
         )
+    return await service.read_html(row) or "", tables
+
+
+@router.get("/{token}", response_model=PublicAppOut, summary="Get a public app")
+async def get_public_app(token: str, server: Any = Depends(get_server)) -> JSONResponse:
+    from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+    METRICS.inc("light_app_public_view_total")
+    service, row = _public_app(server, token)
+    _audit_public(server, row.app_id, "light_app.public.view")
+    html, tables = await _public_payload(service, row)
     payload = PublicAppOut(
         app_id=row.app_id,
         name=row.name,
         description=row.description,
-        html=await service.read_html(row) or "",
+        html=html,
         tables=tables,
     )
     return JSONResponse(payload.model_dump(), headers=_NO_STORE)
@@ -108,8 +118,21 @@ async def get_public_rows(
 
     METRICS.inc("light_app_public_view_total")
     service, row = _public_app(server, token)
-    if not service.is_table_public(row, table):
+    snapshot = service.public_snapshot(row)
+    snapshot_table: dict[str, Any] | None = None
+    if snapshot is not None:
+        _html, tables = snapshot
+        snapshot_table = next(
+            (item for item in tables if item.get("table_key") == table),
+            None,
+        )
+        # The published surface is the snapshot: a table added after publish
+        # is not visible until the owner republishes.
+        if snapshot_table is None:
+            raise OctopError(ErrorCode.APP_NOT_FOUND, "public app table not found")
+    elif not service.is_table_public(row, table):
         raise OctopError(ErrorCode.APP_NOT_FOUND, "public app table not found")
+
     schema, rows, _meta, total = await service.read_rows_detailed(
         row,
         limit=limit,
@@ -117,14 +140,28 @@ async def get_public_rows(
         table=table,
         redact_pii=True,
     )
+    if snapshot_table is not None:
+        snapshot_columns = snapshot_table.get("columns")
+        if not isinstance(snapshot_columns, list):
+            snapshot_columns = []
+        live_pii = {column.name: column.pii for column in schema.columns}
+        columns = [
+            {**column, "pii": live_pii.get(column.get("name"), column.get("pii"))}
+            for column in snapshot_columns
+            if isinstance(column, dict) and isinstance(column.get("name"), str)
+        ]
+        allowed = {column["name"] for column in columns}
+        rows = [{key: value for key, value in row.items() if key in allowed} for row in rows]
+    else:
+        columns = [column.model_dump() for column in _columns(schema)]
     payload = PublicRowsOut(
-        columns=[column.model_dump() for column in _columns(schema)],
+        columns=columns,
         rows=rows,
         total=total,
         limit=limit,
         offset=offset,
         table=table,
-        pii_columns=[column.name for column in schema.columns if column.pii],
+        pii_columns=[column["name"] for column in columns if column.get("pii")],
     )
     return JSONResponse(payload.model_dump(), headers=_NO_STORE)
 
@@ -242,25 +279,12 @@ async def public_app_page(token: str, server: Any = Depends(get_server)) -> HTML
 
     METRICS.inc("light_app_public_view_total")
     service, row = _public_app(server, token)
-    tables: list[dict[str, Any]] = []
-    for table in service.list_tables(row):
-        if not table.public_visible:
-            continue
-        schema = await service.read_schema(row, table.table_key)
-        tables.append(
-            {
-                "table_key": table.table_key,
-                "label": table.label,
-                "row_count": table.row_count,
-                "is_main": table.is_main,
-                "columns": [column.model_dump() for column in _columns(schema)],
-            }
-        )
+    html, tables = await _public_payload(service, row)
     app = PublicAppOut(
         app_id=row.app_id,
         name=row.name,
         description=row.description,
-        html=await service.read_html(row) or "",
+        html=html,
         tables=tables,
     )
     return HTMLResponse(_host_page(token, app), headers=_NO_STORE)

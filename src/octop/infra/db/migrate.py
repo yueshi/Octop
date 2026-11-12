@@ -1959,6 +1959,10 @@ def _ensure_light_app_publications_schema(db: DatabasePool) -> None:
             "CREATE INDEX IF NOT EXISTS idx_light_app_publications_hash "
             "ON light_app_publications(token_hash)"
         )
+    _ensure_column(db, "light_app_publications", "html_snapshot", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(db, "light_app_publications", "tables_snapshot_json", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(db, "light_app_publications", "snapshot_digest", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(db, "light_app_publications", "snapshot_at", "INTEGER")
 
 
 def _ensure_team_board_schema(db: DatabasePool) -> None:

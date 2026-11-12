@@ -50,6 +50,9 @@ export interface AppPublication {
   url?: string | null;
   token?: string | null;
   expires_at?: number | null;
+  published_at?: number | null;
+  snapshot_stale?: boolean;
+  stale_reasons?: string[];
 }
 
 export type AppTemplateSource = "system" | "agent";
@@ -398,6 +401,11 @@ export const appsApi = {
   revokePublication: (appId: string) =>
     request<AppPublication>(`/apps/${encodeId(appId)}/publication`, {
       method: "DELETE",
+    }),
+
+  publish: (appId: string) =>
+    request<AppPublication>(`/apps/${encodeId(appId)}/publication/publish`, {
+      method: "POST",
     }),
 
   listTemplates: (

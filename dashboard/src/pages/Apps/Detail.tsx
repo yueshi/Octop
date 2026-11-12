@@ -184,6 +184,25 @@ const CAPABILITY_OPTIONS: {
  * Every column gets an explicit width, and cells truncate with an ellipsis
  * (the full value stays available as the cell tooltip and in the row editor).
  */
+function staleReasonLabel(reason: string, t: TFunction): string {
+  switch (reason) {
+    case "html":
+      return t("apps.publishStaleHtml", "HTML changed");
+    case "schema":
+    case "visibility":
+      return t("apps.publishStaleSchema", "Table structure changed");
+    case "not_published":
+      return t(
+        "apps.publishNotFixed",
+        "This link has not fixed a version yet; publish to freeze the current one.",
+      );
+    case "workspace":
+      return t("apps.publishStaleWorkspace", "Workspace unavailable");
+    default:
+      return reason;
+  }
+}
+
 function dataColumnWidth(type: string): number {
   switch (type) {
     case "integer":
@@ -811,6 +830,18 @@ export default function AppDetailPage() {
     setPublicationBusy(true);
     try {
       setPublication(await appsApi.createPublication(appId));
+    } catch (err) {
+      message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
+    } finally {
+      setPublicationBusy(false);
+    }
+  };
+
+  const publishNow = async () => {
+    setPublicationBusy(true);
+    try {
+      setPublication(await appsApi.publish(appId));
+      message.success(t("apps.publishUpdated", "Public version updated"));
     } catch (err) {
       message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
     } finally {
@@ -1608,6 +1639,42 @@ export default function AppDetailPage() {
                 ? t("apps.publishActive")
                 : t("apps.publishInactive")}
             </Text>
+            {publication?.active && (
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                {publication.published_at ? (
+                  <Text type="secondary">
+                    {t("apps.publishedAt", "Published {{time}}", {
+                      time: formatServerDateTime(
+                        publication.published_at,
+                        timeZone,
+                      ),
+                    })}
+                  </Text>
+                ) : (
+                  <Alert
+                    type="info"
+                    showIcon
+                    message={t(
+                      "apps.publishNotFixed",
+                      "This link has not fixed a version yet; publish to freeze the current one.",
+                    )}
+                  />
+                )}
+                {publication.snapshot_stale && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message={t(
+                      "apps.publishStale",
+                      "The MiniApp changed since the last publish",
+                    )}
+                    description={(publication.stale_reasons ?? [])
+                      .map((reason) => staleReasonLabel(reason, t))
+                      .join(" · ")}
+                  />
+                )}
+              </Space>
+            )}
             {publishUrl && (
               <Input
                 readOnly
@@ -1627,8 +1694,17 @@ export default function AppDetailPage() {
               />
             )}
             <Space>
+              {publication?.active && (
+                <Button
+                  type={publication.snapshot_stale ? "primary" : "default"}
+                  onClick={() => void publishNow()}
+                  loading={publicationBusy}
+                >
+                  {t("apps.publishNow", "Publish updates")}
+                </Button>
+              )}
               <Button
-                type="primary"
+                type={publication?.active ? "default" : "primary"}
                 onClick={() => void createPublish()}
                 loading={publicationBusy}
               >

@@ -6,6 +6,12 @@ ALTER TABLE light_app_tables ADD COLUMN IF NOT EXISTS public_visible INTEGER NOT
 -- Empty means a legacy app (all capabilities the original SDK exposed).
 ALTER TABLE light_apps ADD COLUMN IF NOT EXISTS capabilities_json TEXT NOT NULL DEFAULT '';
 
+-- Published links freeze the HTML and public table structure; rows stay live.
+ALTER TABLE light_app_publications ADD COLUMN IF NOT EXISTS html_snapshot TEXT NOT NULL DEFAULT '';
+ALTER TABLE light_app_publications ADD COLUMN IF NOT EXISTS tables_snapshot_json TEXT NOT NULL DEFAULT '';
+ALTER TABLE light_app_publications ADD COLUMN IF NOT EXISTS snapshot_digest TEXT NOT NULL DEFAULT '';
+ALTER TABLE light_app_publications ADD COLUMN IF NOT EXISTS snapshot_at INTEGER;
+
 UPDATE light_app_tables
 SET public_visible = CASE WHEN table_key = 'main' THEN 1 ELSE 0 END;
 

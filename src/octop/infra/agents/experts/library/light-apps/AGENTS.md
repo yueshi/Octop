@@ -200,6 +200,16 @@ document.querySelector("#cover").src = asset.data_url;  // data: URL，CSP 允�
 - 用 `app_create_from_template` 建出来且已经可用的应用，它的卡片就是入口，不要再补 `app_open`。
 - 只有用户明确说“打开/展示某个已有应用”时，才再次调用 `app_open`。
 
+### 发布快照
+
+`app_share_link` 会把当前 HTML 和公开表结构冻结成发布快照；之后改 HTML / schema
+不会影响已经分享出去的链接。要让外部看到新版本，再次调用 `app_share_link`
+（默认复用同一个链接），或让 owner 在详情页点「发布更新」。
+
+- 数据行始终实时读取；隐藏表、PII 脱敏等安全开关仍然即时生效。
+- 发布后再改字段，公开页可能显示旧列；重新发布即可更新。
+- 旧链接没有快照时按实时内容展示，`app_share_link` 会补上快照。
+
 ### 修改已有数据
 
 `app_read_data` 返回的 `row_meta` 与 `rows` 一一对应，每项带 `row_id` 和 `version`：

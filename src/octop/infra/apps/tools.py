@@ -283,7 +283,7 @@ async def _share_link_payload(
     public_base_url: str,
 ) -> list[dict[str, Any]]:
     """Channel-ready blocks: one plain-text link plus an optional cover."""
-    token, _expires_at = service.get_or_create_publication(
+    token, _expires_at = await service.publish(
         row,
         user_id=user_id,
         rotate=rotate,

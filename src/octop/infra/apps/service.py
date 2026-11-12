@@ -282,6 +282,15 @@ class AppTableView:
     public_visible: bool
 
 
+@dataclass(frozen=True)
+class PublicationStatus:
+    """Whether the public link still shows the current app version."""
+
+    published_at: int | None
+    stale: bool
+    reasons: tuple[str, ...] = ()
+
+
 IMPORT_MODE_APPEND = "append"
 IMPORT_MODE_REPLACE = "replace"
 IMPORT_MODES = (IMPORT_MODE_APPEND, IMPORT_MODE_REPLACE)
@@ -3048,6 +3057,127 @@ class AppService:
             if stored:
                 return stored.decode("utf-8"), publication.expires_at
         return self.create_publication(row, user_id=user_id, ttl_days=ttl_days)
+
+    async def _snapshot_parts(
+        self,
+        row: AppRecord,
+        ws: BackendWorkspace,
+    ) -> tuple[str, str]:
+        """Current HTML plus the public table structure, in a stable encoding."""
+        html = await ws.aread_text(app_path(row.app_id, FILE_HTML)) or ""
+        tables: list[dict[str, Any]] = []
+        for table in self.list_tables(row):
+            if not table.public_visible:
+                continue
+            schema = await self._read_schema(ws, row.app_id, table.table_key)
+            tables.append(
+                {
+                    "table_key": table.table_key,
+                    "label": table.label,
+                    "is_main": table.is_main,
+                    "public_visible": table.public_visible,
+                    "columns": [column.to_dict() for column in schema.columns],
+                }
+            )
+        return html, json.dumps(
+            tables,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    async def publish(
+        self,
+        row: AppRecord,
+        *,
+        user_id: int,
+        rotate: bool = False,
+        ttl_days: int = 0,
+    ) -> tuple[str, int | None]:
+        """Create/reuse the public token and freeze the current public version.
+
+        The token stays stable unless ``rotate`` is set; the snapshot is always
+        refreshed. Rows remain live; only the HTML and public table structure
+        are frozen.
+        """
+        async with _lock_for(row.app_id):
+            self._require_live(row.app_id)
+            ws = await self._workspace(row.agent_id)
+            html, tables_json = await self._snapshot_parts(row, ws)
+            if rotate:
+                token, expires_at = self.create_publication(row, user_id=user_id, ttl_days=ttl_days)
+            else:
+                token, expires_at = self.get_or_create_publication(
+                    row, user_id=user_id, rotate=False, ttl_days=ttl_days
+                )
+            now = int(time.time())
+            self._app_repo.set_publication_snapshot(
+                row.app_id,
+                html=html,
+                tables_json=tables_json,
+                digest=hashlib.sha256((html + "\0" + tables_json).encode("utf-8")).hexdigest(),
+                snapshot_at=now,
+            )
+            return token, expires_at
+
+    async def publication_status(self, row: AppRecord) -> PublicationStatus:
+        """Compare the stored snapshot with the current app version."""
+        publication = self.get_publication(row)
+        if publication is None:
+            return PublicationStatus(published_at=None, stale=False)
+        if publication.snapshot_at is None:
+            return PublicationStatus(
+                published_at=None,
+                stale=True,
+                reasons=("not_published",),
+            )
+        async with _lock_for(row.app_id):
+            try:
+                ws = await self._workspace(row.agent_id)
+                html, tables_json = await self._snapshot_parts(row, ws)
+            except OctopError:
+                return PublicationStatus(
+                    published_at=publication.snapshot_at,
+                    stale=True,
+                    reasons=("workspace",),
+                )
+        reasons: list[str] = []
+        if publication.html_snapshot != html:
+            reasons.append("html")
+        if publication.tables_snapshot_json != tables_json:
+            reasons.append("schema")
+        return PublicationStatus(
+            published_at=publication.snapshot_at,
+            stale=bool(reasons),
+            reasons=tuple(reasons),
+        )
+
+    def public_snapshot(
+        self,
+        row: AppRecord,
+    ) -> tuple[str, list[dict[str, Any]]] | None:
+        """The frozen public version, or None for a legacy publication."""
+        publication = self.get_publication(row)
+        if publication is None or publication.snapshot_at is None:
+            return None
+        try:
+            items = json.loads(publication.tables_snapshot_json or "[]")
+        except ValueError:
+            items = []
+        if not isinstance(items, list):
+            items = []
+        live = {table.table_key: table for table in self.list_tables(row)}
+        tables: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("table_key")
+            table = live.get(key) if isinstance(key, str) else None
+            # Hiding a table takes effect immediately, even with a snapshot.
+            if table is None or not table.public_visible:
+                continue
+            tables.append({**item, "row_count": table.row_count})
+        return publication.html_snapshot, tables
 
     def revoke_publication(self, row: AppRecord) -> bool:
         revoked = self._app_repo.revoke_publication(row.app_id)

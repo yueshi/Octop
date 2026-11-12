@@ -122,6 +122,10 @@ class LightAppPublicationRow:
     created_at: int
     revoked_at: int | None
     expires_at: int | None
+    html_snapshot: str
+    tables_snapshot_json: str
+    snapshot_digest: str
+    snapshot_at: int | None
 
     @classmethod
     def from_row(cls, r: DbRow) -> LightAppPublicationRow:
@@ -132,6 +136,10 @@ class LightAppPublicationRow:
             created_at=int(r["created_at"]),
             revoked_at=int(r["revoked_at"]) if r["revoked_at"] is not None else None,
             expires_at=int(r["expires_at"]) if r["expires_at"] is not None else None,
+            html_snapshot=str(r["html_snapshot"] or ""),
+            tables_snapshot_json=str(r["tables_snapshot_json"] or ""),
+            snapshot_digest=str(r["snapshot_digest"] or ""),
+            snapshot_at=int(r["snapshot_at"]) if r["snapshot_at"] is not None else None,
         )
 
 
@@ -1015,6 +1023,24 @@ class LightAppRepo:
         if row is None:
             raise RuntimeError(f"light app publication upsert failed: {app_id}")
         return row
+
+    def set_publication_snapshot(
+        self,
+        app_id: str,
+        *,
+        html: str,
+        tables_json: str,
+        digest: str,
+        snapshot_at: int,
+    ) -> None:
+        """Freeze the published HTML and public table structure of one app."""
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE light_app_publications SET html_snapshot = ?, "
+                "tables_snapshot_json = ?, snapshot_digest = ?, snapshot_at = ? "
+                "WHERE app_id = ?",
+                (html, tables_json, digest, snapshot_at, app_id),
+            )
 
     def revoke_publication(self, app_id: str) -> bool:
         with self._db.transaction() as conn:

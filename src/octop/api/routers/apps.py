@@ -1525,6 +1525,18 @@ class PublicationOut(BaseModel):
         default=None, description="Plaintext token, returned only on creation."
     )
     expires_at: int | None = Field(default=None, description="Unix expiry, or null for no expiry.")
+    published_at: int | None = Field(
+        default=None,
+        description="Unix time of the frozen public version; null for a legacy link.",
+    )
+    snapshot_stale: bool = Field(
+        default=False,
+        description="Whether the app changed since the public snapshot was taken.",
+    )
+    stale_reasons: list[str] = Field(
+        default_factory=list,
+        description="What changed: html, schema, not_published or workspace.",
+    )
 
 
 class CreatePublicationBody(BaseModel):
@@ -1554,9 +1566,13 @@ async def get_app_publication(
         and publication.revoked_at is None
         and (publication.expires_at is None or publication.expires_at > int(time.time()))
     )
+    status = await service.publication_status(row)
     return PublicationOut(
         active=active,
         expires_at=publication.expires_at if publication else None,
+        published_at=status.published_at,
+        snapshot_stale=status.stale,
+        stale_reasons=list(status.reasons),
     )
 
 
@@ -1576,9 +1592,10 @@ async def create_app_publication(
     server: OctopServer = Depends(get_server),
 ) -> PublicationOut:
     service, row, _permission = _row_access(server, user, app_id, "edit_structure")
-    token, expires_at = service.create_publication(
+    token, expires_at = await service.publish(
         row,
         user_id=user.id,
+        rotate=True,
         ttl_days=body.ttl_days,
     )
     _audit(
@@ -1588,11 +1605,48 @@ async def create_app_publication(
         target=app_id,
         payload={"expires_at": expires_at},
     )
+    status = await service.publication_status(row)
     return PublicationOut(
         active=True,
         url=_public_link(server, token),
         token=token,
         expires_at=expires_at,
+        published_at=status.published_at,
+        snapshot_stale=status.stale,
+        stale_reasons=list(status.reasons),
+    )
+
+
+@router.post(
+    "/{app_id}/publication/publish",
+    response_model=PublicationOut,
+    summary="Publish the current MiniApp version",
+    description=(
+        "Refreshes the public snapshot (HTML and public table structure) without "
+        "rotating the token. Rows remain live. Requires edit_structure."
+    ),
+)
+async def publish_app_publication(
+    app_id: str,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> PublicationOut:
+    service, row, _permission = _row_access(server, user, app_id, "edit_structure")
+    token, expires_at = await service.publish(row, user_id=user.id, rotate=False)
+    _audit(
+        server,
+        actor=f"user:{user.id}",
+        action="light_app.publication.publish",
+        target=app_id,
+    )
+    status = await service.publication_status(row)
+    return PublicationOut(
+        active=True,
+        url=_public_link(server, token),
+        expires_at=expires_at,
+        published_at=status.published_at,
+        snapshot_stale=status.stale,
+        stale_reasons=list(status.reasons),
     )
 
 
