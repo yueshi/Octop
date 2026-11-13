@@ -4,6 +4,9 @@ This document describes the platform-level controls that keep sensitive data
 inside a MiniApp from leaking through agent tool output, viewer reads, CSV
 exports, or public read-only links.
 
+> Current implementation status: [MiniApp overview](./miniapp-overview.md).
+> This document keeps the threat model and policy rationale.
+
 ## Threat model
 
 - A MiniApp stores user data in control-plane tables; the same data can be read

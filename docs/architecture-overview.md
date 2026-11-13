@@ -46,7 +46,7 @@ Scope: 面向决策者的全景文档——Octop 现在是什么、能干什么�
 | `gateway/` | 59 | 14,274 | IM 消息处理、HITL、slash、steering |
 | `db/` | 51 | 13,380 | 连接池、迁移、repos、SharedServices |
 | `connectors/` | 48 | 9,843 | 目录、OAuth、MCP gateway、凭据加密 |
-| `apps/` | 16 | 7,450 | **MiniApp** |
+| `apps/` | 23 | 9,957 | **MiniApp** |
 | `utils/` | 34 | 4,838 | 纯工具（路径、ULID、locale…） |
 | `bridge/` | 10 | 3,778 | Octop ↔ Octop 实例桥 |
 | `auth/` | 26 | 3,585 | OIDC / LDAP / SSO |
@@ -160,10 +160,11 @@ webhook（HMAC）+ connector_poll（30 秒扫描）；订阅支持过滤/模板/
 
 数据（schema + rows，JSON 列值，CAS 版本，2 万行上限）、视图
 （dashboard / ledger / board，自包含 HTML）、生成（模板 / 无 LLM 快速模式 / LLM）、
-数据源（CSV 导入 + MCP 快照同步）、只读发布链接（token hash，可撤销/过期）、
-应用内只读问答助手、外部游戏接入、19 个 `app_*` agent 工具。
+数据源（CSV 导入 + MCP 快照同步）、只读发布链接（token hash + 发布快照）、
+应用内只读问答助手（含图表）、外部游戏接入、个人多 Board、能力清单与双层沙箱、
+20 个 `app_*` agent 工具。
 
-**定位见 §7。**
+**定位见 §7；完整功能、架构与实现缺口见 [MiniApp 功能与架构现状](./miniapp-overview.md)。**
 
 ### 3.8 技能 · 插件 · 连接器
 
@@ -295,9 +296,9 @@ MiniApp 不是一个平级模块，而是一条**穿透三层**的纵向链路�
 
 | 层 | 触点 |
 |---|---|
-| 执行层 | 19 个 `app_*` agent 工具 |
-| 数据层 | `light_apps` / `light_app_rows` / `light_app_tables` / `light_app_sources` |
-| 交互层 | iframe `srcDoc` 渲染 + publication 只读公开链接 |
+| 执行层 | 20 个 `app_*` agent 工具 |
+| 数据层 | `light_apps` / `light_app_rows` / `light_app_tables` / `light_app_sources` / `light_app_publications` / `miniapp_boards` |
+| 交互层 | iframe `srcDoc` 渲染 + publication 只读公开链接 + 个人工作台看板 |
 
 ### 定位
 
@@ -489,8 +490,11 @@ Super-agent 提供这层的设计模式（`docs/superagent-borrowing-design.md`�
 | 单进程决策 | `docs/adr/001-single-process-model.md` |
 | 外部事件平面 | `docs/external-events-design.md` |
 | 团队 L3 路线图 | `docs/team-l3-roadmap.md` |
-| MiniApp 数据与协作 | `docs/light-apps-architecture.md` |
-| MiniApp 增强计划 | `docs/light-apps-enhancement-plan.md` |
+| MiniApp 功能、架构与实现现状 | `docs/miniapp-overview.md` |
+| MiniApp 数据与协作（历史设计） | `docs/light-apps-architecture.md` |
+| MiniApp 增强计划（历史设计） | `docs/light-apps-enhancement-plan.md` |
+| 业务 Agent OS 设计记录（草稿） | `docs/agent-os-overall-plan.md` |
+| AI 视频生产与经营方案（草稿） | `docs/ai-video-commerce-system.md` |
 | Bridge 跨实例 | `docs/bridge.md` |
 | 连接器清单 | `docs/connectors.md` |
 

@@ -2,6 +2,8 @@
 
 > 状态：讨论稿，未实施（2026-11-11）
 >
+> **当前实现状态以 [MiniApp 功能与架构现状](./miniapp-overview.md) 为准；本文保留事件模型评估与协议对照。**
+>
 > 范围：对外事件入口、MiniApp 级寻址、事件契约、投递语义；与 CloudEvents / A2A / AG-UI / MCP 等公开协议的对照。
 >
 > 前置阅读：[external-events-design.md](./external-events-design.md)、[light-apps-architecture.md](./light-apps-architecture.md)。

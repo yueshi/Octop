@@ -1,6 +1,8 @@
 # MiniApp 增强方案
 
-> 状态：讨论稿（2026-11-04）
+> 状态：讨论稿（2026-11-04；主体已实施，逐项状态见 §5）
+>
+> **当前实现状态以 [MiniApp 功能与架构现状](./miniapp-overview.md) 为准；本文保留方案、分期与实施记录。**
 >
 > 术语说明（2026-11-08）：本文档已全文统一为 MiniApp；此前的旧称（「小程序」「轻应用」）不再使用，仅保留于 git 历史。
 >
@@ -9,9 +11,8 @@
 > 定位：把 MiniApp 从“agent 生成的单页工具”升级为**可维护、可接入、可协作、可运营的数据产品**。
 > HTML 仍是最后一层皮，增强重点在底座。
 >
-> 相关：[MiniApp 数据与协作架构方案](./light-apps-architecture.md)（数据层 D1–D12 的既有设计，本方案沿用）、
-> [MiniApp 默认 AI 助手与外部数据导入设计](./light-apps-assistant-and-import-design.md)、
-> [MiniApp 多 CSV（多数据表）设计](./light-apps-multi-table-design.md)。
+> 相关：[MiniApp 数据与协作架构方案](./light-apps-architecture.md)（数据层 D1–D12 的既有设计，本方案沿用）；
+> 多表、助手与导入的现状见 [MiniApp 功能与架构现状](./miniapp-overview.md)。
 
 ---
 

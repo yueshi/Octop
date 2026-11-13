@@ -2,6 +2,8 @@
 
 > 状态：P0 + P1 + WebRTC 冻结已实施（2026-11-12）
 >
+> **当前实现状态以 [MiniApp 功能与架构现状](./miniapp-overview.md) 为准；本文保留威胁模型、实测证据与残余风险。**
+>
 > 范围：`feature/miniapp-capabilities` 之后的沙箱加固（P0 导航边界，P1 违规上报与服务端能力校验，WebRTC 冻结）。
 >
 > 相关：[MCP Apps 规范的 sandbox proxy](https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/2026-01-26/apps.mdx)、

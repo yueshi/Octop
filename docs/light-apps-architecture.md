@@ -1,16 +1,15 @@
 # MiniApp 数据与协作架构方案
 
-> 状态：设计稿，未实施（2026-10-23）
+> 状态：历史设计稿（2026-10-23；数据入库、CAS、幂等、懒迁移、公开链接、数据源等主体已实施，`data_version` 前端轮询等少数增量未做）
+>
+> **当前实现状态以 [MiniApp 功能与架构现状](./miniapp-overview.md) 为准；本文保留设计动机、取舍与分期理由。**
 >
 > 范围：`feature/light-apps` 分支上的 MiniApp 能力（Agent tools + 工作区文件 + 沙箱 iframe）
 >
 > 目标：把行数据从工作区 CSV 迁移到控制面 DB，补齐多人并发、外部数据读取、发布链接与长期可维护性。
 >
-> 相关：[MiniApp 多 CSV（多数据表）设计](./light-apps-multi-table-design.md) 是一个**先行可交付的增量**
-> （一个应用支持多张表），落地后与本方案的 P0 阶段衔接。
->
-> 另见：[MiniApp 默认 AI 助手与外部数据导入设计](./light-apps-assistant-and-import-design.md)
-> （§10 外部数据的落地版本）。
+> 相关：多表、助手与外部数据导入的详细设计已并入
+> [MiniApp 功能与架构现状](./miniapp-overview.md)（§2.2 / §2.6 / §2.7）。
 
 ---
 

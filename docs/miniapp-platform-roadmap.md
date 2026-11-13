@@ -2,6 +2,8 @@
 
 > 状态：R1 已实施（2026-11-12）；R2/R3 待实施
 >
+> **当前实现状态以 [MiniApp 功能与架构现状](./miniapp-overview.md) 为准；本文保留路线图决策与分期。**
+>
 > 范围：工作台多 Board、实时外部数据、事件进出、统一定时任务、跨主机迁移、IM 全功能与认证。
 >
 > 目标：把 MiniApp 从“Agent 生成的数据视图”推进为 **可编排、可连接、可分发的展示面**，同时保持页面无状态、凭据不进页面、外部 I/O 全部宿主代调。
@@ -12,8 +14,6 @@
 > [miniapp-event-api-design.md](./miniapp-event-api-design.md)、
 > [miniapp-im-optimization.md](./miniapp-im-optimization.md)、
 > [external-events-design.md](./external-events-design.md)。
->
-> 演示稿：[HTML](./miniapp-platform-roadmap.html) · [PPTX](./miniapp-platform-roadmap.pptx)。
 >
 > 实施进度（2026-11-12）：F1 页面能力清单、F2 发布快照、F3 composeMessage、F4 限流、F5 上一版回滚、P1/P2 服务端多 Board 均已落地。当前实现为个人看板（每个用户多个 Board、12 列拖拽/缩放、CAS 保存、独立 Tab 展示、旧本地布局无损迁移）；§5.6 中的公开看板分享（share token、`/p/board/*`）留到 P3 与公开实时数据一起做。
 

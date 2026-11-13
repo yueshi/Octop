@@ -2,7 +2,7 @@
 
 > 状态：Phase 0–3 已实现（2026-10-27）：webhook + connector poll、expert/team/app target、
 > 管理 API + 最小 UI、30 天保留。Phase 4 可选增强未做。适用 MiniApp、团队、专家三端。
-> 前置阅读：`docs/team-drive-v2.md`、`docs/light-apps-assistant-and-import-design.md`、`docs/connectors.md`。
+> 前置阅读：`docs/team-drive-v2.md`、`docs/miniapp-overview.md`、`docs/connectors.md`。
 >
 > 后续评估（对外开放、MiniApp 级寻址）：[miniapp-event-api-design.md](./miniapp-event-api-design.md)。
 
@@ -39,7 +39,7 @@ external_deliveries（DB outbox：lease / retry / dead-letter）
 
 | 端 | 现有实现 | 能力/缺口 |
 |---|---|---|
-| MiniApp | `light_app_sources` 绑定外部只读工具；`AppSourceScheduler` 30s 扫描，`claim_source` 条件 UPDATE 即租约，失败指数退避（`infra/apps/scheduler.py`、`infra/apps/service.py:1294-1405`） | 只有 pull；没有外部 push；`append` 模式无去重键（`docs/light-apps-assistant-and-import-design.md:234`）；`GatewayToolRunner` 只支持进程内 gateway connector（`infra/apps/sources.py`） |
+| MiniApp | `light_app_sources` 绑定外部只读工具；`AppSourceScheduler` 30s 扫描，`claim_source` 条件 UPDATE 即租约，失败指数退避（`infra/apps/scheduler.py`、`infra/apps/service.py:1294-1405`） | 只有 pull；没有外部 push；plain `append` 未带 `client_request_id` / `source_key` 时不能去重（`src/octop/infra/apps/service.py`）；`GatewayToolRunner` 只支持进程内 gateway connector（`infra/apps/sources.py`） |
 | 团队 | `team_events` 追加账本、`TeamCoordinator.record`、decision/dispatcher/wait 完整（`infra/agents/teams/coordinator.py:145`） | 无外部事件 ingest；`is_judgment_event` 只识别内部事件（`decision.py:43-78`）；决策快照只收 judgment 事件；线上已有 `decision 5KN5JB` 因 usage `int(dict)` 失败（`decision.py:563-564`） |
 | 专家 | cron `interval/cron/date/agently`；Agent Mail watch（`infra/cron/trigger.py:27`、`connectors/gateway/agently_watch.py`）；`CronDeliveryService` 已有 session 锁、usage、HITL（`infra/cron/delivery.py:36-90`、`:136+`） | `agently` 是单点特例；无通用 webhook；cron 每事件建 job 会放大调度与重试 |
 
@@ -334,7 +334,7 @@ POST       /api/external/deliveries/{delivery_id}/retry
 | **P0** | webhook 路径被 JWT/setup 中间件拦截 | `api/deps.py:61`、`api/middleware/setup_lockdown.py` | 公共入口固定 `/api/hooks/` 并加入 JWT exempt prefix；管理接口留在 JWT 下；加中间件测试 |
 | **P1** | expert delivery 需要已有 session/运行中 agent | `CronDeliveryService.deliver`→`require_session`；`AgentManager.stream` | 新建独立 `dashboard:external` session；stopped 时排队/通知，默认不自动启动；delivery 可重试 |
 | **P1** | expert usage 来源会记成 cron | `delivery.py:212` 硬编码 `source="cron"` | command 增加 `usage_source`/meta，外部事件记 `external_event` |
-| **P1** | MiniApp append 重复插行 | `docs/light-apps-assistant-and-import-design.md:234` | MVP 默认 `replace`；补 `source_key` 唯一键后再开放 append |
+| **P1** | MiniApp append 重复插行 | `src/octop/infra/apps/service.py`（`import_rows`） | MVP 默认 `replace`；事件路径带上 `client_request_id` / `source_key` 后再开放 append |
 | **P1** | worker/热切换未接会指向旧 DB | `AppRuntime.replace_services` | 增加 worker rebind；stop 顺序；测试 setup 换库 |
 | **P1** | 外部事件风暴触发大量 LLM | 每 event 一次 expert/team turn | subscription 合并/限流；team 使用既有 cooldown/聚合；expert batch |
 | **P1** | webhook 安全性 | 公共接口、无统一 rate limit | HMAC/timestamp/replay、body cap、per-source rate、ACL、审计 |

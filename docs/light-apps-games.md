@@ -3,6 +3,9 @@
 Status: implemented
 Date: 2026-11-07
 
+> Current implementation status: [MiniApp overview](./miniapp-overview.md).
+> This document keeps the game protocol and security rationale.
+
 MiniApp 里的游戏入口可以打开**独立域名上的游戏页面**，并在平台侧栏里运行。
 游戏写入的数据回落到 MiniApp 自己的表里，游戏关闭后 MiniApp 自动刷新。
 
