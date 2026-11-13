@@ -173,6 +173,34 @@ describe("workbench board", () => {
     expect(screen.queryByTestId("mini-app-frame")).not.toBeInTheDocument();
   });
 
+  it("keeps the board when arriving with a stored active board", async () => {
+    localStorage.setItem("octop:apps-active-board:v1", "board_1");
+    const pinned = savedBoard([{ app_id: "app_1", x: 0, y: 0, w: 4, h: 4 }], 1);
+    vi.mocked(boardsApi.get).mockResolvedValue(pinned);
+    let releaseApps!: () => void;
+    const appsGate = new Promise<void>((resolve) => {
+      releaseApps = resolve;
+    });
+    vi.mocked(appsApi.list).mockImplementation(async () => {
+      await appsGate;
+      return { apps: [app1, app2] };
+    });
+
+    renderPage();
+    // The board detail may resolve before the catalog; its cells must not be
+    // filtered away just because the apps are not in memory yet.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    releaseApps();
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(1),
+    );
+    expect(screen.getByTestId("mini-app-frame")).toHaveAttribute(
+      "data-app-id",
+      "app_1",
+    );
+  });
+
   it("pins a MiniApp and saves its grid cell", async () => {
     renderPage();
     const pins = await openCatalog();
@@ -216,21 +244,29 @@ describe("workbench board", () => {
     });
   });
 
-  it("rearranges the board to fill every column", async () => {
-    const pinned = savedBoard([{ app_id: "app_1", x: 0, y: 0, w: 2, h: 2 }], 1);
+  it("packs cells at their chosen sizes", async () => {
+    const pinned = savedBoard(
+      [
+        { app_id: "app_1", x: 0, y: 0, w: 4, h: 4 },
+        { app_id: "app_2", x: 6, y: 0, w: 2, h: 2 },
+      ],
+      1,
+    );
     vi.mocked(boardsApi.get).mockResolvedValue(pinned);
     renderPage();
     await waitFor(() =>
-      expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(1),
+      expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(2),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "自动整理" }));
-    fireEvent.click(await screen.findByRole("button", { name: "重新排列" }));
 
     await waitFor(() =>
       expect(boardsApi.setLayout).toHaveBeenCalledWith("board_1", {
         version: 1,
-        items: [{ app_id: "app_1", x: 0, y: 0, w: 12, h: 2 }],
+        items: [
+          { app_id: "app_1", x: 0, y: 0, w: 4, h: 4 },
+          { app_id: "app_2", x: 4, y: 0, w: 2, h: 2 },
+        ],
       }),
     );
   });
@@ -276,7 +312,7 @@ describe("workbench board", () => {
   });
 
   it("undoes the last layout change", async () => {
-    const pinned = savedBoard([{ app_id: "app_1", x: 0, y: 0, w: 2, h: 2 }], 1);
+    const pinned = savedBoard([{ app_id: "app_1", x: 3, y: 0, w: 2, h: 2 }], 1);
     vi.mocked(boardsApi.get).mockResolvedValue(pinned);
     renderPage();
     await waitFor(() =>
@@ -284,7 +320,6 @@ describe("workbench board", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "自动整理" }));
-    fireEvent.click(await screen.findByRole("button", { name: "重新排列" }));
     await waitFor(() => expect(boardsApi.setLayout).toHaveBeenCalledTimes(1));
 
     const undo = screen.getByRole("button", { name: "撤销上一次布局" });
@@ -294,7 +329,7 @@ describe("workbench board", () => {
     await waitFor(() =>
       expect(boardsApi.setLayout).toHaveBeenLastCalledWith("board_1", {
         version: 2,
-        items: [{ app_id: "app_1", x: 0, y: 0, w: 2, h: 2 }],
+        items: [{ app_id: "app_1", x: 3, y: 0, w: 2, h: 2 }],
       }),
     );
   });

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -103,5 +103,54 @@ describe("board presentation view", () => {
     expect(
       screen.queryByRole("button", { name: "移出看板" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("hides the toolbar in fullscreen and restores it when the browser exits", async () => {
+    let fsElement: Element | null = null;
+    const requestFullscreen = vi.fn(() => {
+      fsElement = document.createElement("div");
+      document.dispatchEvent(new Event("fullscreenchange"));
+      return Promise.resolve();
+    });
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => fsElement,
+    });
+    Object.defineProperty(HTMLElement.prototype, "requestFullscreen", {
+      configurable: true,
+      value: requestFullscreen,
+    });
+
+    try {
+      render(
+        <MemoryRouter initialEntries={["/apps/boards/board_1/view"]}>
+          <Routes>
+            <Route
+              path="/apps/boards/:boardId/view"
+              element={<BoardViewPage />}
+            />
+          </Routes>
+        </MemoryRouter>,
+      );
+
+      fireEvent.click(await screen.findByRole("button", { name: "全屏" }));
+      await waitFor(() => expect(requestFullscreen).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: "全屏" }),
+        ).not.toBeInTheDocument(),
+      );
+
+      // Esc is browser-native: fullscreenElement clears and the event fires.
+      fsElement = null;
+      document.dispatchEvent(new Event("fullscreenchange"));
+      expect(
+        await screen.findByRole("button", { name: "全屏" }),
+      ).toBeInTheDocument();
+    } finally {
+      delete (document as { fullscreenElement?: unknown }).fullscreenElement;
+      delete (HTMLElement.prototype as { requestFullscreen?: unknown })
+        .requestFullscreen;
+    }
   });
 });

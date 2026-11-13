@@ -24,10 +24,6 @@ export function fitBoardRowHeight(
   );
 }
 
-/** Two grid rows per auto-fill band keeps cells readable on dense boards. */
-const AUTO_FILL_BAND = 2;
-const AUTO_FILL_MAX_COLS = 4;
-
 /** Quick size choices offered per cell. Labels live in the dashboard locale. */
 export interface BoardSizePreset {
   key: string;
@@ -87,95 +83,69 @@ export function placeBoardItem(
   return items.map((item) => (item.app_id === appId ? candidate : item));
 }
 
-/**
- * Locked cells stay exactly where they are; unlocked cells keep their chosen
- * sizes and fill the first free rectangle around those anchors.
- */
-function packUnlockedAroundLocks(items: BoardItem[]): BoardItem[] {
-  const locked = sortByPosition(items.filter((item) => item.locked));
-  const placed: BoardItem[] = locked.map((item) => ({
+function clampSize(item: BoardItem): BoardItem {
+  return {
     ...item,
     w: Math.min(BOARD_GRID_COLS, Math.max(1, item.w)),
     h: Math.min(BOARD_GRID_COLS, Math.max(1, item.h)),
-  }));
-  const unlocked = sortByPosition(items.filter((item) => !item.locked));
-  for (const item of unlocked) {
-    const w = Math.min(BOARD_GRID_COLS, Math.max(1, item.w));
-    const h = Math.min(BOARD_GRID_COLS, Math.max(1, item.h));
-    let spot: { x: number; y: number } | null = null;
-    for (let y = 0; !spot && y < 256; y += 1) {
-      for (let x = 0; x <= BOARD_GRID_COLS - w; x += 1) {
-        const candidate = { ...item, x, y, w, h };
-        if (!placed.some((other) => overlaps(candidate, other))) {
-          spot = { x, y };
-          break;
-        }
-      }
-    }
-    placed.push({ ...item, ...(spot ?? { x: 0, y: 256 }), w, h });
-  }
-  return sortByPosition(placed);
+  };
 }
 
-/** Split 12 columns across `parts` cells as evenly as possible. */
-export function splitBoardColumns(parts: number): number[] {
-  const count = Math.max(1, parts);
-  const base = Math.floor(BOARD_GRID_COLS / count);
-  const remainder = BOARD_GRID_COLS % count;
-  return Array.from(
-    { length: count },
-    (_, index) => base + (index < remainder ? 1 : 0),
-  );
+/** Add a new cell at the first free slot instead of the very bottom. */
+export function addBoardItem(
+  items: BoardItem[],
+  appId: string,
+  w = 4,
+  h = 4,
+): BoardItem[] {
+  if (items.some((item) => item.app_id === appId)) return items;
+  const nextW = Math.min(BOARD_GRID_COLS, Math.max(1, w));
+  const nextH = Math.min(BOARD_GRID_COLS, Math.max(1, h));
+  const spot = firstFreeSpot(items, nextW, nextH);
+  return [...items, { app_id: appId, ...spot, w: nextW, h: nextH }];
+}
+
+/** First free rectangle scanning top-to-bottom, then left-to-right. */
+function firstFreeSpot(
+  placed: BoardItem[],
+  w: number,
+  h: number,
+): { x: number; y: number } {
+  const maxY = placed.reduce((max, item) => Math.max(max, item.y + item.h), 0);
+  for (let y = 0; y <= maxY; y += 1) {
+    for (let x = 0; x <= BOARD_GRID_COLS - w; x += 1) {
+      const candidate = { app_id: "", x, y, w, h };
+      if (!placed.some((other) => overlaps(candidate, other))) {
+        return { x, y };
+      }
+    }
+  }
+  return { x: 0, y: maxY };
 }
 
 /**
- * Rearrange every MiniApp into full-width bands so the board is tiled without
- * gaps. The last band spreads its cells across the full twelve columns.
- *
- * 1 app: 12×2 · 2 apps: 6+6 · 3 apps: 4+4+4 · 4 apps: 3+3+3+3 · 5 apps: a
- * row of 3 then 6+6 · 9 apps: 4+4+4 per row.
+ * Pack every cell at its chosen size. Locked cells are anchors; unlocked
+ * cells are placed largest-first into the first free rectangle, so a user's
+ * small/large mix survives the arrange instead of being flattened to a
+ * uniform grid. The result is undoable from the toolbar.
  */
-export function autoFillBoardLayout(items: BoardItem[]): BoardItem[] {
-  const count = items.length;
-  if (count === 0) return [];
-  if (items.some((item) => item.locked)) {
-    return packUnlockedAroundLocks(items);
+export function autoArrangeBoardLayout(items: BoardItem[]): BoardItem[] {
+  if (items.length === 0) return [];
+  const placed = sortByPosition(
+    items.filter((item) => item.locked).map(clampSize),
+  );
+  const unlocked = items
+    .filter((item) => !item.locked)
+    .map(clampSize)
+    .sort(
+      (left, right) =>
+        right.w * right.h - left.w * left.h ||
+        left.y - right.y ||
+        left.x - right.x ||
+        left.app_id.localeCompare(right.app_id),
+    );
+  for (const item of unlocked) {
+    placed.push({ ...item, ...firstFreeSpot(placed, item.w, item.h) });
   }
-  const ordered = sortByPosition(items);
-
-  let bestCols = 1;
-  let bestScore = Number.POSITIVE_INFINITY;
-  for (let cols = 1; cols <= AUTO_FILL_MAX_COLS; cols += 1) {
-    const rows = Math.ceil(count / cols);
-    const waste = cols * rows - count;
-    // Prefer fewer rows, then fewer empty slots, then more columns.
-    const score = rows * 100 + waste;
-    if (score < bestScore || (score === bestScore && cols > bestCols)) {
-      bestCols = cols;
-      bestScore = score;
-    }
-  }
-
-  const rows = Math.ceil(count / bestCols);
-  const result: BoardItem[] = [];
-  let index = 0;
-  for (let row = 0; row < rows; row += 1) {
-    const inRow = Math.min(bestCols, count - row * bestCols);
-    const widths = splitBoardColumns(inRow);
-    let x = 0;
-    for (let column = 0; column < inRow; column += 1) {
-      const source = ordered[index];
-      index += 1;
-      const w = widths[column];
-      result.push({
-        app_id: source.app_id,
-        x,
-        y: row * AUTO_FILL_BAND,
-        w,
-        h: AUTO_FILL_BAND,
-      });
-      x += w;
-    }
-  }
-  return result;
+  return sortByPosition(placed);
 }

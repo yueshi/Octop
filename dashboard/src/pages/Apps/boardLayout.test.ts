@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import type { BoardItem } from "../../api/modules/boards";
 import {
-  autoFillBoardLayout,
+  addBoardItem,
+  autoArrangeBoardLayout,
   BOARD_FALLBACK_ROW_HEIGHT,
   BOARD_MARGIN_Y,
   BOARD_MIN_ROW_HEIGHT,
   fitBoardRowHeight,
   placeBoardItem,
-  splitBoardColumns,
 } from "./boardLayout";
 
 describe("fitBoardRowHeight", () => {
@@ -47,79 +47,71 @@ function apps(count: number): BoardItem[] {
   }));
 }
 
-/** Every band starts at x=0 and its cells sum to the full 12 columns. */
-function expectFilledBands(items: BoardItem[]): void {
-  const bands = new Map<number, BoardItem[]>();
-  for (const item of items) {
-    bands.set(item.y, [...(bands.get(item.y) ?? []), item]);
-  }
-  for (const band of bands.values()) {
-    let expectedX = 0;
-    for (const item of [...band].sort((a, b) => a.x - b.x)) {
-      expect(item.x).toBe(expectedX);
-      expectedX += item.w;
+function cells(specs: Array<[id: string, w: number, h: number]>): BoardItem[] {
+  return specs.map(([app_id, w, h], index) => ({
+    app_id,
+    x: 0,
+    y: index * 2,
+    w,
+    h,
+  }));
+}
+
+function expectNoOverlap(items: BoardItem[]): void {
+  for (let left = 0; left < items.length; left += 1) {
+    for (let right = left + 1; right < items.length; right += 1) {
+      const a = items[left];
+      const b = items[right];
+      const overlap =
+        a.x < b.x + b.w &&
+        a.x + a.w > b.x &&
+        a.y < b.y + b.h &&
+        a.y + a.h > b.y;
+      expect(overlap).toBe(false);
     }
-    expect(expectedX).toBe(12);
   }
 }
 
-describe("autoFillBoardLayout", () => {
-  it("gives a single app the full width", () => {
-    expect(autoFillBoardLayout(apps(1))).toEqual([
-      { app_id: "app_0", x: 0, y: 0, w: 12, h: 2 },
+describe("autoArrangeBoardLayout", () => {
+  it("keeps the chosen size of a single cell", () => {
+    expect(
+      autoArrangeBoardLayout([{ app_id: "app_0", x: 3, y: 2, w: 3, h: 2 }]),
+    ).toEqual([{ app_id: "app_0", x: 0, y: 0, w: 3, h: 2 }]);
+  });
+
+  it("packs six 4×4 cells three per row", () => {
+    const result = autoArrangeBoardLayout(
+      cells(Array.from({ length: 6 }, (_, index) => [`app_${index}`, 4, 4])),
+    );
+    expect(result.map((item) => [item.x, item.y])).toEqual([
+      [0, 0],
+      [4, 0],
+      [8, 0],
+      [0, 4],
+      [4, 4],
+      [8, 4],
     ]);
   });
 
-  it("splits two apps into halves", () => {
-    expect(autoFillBoardLayout(apps(2)).map((item) => item.w)).toEqual([6, 6]);
-  });
-
-  it("puts three apps in one full band", () => {
-    const result = autoFillBoardLayout(apps(3));
-    expect(result.map((item) => item.w)).toEqual([4, 4, 4]);
-    expect(new Set(result.map((item) => item.y))).toEqual(new Set([0]));
-  });
-
-  it("puts four apps in one row of thirds", () => {
-    expect(autoFillBoardLayout(apps(4)).map((item) => item.w)).toEqual([
-      3, 3, 3, 3,
-    ]);
-  });
-
-  it("spreads the last band across all columns", () => {
-    const result = autoFillBoardLayout(apps(5));
-    expect(result.map((item) => [item.y, item.w])).toEqual([
-      [0, 4],
-      [0, 4],
-      [0, 4],
-      [2, 6],
-      [2, 6],
-    ]);
-    expectFilledBands(result);
-  });
-
-  it("tiles nine apps into a 3×3 grid", () => {
-    const result = autoFillBoardLayout(apps(9));
-    expect(result).toHaveLength(9);
-    expect(new Set(result.map((item) => item.y))).toEqual(new Set([0, 2, 4]));
-    expect(result.every((item) => item.w === 4)).toBe(true);
-  });
-
-  it("keeps every app and never overlaps within a band", () => {
-    const result = autoFillBoardLayout(apps(12));
-    expect(new Set(result.map((item) => item.app_id)).size).toBe(12);
-    expectFilledBands(result);
-  });
-
-  it("splits columns evenly", () => {
-    expect(splitBoardColumns(1)).toEqual([12]);
-    expect(splitBoardColumns(2)).toEqual([6, 6]);
-    expect(splitBoardColumns(3)).toEqual([4, 4, 4]);
-    expect(splitBoardColumns(4)).toEqual([3, 3, 3, 3]);
+  it("preserves a mixed size layout instead of flattening it", () => {
+    const result = autoArrangeBoardLayout(
+      cells([
+        ["wide", 8, 4],
+        ["tall", 6, 3],
+        ["square", 4, 4],
+        ["small", 4, 2],
+      ]),
+    );
+    const byId = Object.fromEntries(result.map((item) => [item.app_id, item]));
+    expect([byId.wide.x, byId.wide.y]).toEqual([0, 0]);
+    expect([byId.square.x, byId.square.y]).toEqual([8, 0]);
+    expect([byId.tall.x, byId.tall.y]).toEqual([0, 4]);
+    expect([byId.small.x, byId.small.y]).toEqual([6, 4]);
+    expectNoOverlap(result);
   });
 
   it("keeps locked cells fixed while filling around them", () => {
-    const result = autoFillBoardLayout([
+    const result = autoArrangeBoardLayout([
       { app_id: "locked", x: 0, y: 0, w: 6, h: 4, locked: true },
       { app_id: "free", x: 0, y: 4, w: 4, h: 2 },
     ]);
@@ -134,6 +126,38 @@ describe("autoFillBoardLayout", () => {
       locked: true,
     });
     expect(free).toEqual({ app_id: "free", x: 6, y: 0, w: 4, h: 2 });
+  });
+});
+
+describe("addBoardItem", () => {
+  it("fills a hole in the top row", () => {
+    const result = addBoardItem(
+      [
+        { app_id: "a", x: 0, y: 0, w: 4, h: 4 },
+        { app_id: "b", x: 8, y: 0, w: 4, h: 4 },
+      ],
+      "new",
+    );
+    expect(result.find((item) => item.app_id === "new")).toEqual({
+      app_id: "new",
+      x: 4,
+      y: 0,
+      w: 4,
+      h: 4,
+    });
+  });
+
+  it("starts a new row when the top band is full", () => {
+    const items = [0, 4, 8].map((x, index) => ({
+      app_id: `a${index}`,
+      x,
+      y: 0,
+      w: 4,
+      h: 4,
+    }));
+    expect(
+      addBoardItem(items, "new").find((item) => item.app_id === "new"),
+    ).toEqual({ app_id: "new", x: 0, y: 4, w: 4, h: 4 });
   });
 });
 

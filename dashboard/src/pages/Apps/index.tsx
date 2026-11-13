@@ -13,7 +13,6 @@ import {
   Form,
   Input,
   Modal,
-  Popconfirm,
   Select,
   Space,
   Spin,
@@ -56,7 +55,11 @@ import {
 import PageShell from "../../layouts/PageShell";
 import CreateMiniAppModal from "./CreateMiniAppModal";
 import BoardGrid from "./BoardGrid";
-import { autoFillBoardLayout, placeBoardItem } from "./boardLayout";
+import {
+  addBoardItem,
+  autoArrangeBoardLayout,
+  placeBoardItem,
+} from "./boardLayout";
 import {
   APP_BOARD_SPANS,
   DEFAULT_APP_BOARD_SIZE,
@@ -109,11 +112,6 @@ function sameLayout(left: BoardItem[], right: BoardItem[]): boolean {
     left.map(signature).sort().join("|") ===
     right.map(signature).sort().join("|")
   );
-}
-
-function nextItem(items: BoardItem[], appId: string): BoardItem {
-  const y = items.reduce((max, item) => Math.max(max, item.y + item.h), 0);
-  return { app_id: appId, x: 0, y, w: 4, h: 4 };
 }
 
 function permissionLabel(
@@ -188,7 +186,10 @@ export default function AppsPage() {
   });
   const [board, setBoard] = useState<BoardDetail | null>(null);
   const [items, setItems] = useState<BoardItem[]>([]);
-  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailLoading, setDetailLoading] = useState<boolean>(
+    activeId !== null,
+  );
+  const [bootReady, setBootReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [undoDepth, setUndoDepth] = useState(0);
 
@@ -352,6 +353,7 @@ export default function AppsPage() {
           const remembered = list.find((item) => item.board_id === prev);
           return remembered?.board_id ?? list[0]?.board_id ?? null;
         });
+        setDetailLoading(list.length > 0);
       } catch (err) {
         if (alive) {
           message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
@@ -360,6 +362,7 @@ export default function AppsPage() {
         if (alive) {
           setAppsLoading(false);
           setBoardsLoading(false);
+          setBootReady(true);
         }
       }
     })();
@@ -394,6 +397,10 @@ export default function AppsPage() {
   // Load the selected board. A board just created is already in `boardRef`,
   // so skip the redundant fetch.
   useEffect(() => {
+    // Wait for the catalog first: applyBoard drops cells whose app is not
+    // loaded yet, and navigating from another page can restore an active
+    // board id from localStorage before the app list arrives.
+    if (!bootReady) return;
     pendingRef.current = null;
     historyRef.current = [];
     setUndoDepth(0);
@@ -401,9 +408,13 @@ export default function AppsPage() {
       boardRef.current = null;
       setBoard(null);
       setItems([]);
+      setDetailLoading(false);
       return;
     }
-    if (boardRef.current?.board_id === activeId) return;
+    if (boardRef.current?.board_id === activeId) {
+      setDetailLoading(false);
+      return;
+    }
     let alive = true;
     setDetailLoading(true);
     boardsApi
@@ -430,7 +441,7 @@ export default function AppsPage() {
     return () => {
       alive = false;
     };
-  }, [activeId, applyBoard, t]);
+  }, [activeId, applyBoard, bootReady, t]);
 
   const openApp = useCallback(
     (appId: string) => navigate(`/apps/${appId}`),
@@ -471,7 +482,7 @@ export default function AppsPage() {
       if (!current) return;
       if (itemsRef.current.some((item) => item.app_id === appId)) return;
       snapshot();
-      const next = [...itemsRef.current, nextItem(itemsRef.current, appId)];
+      const next = addBoardItem(itemsRef.current, appId);
       itemsRef.current = next;
       setItems(next);
       queueSave(next);
@@ -538,11 +549,13 @@ export default function AppsPage() {
   const arrangeBoard = useCallback(() => {
     if (!boardRef.current || itemsRef.current.length === 0) return;
     snapshot();
-    const next = autoFillBoardLayout(itemsRef.current);
+    const next = autoArrangeBoardLayout(itemsRef.current);
     itemsRef.current = next;
     setItems(next);
     queueSave(next);
-    message.success(t("apps.board.arrangeDone", "Board rearranged"));
+    message.success(
+      t("apps.board.arrangeDone", "Board arranged; undo it from the toolbar"),
+    );
   }, [queueSave, snapshot, t]);
 
   const openCreateBoard = () => {
@@ -748,20 +761,20 @@ export default function AppsPage() {
           <Button type="primary" onClick={() => setCreateOpen(true)}>
             {t("apps.create.button", "Create")}
           </Button>
-          <Popconfirm
+          <Tooltip
             title={t(
-              "apps.board.arrangeConfirm",
-              "Rearrange the board? Locked cells stay; unlocked cells fill the gaps.",
+              "apps.board.arrangeHint",
+              "Pack cells at their current sizes; undo from the toolbar",
             )}
-            okText={t("apps.board.arrangeOk", "Rearrange")}
-            cancelText={t("common.cancel", "Cancel")}
-            onConfirm={arrangeBoard}
-            disabled={items.length === 0}
           >
-            <Button icon={<Grid2x2 size={16} />} disabled={items.length === 0}>
+            <Button
+              icon={<Grid2x2 size={16} />}
+              disabled={items.length === 0}
+              onClick={arrangeBoard}
+            >
               {t("apps.board.arrange", "Auto-arrange")}
             </Button>
-          </Popconfirm>
+          </Tooltip>
           <Tooltip title={t("apps.board.undo", "Undo the last layout change")}>
             <Button
               aria-label={t("apps.board.undo", "Undo the last layout change")}
