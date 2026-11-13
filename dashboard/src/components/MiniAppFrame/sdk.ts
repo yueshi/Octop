@@ -9,7 +9,38 @@ export const APP_SDK = `(function () {
   var pending = new Map();
   var seq = 0;
   var TIMEOUT_MS = 30000;
+  // Captured before any app script runs; the freeze installs first.
+  var find = Document.prototype.querySelector;
+  function intact() {
+    try {
+      if (typeof window.RTCPeerConnection !== "undefined") return false;
+      if (typeof window.webkitRTCPeerConnection !== "undefined") return false;
+      if (typeof window.mozRTCPeerConnection !== "undefined") return false;
+      return !find.call(document, "iframe,frame,object,embed,portal");
+    } catch (e) {
+      return false;
+    }
+  }
+  function reportIntegrity() {
+    try {
+      parent.postMessage(
+        {
+          source: "octop-app",
+          type: "violation",
+          kind: "sandbox_integrity",
+          directive: "sandbox-integrity",
+          blockedURI: "",
+          disposition: "enforce"
+        },
+        "*"
+      );
+    } catch (e) {}
+  }
   function call(method, params) {
+    if (!intact()) {
+      reportIntegrity();
+      return Promise.reject(new Error("Sandbox integrity check failed"));
+    }
     return new Promise(function (resolve, reject) {
       var id = ++seq;
       var entry = { resolve: resolve, reject: reject, timer: null };
@@ -36,6 +67,21 @@ export const APP_SDK = `(function () {
     if (data.ok) entry.resolve(data.data);
     else entry.reject(new Error(data.error || "Request failed"));
   });
+  // Report what the browser blocked. A page that tries to reach a remote
+  // origin after the fact is worth seeing in the audit log even though the
+  // CSP already stopped it.
+  window.addEventListener("securitypolicyviolation", function (event) {
+    parent.postMessage(
+      {
+        source: "octop-app",
+        type: "violation",
+        directive: event.violatedDirective || "",
+        blockedURI: event.blockedURI || "",
+        disposition: event.disposition || ""
+      },
+      "*"
+    );
+  });
   window.octopApp = {
     me: function () { return call("me"); },
     schema: function (table) { return call("schema", { table: table || null }); },
@@ -61,24 +107,195 @@ export const APP_SDK = `(function () {
   };
 })();`;
 
+/**
+ * Run before any app script.
+ *
+ * WebRTC is the one network channel CSP does not cover: an app that reads rows
+ * through the bridge could otherwise open an `RTCPeerConnection` and send them
+ * to a STUN/TURN server. The globals are replaced with non-configurable
+ * `undefined` values on both the window and its prototype, so `delete` and
+ * prototype lookups do not bring them back.
+ *
+ * A nested `srcdoc` frame would get a fresh, unfrozen realm (and `frame-src`
+ * does not stop the initial srcdoc load), so this also rejects frame creation
+ * and removes any frame that slips through. This is defence in depth: the
+ * wrapper's `frame-src 'none'` and the write-time scan remain in place.
+ */
+export const WEBRTC_FREEZE = `(function () {
+  var RTC = ["RTCPeerConnection", "webkitRTCPeerConnection", "mozRTCPeerConnection", "RTCDataChannel"];
+  var EMBED = { IFRAME: 1, FRAME: 1, OBJECT: 1, EMBED: 1, PORTAL: 1 };
+  var FRAME_MARKUP = /<\\s*(iframe|frame|object|embed|portal)\\b/i;
+
+  function block(target, name) {
+    try {
+      Object.defineProperty(target, name, {
+        value: undefined, configurable: false, writable: false
+      });
+    } catch (e) {}
+  }
+  function blockGlobal(name) {
+    block(window, name);
+    try {
+      var proto = Object.getPrototypeOf(window);
+      if (proto) block(proto, name);
+    } catch (e) {}
+  }
+  for (var i = 0; i < RTC.length; i++) blockGlobal(RTC[i]);
+  var constructors = [
+    "HTMLIFrameElement", "HTMLFrameElement", "HTMLObjectElement", "HTMLEmbedElement",
+    "Worker", "SharedWorker", "WebTransport", "open"
+  ];
+  for (var j = 0; j < constructors.length; j++) blockGlobal(constructors[j]);
+  try {
+    if (typeof Navigator !== "undefined") {
+      block(Navigator.prototype, "serviceWorker");
+      block(navigator, "serviceWorker");
+    }
+  } catch (e) {}
+
+  function isEmbed(tag) {
+    return Object.prototype.hasOwnProperty.call(EMBED, String(tag).toUpperCase());
+  }
+  function reject() {
+    throw new Error("Frames are not available in a MiniApp");
+  }
+  function hasFrameMarkup(value) {
+    return FRAME_MARKUP.test(String(value));
+  }
+  function containsEmbed(node) {
+    if (!node || typeof node !== "object") return false;
+    if (node.nodeType === 1 || node.nodeType === 11) {
+      if (node.nodeType === 1 && isEmbed(node.tagName)) return true;
+      if (node.querySelector && node.querySelector("iframe,frame,object,embed,portal")) {
+        return true;
+      }
+    }
+    return false;
+  }
+  function guardMethod(proto, name) {
+    var original = proto[name];
+    if (typeof original !== "function") return;
+    Object.defineProperty(proto, name, {
+      configurable: true,
+      writable: true,
+      value: function () {
+        for (var i = 0; i < arguments.length; i++) {
+          if (hasFrameMarkup(arguments[i]) || containsEmbed(arguments[i])) reject();
+        }
+        return original.apply(this, arguments);
+      }
+    });
+  }
+  function guardSetter(proto, name) {
+    var desc = Object.getOwnPropertyDescriptor(proto, name);
+    if (!desc || !desc.set) return;
+    var original = desc.set;
+    Object.defineProperty(proto, name, {
+      configurable: true,
+      get: desc.get,
+      set: function (value) {
+        if (hasFrameMarkup(value)) reject();
+        return original.call(this, value);
+      }
+    });
+  }
+
+  var createElement = Document.prototype.createElement;
+  Document.prototype.createElement = function (tag, options) {
+    if (isEmbed(tag)) reject();
+    return createElement.call(this, tag, options);
+  };
+  var createElementNS = Document.prototype.createElementNS;
+  Document.prototype.createElementNS = function (ns, tag, options) {
+    if (isEmbed(tag)) reject();
+    return createElementNS.call(this, ns, tag, options);
+  };
+
+  guardSetter(Element.prototype, "innerHTML");
+  guardSetter(Element.prototype, "outerHTML");
+  if (typeof ShadowRoot !== "undefined") guardSetter(ShadowRoot.prototype, "innerHTML");
+  guardMethod(Element.prototype, "insertAdjacentHTML");
+  guardMethod(Element.prototype, "append");
+  guardMethod(Element.prototype, "prepend");
+  guardMethod(Element.prototype, "replaceChildren");
+  guardMethod(Element.prototype, "insertAdjacentElement");
+  guardMethod(Element.prototype, "setHTMLUnsafe");
+  guardMethod(Element.prototype, "setHTML");
+  if (typeof ShadowRoot !== "undefined") {
+    guardMethod(ShadowRoot.prototype, "setHTMLUnsafe");
+    guardMethod(ShadowRoot.prototype, "setHTML");
+  }
+  guardMethod(Document.prototype, "write");
+  guardMethod(Document.prototype, "writeln");
+  guardMethod(Document.prototype, "execCommand");
+  guardMethod(Document.prototype, "parseHTMLUnsafe");
+  guardMethod(Document, "parseHTMLUnsafe");
+  if (typeof DOMParser !== "undefined") guardMethod(DOMParser.prototype, "parseFromString");
+  if (typeof Range !== "undefined") guardMethod(Range.prototype, "createContextualFragment");
+
+  function removeEmbeds(root) {
+    if (!root || root.nodeType !== 1) return;
+    if (isEmbed(root.tagName)) {
+      try { root.remove(); } catch (e) {}
+      return;
+    }
+    if (root.querySelectorAll) {
+      var nodes = root.querySelectorAll("iframe,frame,object,embed,portal");
+      for (var k = nodes.length - 1; k >= 0; k--) {
+        try { nodes[k].remove(); } catch (e) {}
+      }
+    }
+  }
+  try {
+    var observer = new MutationObserver(function (records) {
+      for (var i = 0; i < records.length; i++) {
+        var added = records[i].addedNodes;
+        for (var j = 0; j < added.length; j++) removeEmbeds(added[j]);
+      }
+    });
+    observer.observe(document, { childList: true, subtree: true });
+  } catch (e) {}
+  document.addEventListener("DOMContentLoaded", function () {
+    removeEmbeds(document.documentElement);
+  });
+})();`;
+
+/** Whether the app document embeds a frame/plugin element. */
+export function hasEmbeddedFrame(html: string): boolean {
+  return /<\s*(iframe|frame|object|embed|portal)\b/i.test(html);
+}
+
 export function buildSrcDoc(html: string): string {
+  // Old apps may predate the write-time rule; never run one whose static HTML
+  // would create a fresh realm before the freeze can protect it.
+  if (hasEmbeddedFrame(html)) {
+    return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${APP_CSP}"></head><body><p>This MiniApp embeds a frame and cannot be displayed.</p></body></html>`;
+  }
   const head = `<meta http-equiv="Content-Security-Policy" content="${APP_CSP}"><script>${APP_SDK}</script>`;
-  const headMatch = /<head[^>]*>/i.exec(html);
+  // Pull the first <html ...> tag out so the freeze script can precede every
+  // app script while keeping lang/class/style on the root element.
+  const htmlMatch = /<html\b([^>]*)>/i.exec(html);
+  const htmlAttrs = htmlMatch ? htmlMatch[1] : "";
+  let body = html;
+  if (htmlMatch?.index !== undefined) {
+    body =
+      html.slice(0, htmlMatch.index) +
+      html.slice(htmlMatch.index + htmlMatch[0].length);
+  }
+  body = body.replace(/^\s*<!doctype[^>]*>/i, "");
+  const headMatch = /<head[^>]*>/i.exec(body);
   if (headMatch?.index !== undefined) {
     const at = headMatch.index + headMatch[0].length;
-    return `${html.slice(0, at)}${head}${html.slice(at)}`;
+    body = `${body.slice(0, at)}${head}${body.slice(at)}`;
+  } else {
+    const bodyMatch = /<body[^>]*>/i.exec(body);
+    if (bodyMatch?.index !== undefined) {
+      body = `${body.slice(0, bodyMatch.index)}<head>${head}</head>${body.slice(
+        bodyMatch.index,
+      )}`;
+    } else {
+      body = `<head>${head}</head><body>${body}</body>`;
+    }
   }
-  const htmlMatch = /<html[^>]*>/i.exec(html);
-  if (htmlMatch?.index !== undefined) {
-    const at = htmlMatch.index + htmlMatch[0].length;
-    return `${html.slice(0, at)}<head>${head}</head>${html.slice(at)}`;
-  }
-  const doctypeMatch = /<!doctype[^>]*>/i.exec(html);
-  if (doctypeMatch?.index !== undefined) {
-    const at = doctypeMatch.index + doctypeMatch[0].length;
-    return `${html.slice(0, at)}<html><head>${head}</head><body>${html.slice(
-      at,
-    )}</body></html>`;
-  }
-  return `<!doctype html><html><head>${head}</head><body>${html}</body></html>`;
+  return `<!doctype html><html${htmlAttrs}><script>${WEBRTC_FREEZE}</script>${body}`;
 }

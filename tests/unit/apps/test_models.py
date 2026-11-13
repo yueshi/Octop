@@ -241,6 +241,64 @@ def test_find_external_refs_ignores_relative_and_anchor_urls() -> None:
     assert find_external_refs(html) == []
 
 
+@pytest.mark.parametrize(
+    ("html", "kind"),
+    [
+        (
+            '<meta http-equiv="refresh" content="0;url=https://evil.example/">',
+            "escape meta refresh",
+        ),
+        ('<script>location.href="https://evil.example/"</script>', "escape location navigation"),
+        ('<script>location.assign("https://evil.example/")</script>', "escape location navigation"),
+        ('<script>window.location="https://evil.example/"</script>', "escape location navigation"),
+        ('<script>window.open("https://evil.example/")</script>', "escape window.open()"),
+        ("<script>new RTCPeerConnection({})</script>", "escape WebRTC"),
+    ],
+)
+def test_validate_html_rejects_sandbox_escapes(html: str, kind: str) -> None:
+    """An app that navigates its own frame can leave the sandbox.
+
+    The sandbox flags survive that navigation and the origin stays opaque, so
+    the escaping page would still pass the host's source check and could read
+    every row through the bridge.
+    """
+    with pytest.raises(OctopError) as exc:
+        validate_html(html)
+    _assert_code(exc, ErrorCode.APP_HTML_INVALID)
+    assert kind in str(exc.value)
+    assert exc.value.details["refs"]
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        '<iframe srcdoc="<p>x</p>"></iframe>',
+        "<iframe></iframe>",
+        "<frame></frame>",
+        "<object></object>",
+        "<embed>",
+    ],
+)
+def test_validate_html_rejects_embedded_frames(html: str) -> None:
+    """A nested frame gets its own realm, bypassing the WebRTC freeze."""
+    with pytest.raises(OctopError) as exc:
+        validate_html(html)
+    _assert_code(exc, ErrorCode.APP_HTML_INVALID)
+    assert "embed" in str(exc.value)
+    assert exc.value.details["refs"]
+
+
+def test_validate_html_allows_in_page_navigation() -> None:
+    """Hash navigation and the sanctioned openExternal call stay allowed."""
+    html = (
+        '<html><body><a href="#top">top</a>'
+        '<script>location.hash="section";'
+        'octopApp.openExternal("https://example.com");</script>'
+        "</body></html>"
+    )
+    assert validate_html(html) == html.strip()
+
+
 def test_validate_permission() -> None:
     assert validate_permission("view") == "view"
     assert validate_permission("edit_data") == "edit_data"

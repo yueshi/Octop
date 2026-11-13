@@ -21,6 +21,7 @@ from octop.api.deps import get_server
 from octop.api.routers.apps import _columns, _service
 from octop.infra.apps.limits import public_slot
 from octop.infra.apps.models import MAIN_TABLE_KEY
+from octop.infra.apps.sandbox import APP_CSP, build_app_doc, build_wrapper_doc
 from octop.infra.errors import ErrorCode, OctopError
 
 router = APIRouter(prefix="/public/apps")
@@ -226,42 +227,41 @@ _SDK = """
 })();
 """
 
-_CSP = (
-    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
-    "img-src data: blob:; font-src data:; media-src data: blob:; "
-    "connect-src 'none'; base-uri 'none'; form-action 'none'"
-)
+_CSP = APP_CSP
+
+
+def _with_head(html: str) -> str:
+    """Inject the app CSP, SDK and pre-script freeze into the app document."""
+    head = f'<meta http-equiv="Content-Security-Policy" content="{_CSP}"><script>{_SDK}</script>'
+    return build_app_doc(html, head)
 
 
 def _host_page(token: str, app: PublicAppOut) -> str:
+    # The app runs inside the wrapper's own frame. The wrapper declares
+    # `frame-src 'none'`, which is what stops the app from navigating itself
+    # away and taking the bridge with it.
+    wrapper_doc = build_wrapper_doc(_with_head(app.html))
     # Escape "</" so a script tag inside the app cannot close the host script.
-    app_html = json.dumps(app.html).replace("</", "<\\/")
+    wrapper_json = json.dumps(wrapper_doc).replace("</", "<\\/")
     token_json = json.dumps(token)
-    sdk = json.dumps(_SDK).replace("</", "<\\/")
     return f"""<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_escape(app.name)}</title>
 <style>html,body{{margin:0;height:100%;background:#fff}}iframe{{border:0;width:100%;height:100%}}</style>
 </head><body>
-<iframe id="app" sandbox="allow-scripts"></iframe>
+<iframe id="wrapper" sandbox="allow-scripts"></iframe>
 <script>
-const appHtml = {app_html};
 const token = {token_json};
-const sdk = {sdk};
-const csp = {json.dumps(_CSP)};
-const head = '<meta http-equiv="Content-Security-Policy" content="' + csp + '"><script>' + sdk + '<\\/script>';
-const frame = document.getElementById("app");
-function withHead(html) {{
-  const m = /<head[^>]*>/i.exec(html);
-  if (m) return html.slice(0, m.index + m[0].length) + head + html.slice(m.index + m[0].length);
-  return "<!doctype html><html><head>" + head + "</head><body>" + html + "</body></html>";
-}}
-frame.srcdoc = withHead(appHtml);
+const wrapper = document.getElementById("wrapper");
+wrapper.srcdoc = {wrapper_json};
 window.addEventListener("message", async function (event) {{
+  // Only the wrapper may drive this bridge. Without the source check any
+  // window could post a request here.
+  if (event.source !== wrapper.contentWindow) return;
   const data = event.data;
   if (!data || data.source !== "octop-app" || data.type !== "request" || typeof data.id !== "number") return;
-  const reply = (payload) => frame.contentWindow.postMessage(Object.assign({{source: "octop-app-host", id: data.id}}, payload), "*");
+  const reply = (payload) => wrapper.contentWindow.postMessage(Object.assign({{source: "octop-app-host", id: data.id}}, payload), "*");
   try {{
     if (data.method === "tables") {{
       const res = await fetch("/api/public/apps/" + encodeURIComponent(token), {{cache: "no-store"}});

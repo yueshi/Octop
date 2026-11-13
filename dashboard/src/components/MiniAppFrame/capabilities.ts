@@ -40,12 +40,21 @@ export function effectiveCapabilities(
   return capabilities ?? ALL_CAPABILITIES;
 }
 
+/**
+ * Whether the page may call *method*.
+ *
+ * A method with no entry in the map is denied: it has no known capability
+ * requirement, and allowing it would make every method added later open by
+ * default. `me` is always allowed — it reports the page's own permission and
+ * capabilities, and reveals nothing.
+ */
 export function isMethodAllowed(
   method: string | undefined,
   capabilities?: readonly string[],
 ): boolean {
   if (!method) return false;
+  if (method === "me") return true;
   const required = METHOD_CAPABILITY[method];
-  if (!required || !capabilities) return true;
-  return capabilities.includes(required);
+  if (!required) return false;
+  return effectiveCapabilities(capabilities).includes(required);
 }

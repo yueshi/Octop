@@ -566,6 +566,17 @@ _REMOTE_KIND_BY_TAG: dict[str, str] = {
     "a": "external link",
 }
 
+# Embedded browsing contexts and plugins are rejected outright: an app that can
+# create one gets a fresh JavaScript realm, which would defeat the WebRTC freeze
+# applied to the app's own window.
+_EMBED_TAG_KINDS: dict[str, str] = {
+    "iframe": "embedded frame",
+    "frame": "embedded frame",
+    "portal": "embedded frame",
+    "object": "embedded object",
+    "embed": "embedded object",
+}
+
 _NETWORK_APIS: tuple[tuple[str, str], ...] = (
     (r"\bfetch\s*\(", "fetch()"),
     (r"\bXMLHttpRequest\b", "XMLHttpRequest"),
@@ -577,6 +588,24 @@ _NETWORK_APIS: tuple[tuple[str, str], ...] = (
 
 _CSS_IMPORT_RE = re.compile(r"@import\s+(?:url\(\s*)?['\"]?([^'\";)]+)", re.IGNORECASE)
 _CSS_URL_RE = re.compile(r"url\(\s*['\"]?([^'\")]+)", re.IGNORECASE)
+
+# Navigation and escape channels. CSP does not cover navigation, so an app
+# that can navigate its own frame can leave the sandbox and carry the data it
+# already received in the URL. The wrapper's `frame-src 'none'` is the real
+# boundary; these patterns are rejected at write time so the agent learns
+# about them instead of shipping a page that only fails at runtime.
+_NAV_APIS: tuple[tuple[str, str], ...] = (
+    # `location.href = "..."` and `location.assign("...")` alike.
+    (r"\blocation\.(?:href\s*=|assign\s*\(|replace\s*\()", "location navigation"),
+    (r"\bwindow\.location(?:\.href)?\s*=", "location navigation"),
+    (r"\bwindow\.open\s*\(", "window.open()"),
+    (r"\bRTCPeerConnection\b", "WebRTC"),
+    (r"\bwebkitRTCPeerConnection\b", "WebRTC"),
+)
+
+_META_REFRESH_RE = re.compile(
+    r"<meta[^>]+http-equiv\s*=\s*['\"]?refresh['\"]?[^>]*>", re.IGNORECASE
+)
 
 
 @dataclass(frozen=True)
@@ -616,9 +645,9 @@ def _srcset_urls(value: str) -> list[str]:
 def find_external_refs(html: str) -> list[ExternalRef]:
     """Return every remote reference in *html* that the app sandbox forbids.
 
-    Covers remote loads (``<script src>``, ``<link href>``, images, media,
-    frames), CSS ``@import`` / ``url()``, network APIs, ``javascript:`` URLs
-    and external ``<a href>`` links.
+    Covers embedded frames/plugins, remote loads (``<script src>``,
+    ``<link href>``, images, media), CSS ``@import`` / ``url()``, network APIs,
+    ``javascript:`` URLs and external ``<a href>`` links.
     """
     refs: list[ExternalRef] = []
     seen: set[tuple[str, str, int]] = set()
@@ -632,6 +661,10 @@ def find_external_refs(html: str) -> list[ExternalRef]:
 
     for tag_match in _TAG_RE.finditer(html):
         tag = tag_match.group("tag").lower()
+        embed_kind = _EMBED_TAG_KINDS.get(tag)
+        if embed_kind:
+            add(embed_kind, "", tag_match.start())
+            continue
         allowed = _REMOTE_TAGS.get(tag)
         if not allowed:
             continue
@@ -672,6 +705,13 @@ def find_external_refs(html: str) -> list[ExternalRef]:
         for match in re.finditer(pattern, html):
             add(f"network call {label}", match.group(0), match.start())
 
+    for pattern, label in _NAV_APIS:
+        for match in re.finditer(pattern, html):
+            add(f"escape {label}", match.group(0), match.start())
+
+    for match in _META_REFRESH_RE.finditer(html):
+        add("escape meta refresh", match.group(0), match.start())
+
     refs.sort(key=lambda ref: ref.line)
     return refs
 
@@ -680,6 +720,26 @@ def _external_refs_message(refs: list[ExternalRef]) -> str:
     """Build the agent-facing message: what is wrong and how to fix it."""
     listed = ", ".join(ref.url or ref.kind for ref in refs[:3])
     detail = "; ".join(f"{ref.kind} (line {ref.line})" for ref in refs[:3])
+    embeds = [ref for ref in refs if ref.kind.startswith("embedded ")]
+    if embeds:
+        message = (
+            f"HTML must not embed frames or plugin objects, but {detail} were found. "
+            "A nested frame gets its own realm, which is not allowed in a MiniApp: "
+            "render the UI in the page itself, and call octopApp.openExternal(url) for links."
+        )
+        if len(refs) > 3:
+            message += f" (+{len(refs) - 3} more)"
+        return message
+    escapes = [ref for ref in refs if ref.kind.startswith("escape ")]
+    if escapes:
+        message = (
+            f"HTML must not navigate away from the sandbox, but {detail} were found. "
+            "The app page cannot open another page or start a peer connection: "
+            "render inside the page, and call octopApp.openExternal(url) for links."
+        )
+        if len(refs) > 3:
+            message += f" (+{len(refs) - 3} more)"
+        return message
     message = (
         f"HTML must not reference external resources, but {listed} were found: {detail}. "
         "The app page runs in a sandbox with no network access: inline all CSS and JS, "

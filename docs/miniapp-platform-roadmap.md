@@ -76,6 +76,7 @@
 5. **一个 App 调度器**：`light_app_schedules` 统一管理应用级定时任务，逐步替代 `light_app_sources.schedule_seconds`。
 6. **一个连接器通道**：`GatewayToolRunner` + catalog adapter；已有 `http-extract`（带 SSRF 防护）可复用，不开放页面任意 URL。
 7. **公开面只读且可缓存**：公开链接/看板不写数据；公开实时仅限结构化 adapter、缓存优先、限流。
+8. **导航边界在 wrapper**：App 运行在固定 wrapper 的子 frame 内，wrapper 以 `frame-src 'none'` 阻止自导航；详见 [miniapp-sandbox-hardening.md](./miniapp-sandbox-hardening.md)。
 
 ---
 

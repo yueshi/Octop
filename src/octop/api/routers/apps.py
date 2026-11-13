@@ -27,9 +27,15 @@ from octop.infra.apps import capabilities as app_capabilities
 from octop.infra.apps.assistant import AppAssistant
 from octop.infra.apps.game_sessions import create_game_token
 from octop.infra.apps.generation import AppGenerator
-from octop.infra.apps.limits import acquire_app_llm, app_llm_slot, release_app_llm
+from octop.infra.apps.limits import (
+    acquire_app_llm,
+    app_llm_slot,
+    csp_violation_slot,
+    release_app_llm,
+)
 from octop.infra.apps.models import MAIN_TABLE_KEY, Schema
 from octop.infra.apps.preview import validate_preview_svg
+from octop.infra.apps.sandbox import sanitize_blocked_uri
 from octop.infra.apps.service import (
     IMPORT_MODE_REPLACE,
     MAX_ASSET_BYTES,
@@ -176,6 +182,29 @@ class GameSessionOut(BaseModel):
     token: str = Field(description="Short-lived token for the result endpoint.")
     expires_at: int = Field(description="Unix expiry for the token.")
     sandbox: str = Field(description="Iframe sandbox policy for this game.")
+
+
+class SecurityEventIn(BaseModel):
+    """One security event reported by a sandboxed MiniApp page."""
+
+    kind: Literal["csp_violation", "sandbox_integrity"] = Field(
+        description="Event kind: a CSP violation or a failed sandbox-integrity check.",
+    )
+    directive: str = Field(
+        default="",
+        max_length=200,
+        description="CSP directive that was violated (e.g. `connect-src`).",
+    )
+    blocked_uri: str = Field(
+        default="",
+        max_length=2000,
+        description="URI the browser blocked. Query strings are stripped before audit.",
+    )
+    disposition: str = Field(
+        default="",
+        max_length=32,
+        description="CSP disposition: `enforce` or `report`.",
+    )
 
 
 class RowMeta(BaseModel):
@@ -1038,6 +1067,49 @@ async def get_app_html(
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@router.post(
+    "/{app_id}/security-events",
+    status_code=204,
+    summary="Report a page sandbox security event",
+    description=(
+        "Records a Content-Security-Policy violation reported by a MiniApp page. "
+        "The dashboard forwards these from inside the sandbox; the URI's query "
+        "string and fragment are stripped before the event is audited. Requires "
+        "view permission and is rate-limited per app and user."
+    ),
+)
+async def report_security_event(
+    app_id: str,
+    body: SecurityEventIn,
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> Response:
+    _service_row, row, _permission = _row_access(server, user, app_id, "view")
+    from octop.infra.metrics import METRICS  # noqa: PLC0415
+
+    async with csp_violation_slot(f"{row.app_id}:{user.id}"):
+        payload = {
+            "kind": body.kind,
+            "directive": body.directive,
+            "blocked_uri": sanitize_blocked_uri(body.blocked_uri),
+            "disposition": body.disposition,
+        }
+        if body.kind == "sandbox_integrity":
+            METRICS.inc("light_app_sandbox_integrity_total")
+            action = "light_app.sandbox_integrity"
+        else:
+            METRICS.inc("light_app_csp_violation_total")
+            action = "light_app.csp_violation"
+        _audit(
+            server,
+            actor=f"user:{user.id}",
+            action=action,
+            target=row.app_id,
+            payload=payload,
+        )
+    return Response(status_code=204)
 
 
 @router.get(

@@ -85,11 +85,19 @@ import GameFrame, {
   MINIAPP_GAME_FINISHED_EVENT,
   type MiniAppGameFinishedDetail,
 } from "../../components/MiniAppFrame/GameFrame";
-import { buildSrcDoc } from "../../components/MiniAppFrame/sdk";
+import {
+  buildSrcDoc,
+  hasEmbeddedFrame,
+} from "../../components/MiniAppFrame/sdk";
+import { buildWrapperDoc } from "../../components/MiniAppFrame/wrapper";
+import {
+  attachBridge,
+  type AppViolation,
+  type BridgeParams,
+} from "../../components/MiniAppFrame/bridge";
 import {
   CAP,
   effectiveCapabilities,
-  isMethodAllowed,
 } from "../../components/MiniAppFrame/capabilities";
 
 const { Text } = Typography;
@@ -293,6 +301,13 @@ export default function AppDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [gameSession, setGameSession] = useState<AppGameSession | null>(null);
   const [htmlReloadKey, setHtmlReloadKey] = useState(0);
+  const [appEscaped, setAppEscaped] = useState(false);
+  const [htmlBlocked, setHtmlBlocked] = useState(false);
+
+  // A remount starts a fresh document; drop the previous escape marker.
+  useEffect(() => {
+    setAppEscaped(false);
+  }, [htmlReloadKey, appId]);
 
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameForm] = Form.useForm<{ name: string; description: string }>();
@@ -400,10 +415,17 @@ export default function AppDetailPage() {
     }
     let alive = true;
     setHtmlLoading(true);
+    setHtmlBlocked(false);
     appsApi
       .getHtml(appId)
       .then((text) => {
-        if (alive) setHtml(text);
+        if (!alive) return;
+        if (hasEmbeddedFrame(text)) {
+          setHtml("");
+          setHtmlBlocked(true);
+          return;
+        }
+        setHtml(text);
       })
       .catch((err) => {
         if (alive)
@@ -429,103 +451,82 @@ export default function AppDetailPage() {
       window.removeEventListener(MINIAPP_GAME_FINISHED_EVENT, onGameEvent);
   }, [appId]);
 
+  const reportViolation = useCallback(
+    (violation: AppViolation) => {
+      // Telemetry only: a failed report must not disturb the page.
+      void appsApi.reportViolation(appId, violation).catch(() => {});
+    },
+    [appId],
+  );
+
+  // The wrapper reports that the app frame navigated away. Stop there: the
+  // escaping page would otherwise inherit the bridge and could read every row
+  // through the host.
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const frame = iframeRef.current;
       if (!frame || event.source !== frame.contentWindow) return;
-      const data = event.data as {
-        source?: string;
-        type?: string;
-        id?: number;
-        method?: string;
-        params?: {
-          limit?: number;
-          offset?: number;
-          table?: string | null;
-          row?: Record<string, unknown>;
-          url?: string;
-          name?: string;
-          prompt?: string;
-          system?: string;
-          gameId?: string;
-          text?: string;
-        };
-      } | null;
-      if (
-        !data ||
-        data.source !== "octop-app" ||
-        data.type !== "request" ||
-        typeof data.id !== "number"
-      ) {
-        return;
-      }
-      const reply = (payload: Record<string, unknown>) => {
-        frame.contentWindow?.postMessage(
-          { source: "octop-app-host", id: data.id, ...payload },
-          "*",
-        );
-      };
-      void (async () => {
-        try {
-          if (!isMethodAllowed(data.method, capabilitiesRef.current)) {
-            reply({ ok: false, error: "capability not declared" });
-            return;
+      const data = event.data as { source?: string; type?: string } | null;
+      if (!data || data.source !== "octop-app-host") return;
+      if (data.type === "escaped") setAppEscaped(true);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  useEffect(() => {
+    const detach = attachBridge(
+      {
+        // Read the ref on every request: the owner can edit the manifest from
+        // this page without remounting the frame.
+        capabilities: () => capabilitiesRef.current,
+        onViolation: reportViolation,
+        handle: async (method: string, params: BridgeParams) => {
+          if (method === "me") {
+            const current = await appsApi.get(appId);
+            return {
+              permission: current.permission,
+              capabilities: effectiveCapabilities(
+                current.capabilities ?? capabilitiesRef.current,
+              ),
+            };
           }
-          if (data.method === "me") {
+          if (method === "schema") {
             const current = await appsApi.get(appId);
-            reply({
-              ok: true,
-              data: {
-                permission: current.permission,
-                capabilities: effectiveCapabilities(
-                  current.capabilities ?? capabilitiesRef.current,
-                ),
-              },
-            });
-          } else if (data.method === "schema") {
-            const current = await appsApi.get(appId);
-            const tableKey = data.params?.table || "main";
+            const tableKey = params.table || "main";
             if (tableKey === "main") {
-              reply({
-                ok: true,
-                data: { table: tableKey, columns: current.columns },
-              });
-            } else {
-              const table = current.tables.find(
-                (item) => item.table_key === tableKey,
-              );
-              if (!table) throw new Error(`unknown table: ${tableKey}`);
-              reply({
-                ok: true,
-                data: { table: tableKey, columns: table.columns },
-              });
+              return { table: tableKey, columns: current.columns };
             }
-          } else if (data.method === "tables") {
-            const current = await appsApi.get(appId);
-            reply({
-              ok: true,
-              data: {
-                tables: current.tables.map((item) => ({
-                  table_key: item.table_key,
-                  label: item.label,
-                  row_count: item.row_count,
-                  is_main: item.is_main,
-                })),
-              },
-            });
-          } else if (data.method === "rows") {
-            const rows = await appsApi.rows(
-              appId,
-              data.params?.limit,
-              data.params?.offset,
-              data.params?.table || "main",
+            const table = current.tables.find(
+              (item) => item.table_key === tableKey,
             );
-            reply({ ok: true, data: rows });
-          } else if (data.method === "append") {
-            const tableKey = data.params?.table || "main";
+            if (!table) throw new Error(`unknown table: ${tableKey}`);
+            return { table: tableKey, columns: table.columns };
+          }
+          if (method === "tables") {
+            const current = await appsApi.get(appId);
+            return {
+              tables: current.tables.map((item) => ({
+                table_key: item.table_key,
+                label: item.label,
+                row_count: item.row_count,
+                is_main: item.is_main,
+              })),
+            };
+          }
+          if (method === "rows") {
+            return await appsApi.rows(
+              appId,
+              params.limit,
+              params.offset,
+              params.table || "main",
+            );
+          }
+          if (method === "append") {
+            const tableKey = params.table || "main";
             const result = await appsApi.appendRow(
               appId,
-              data.params?.row ?? {},
+              params.row ?? {},
               tableKey,
             );
             setDetail((prev) => {
@@ -542,15 +543,16 @@ export default function AppDetailPage() {
                 ),
               };
             });
-            reply({ ok: true, data: result });
-          } else if (data.method === "generate") {
-            const result = await appsApi.generate(appId, {
-              prompt: String(data.params?.prompt ?? ""),
-              system: String(data.params?.system ?? ""),
+            return result;
+          }
+          if (method === "generate") {
+            return await appsApi.generate(appId, {
+              prompt: String(params.prompt ?? ""),
+              system: String(params.system ?? ""),
             });
-            reply({ ok: true, data: result });
-          } else if (data.method === "composeMessage") {
-            const text = String(data.params?.text ?? "").trim();
+          }
+          if (method === "composeMessage") {
+            const text = String(params.text ?? "").trim();
             if (!text) {
               throw new Error(t("apps.composeEmpty", "Message is empty"));
             }
@@ -561,74 +563,60 @@ export default function AppDetailPage() {
             navigate(`/chat/${encodeURIComponent(current.agent_id)}`, {
               state: { prefillInput: text },
             });
-            reply({ ok: true, data: { filled: true } });
-          } else if (data.method === "launchGame") {
-            const gameId = String(data.params?.gameId ?? "").trim();
+            return { filled: true };
+          }
+          if (method === "launchGame") {
+            const gameId = String(params.gameId ?? "").trim();
             if (!gameId) throw new Error("gameId is required");
             const session = await appsApi.createGameSession(appId, gameId);
             setGameSession(session);
-            reply({
-              ok: true,
-              data: { sessionId: session.session_id, status: "opened" },
-            });
-          } else if (data.method === "openExternal") {
-            const url = String(data.params?.url ?? "").trim();
-            if (!/^https?:\/\//i.test(url)) {
-              reply({
-                ok: false,
-                error: "openExternal requires an http(s) URL",
-              });
-            } else {
-              // The app page runs sandboxed without popups, so the parent has
-              // to open the link — after the user confirms the target domain.
-              Modal.confirm({
-                title: t("apps.openExternalTitle"),
-                content: url,
-                okText: t("apps.openExternalConfirm"),
-                cancelText: t("common.cancel"),
-                onOk: () => {
-                  window.open(url, "_blank", "noopener,noreferrer");
-                },
-              });
-              reply({ ok: true, data: { opened: true } });
-            }
-          } else if (data.method === "asset") {
-            const name = String(data.params?.name ?? "").trim();
-            try {
-              // The parent fetches the asset with the JWT and hands the iframe
-              // a data: URL — the sandbox has no same-origin access, so a blob
-              // URL from this document would not be readable there.
-              const blob = await appsApi.asset(appId, name);
-              const mime = blob.type || "image/png";
-              const reader = new FileReader();
-              const dataUrl = await new Promise<string>((resolve, reject) => {
-                reader.onload = () => resolve(String(reader.result));
-                reader.onerror = () => reject(reader.error);
-                reader.readAsDataURL(blob);
-              });
-              reply({ ok: true, data: { name, mime, data_url: dataUrl } });
-            } catch (err) {
-              reply({
-                ok: false,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          } else {
-            reply({ ok: false, error: "unsupported method" });
+            return { sessionId: session.session_id, status: "opened" };
           }
-        } catch (err) {
-          reply({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      })();
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [appId, navigate, t]);
+          if (method === "openExternal") {
+            const url = String(params.url ?? "").trim();
+            if (!/^https?:\/\//i.test(url)) {
+              throw new Error("openExternal requires an http(s) URL");
+            }
+            // The app page runs sandboxed without popups, so the parent has
+            // to open the link — after the user confirms the target domain.
+            Modal.confirm({
+              title: t("apps.openExternalTitle"),
+              content: url,
+              okText: t("apps.openExternalConfirm"),
+              cancelText: t("common.cancel"),
+              onOk: () => {
+                window.open(url, "_blank", "noopener,noreferrer");
+              },
+            });
+            return { opened: true };
+          }
+          if (method === "asset") {
+            const name = String(params.name ?? "").trim();
+            // The parent fetches the asset with the JWT and hands the iframe
+            // a data: URL — the sandbox has no same-origin access, so a blob
+            // URL from this document would not be readable there.
+            const blob = await appsApi.asset(appId, name);
+            const mime = blob.type || "image/png";
+            const reader = new FileReader();
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+              reader.onload = () => resolve(String(reader.result));
+              reader.onerror = () => reject(reader.error);
+              reader.readAsDataURL(blob);
+            });
+            return { name, mime, data_url: dataUrl };
+          }
+          throw new Error("unsupported method");
+        },
+      },
+      () => iframeRef.current?.contentWindow ?? null,
+    );
+    return detach;
+  }, [appId, navigate, reportViolation, t]);
 
-  const srcDoc = useMemo(() => (html ? buildSrcDoc(html) : ""), [html]);
+  const srcDoc = useMemo(
+    () => (html ? buildWrapperDoc(buildSrcDoc(html)) : ""),
+    [html],
+  );
 
   const dataColumns: AppColumn[] =
     detail?.tables.find((item) => item.table_key === dataTable)?.columns ??
@@ -1403,6 +1391,24 @@ export default function AppDetailPage() {
                   {htmlLoading ? (
                     <div style={{ padding: 48, textAlign: "center" }}>
                       <Spin />
+                    </div>
+                  ) : appEscaped ? (
+                    <div style={{ padding: 24 }}>
+                      <Text type="warning">
+                        {t(
+                          "apps.sandboxEscaped",
+                          "This MiniApp tried to leave its sandbox, so it was stopped.",
+                        )}
+                      </Text>
+                    </div>
+                  ) : htmlBlocked ? (
+                    <div style={{ padding: 24 }}>
+                      <Text type="warning">
+                        {t(
+                          "apps.sandboxEmbeddedFrame",
+                          "This MiniApp embeds a frame, which is not allowed. Regenerate it.",
+                        )}
+                      </Text>
                     </div>
                   ) : detail.has_html && html ? (
                     <iframe

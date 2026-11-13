@@ -52,3 +52,21 @@ async def test_public_slot_rejects_over_the_minute_budget(
         async with limits.public_slot("token:ip"):
             pass
     assert exc.value.code is ErrorCode.APP_BUSY
+
+
+async def test_csp_violation_slot_rejects_over_the_minute_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A page that floods reports must not fill the audit log."""
+    monkeypatch.setattr(limits, "MAX_CSP_VIOLATIONS_PER_MINUTE", 1)
+    async with limits.csp_violation_slot("app:user"):
+        pass
+    with pytest.raises(OctopError) as exc:
+        async with limits.csp_violation_slot("app:user"):
+            pass
+    assert exc.value.code is ErrorCode.APP_BUSY
+
+
+async def test_csp_violation_slots_are_isolated_per_app_and_user() -> None:
+    async with limits.csp_violation_slot("app_a:user"), limits.csp_violation_slot("app_b:user"):
+        pass

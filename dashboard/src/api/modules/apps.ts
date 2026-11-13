@@ -592,6 +592,26 @@ export const appsApi = {
       body: JSON.stringify(body),
     }),
 
+  /** Record a sandbox CSP violation the page reported. Fire-and-forget. */
+  reportViolation: (
+    appId: string,
+    body: {
+      kind?: "csp_violation" | "sandbox_integrity";
+      directive: string;
+      blockedURI: string;
+      disposition?: string;
+    },
+  ) =>
+    request<void>(`/apps/${encodeId(appId)}/security-events`, {
+      method: "POST",
+      body: JSON.stringify({
+        kind: body.kind ?? "csp_violation",
+        directive: body.directive,
+        blocked_uri: body.blockedURI,
+        disposition: body.disposition ?? "",
+      }),
+    }),
+
   /** Issue a short-lived, app/user-scoped session for an external game. */
   createGameSession: (appId: string, gameId: string) =>
     request<AppGameSession>(`/apps/${encodeId(appId)}/game-sessions`, {

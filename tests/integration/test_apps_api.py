@@ -1115,6 +1115,53 @@ async def test_create_app_from_expert_template(
     assert [column["name"] for column in body["columns"]] == ["title"]
 
 
+async def test_csp_violation_is_audited_without_its_payload(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    """A blocked URL may carry exfiltrated data; the audit keeps only its origin/path."""
+    client, srv, alice_auth, bob_auth, _agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, _agent_id, "alice")
+    body = {
+        "kind": "csp_violation",
+        "directive": "connect-src",
+        "blocked_uri": "https://evil.example/collect?secret=ROW-1#frag",
+        "disposition": "enforce",
+    }
+
+    r = await client.post(f"/api/apps/{app_id}/security-events", headers=alice_auth, json=body)
+    assert r.status_code == 204, r.text
+
+    assert srv.services is not None
+    entries = srv.services.audit_repo.query(action="light_app.csp_violation", limit=5)
+    assert entries, "no csp violation audit entry written"
+    assert entries[0].target == app_id
+    payload = json.loads(entries[0].payload or "{}")
+    assert payload["directive"] == "connect-src"
+    assert payload["blocked_uri"] == "https://evil.example/collect"
+    assert "ROW-1" not in (entries[0].payload or "")
+
+    # A failed freeze/integrity check is a separate event kind.
+    r = await client.post(
+        f"/api/apps/{app_id}/security-events",
+        headers=alice_auth,
+        json={
+            "kind": "sandbox_integrity",
+            "directive": "sandbox-integrity",
+            "blocked_uri": "",
+            "disposition": "enforce",
+        },
+    )
+    assert r.status_code == 204, r.text
+    integrity = srv.services.audit_repo.query(action="light_app.sandbox_integrity", limit=5)
+    assert integrity, "no sandbox integrity audit entry written"
+    assert integrity[0].target == app_id
+
+    # Reporting is tied to the same view permission as the app.
+    r = await client.post(f"/api/apps/{app_id}/security-events", headers=bob_auth, json=body)
+    assert r.status_code == 403
+    assert r.json()["error"]["code"] == "APP_FORBIDDEN"
+
+
 async def test_public_link_is_read_only_and_revocable(
     env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
 ) -> None:
@@ -1154,6 +1201,44 @@ async def test_public_link_is_read_only_and_revocable(
     assert r.status_code == 200
     r = await client.get(f"/api/public/apps/{token}")
     assert r.status_code == 404
+
+
+async def test_public_page_runs_the_app_inside_the_navigation_sandbox(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    """The public host page uses the same wrapper as the dashboard.
+
+    A direct ``srcdoc`` would let the app navigate its own frame away and take
+    the bridge with it; the wrapper's ``frame-src 'none'`` is what prevents it.
+    """
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+    service = _service(srv)
+    row = service.get(app_id)
+    await service.write_html(
+        row,
+        "<!doctype html><html><body><script>window.x=1</script></body></html>",
+    )
+
+    r = await client.post(
+        f"/api/apps/{app_id}/publication",
+        headers=alice_auth,
+        json={"ttl_days": 0},
+    )
+    assert r.status_code == 200, r.text
+    token = r.json()["token"]
+
+    r = await client.get(f"/p/{token}")
+    assert r.status_code == 200
+    assert 'id="wrapper"' in r.text
+    # The wrapper denies every navigation of the app frame.
+    assert "frame-src 'none'" in r.text
+    # The app's script is embedded as a JSON string, so its closing tag is
+    # escaped and cannot terminate the host page's own script. The payload is
+    # JSON-encoded twice (app document → wrapper → host page), hence two
+    # backslashes in the host source.
+    assert "window.x=1</script>" not in r.text
+    assert r"window.x=1<\\/script>" in r.text
 
 
 async def test_publication_url_uses_configured_public_base_url(
@@ -1540,6 +1625,33 @@ async def test_quick_multi_sheet_create_flow(
     )
     assert r.status_code == 200
     assert r.json()["total"] == 3
+
+
+async def test_game_session_requires_the_page_capability(
+    env_alice_bob_agent: tuple[httpx.AsyncClient, OctopServer, dict[str, str], dict[str, str], str],
+) -> None:
+    """`game.launch` is enforced on the server, not only in the page bridge."""
+    client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
+    app_id = await _create_app(srv, agent_id, "alice")
+
+    r = await client.post(
+        f"/api/apps/{app_id}/game-sessions",
+        headers=alice_auth,
+        json={"game_id": "duck"},
+    )
+    assert r.status_code == 403
+    assert r.json()["error"]["code"] == "APP_CAPABILITY_DENIED"
+
+    # With the capability granted, the next check is the configured game itself.
+    service = _service(srv)
+    service.set_capabilities(service.get(app_id), app_capabilities.ALL_CAPABILITIES)
+    r = await client.post(
+        f"/api/apps/{app_id}/game-sessions",
+        headers=alice_auth,
+        json={"game_id": "missing"},
+    )
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "APP_NOT_FOUND"
 
 
 async def test_external_game_session_and_result_flow(

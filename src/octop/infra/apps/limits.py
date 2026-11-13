@@ -20,6 +20,8 @@ MAX_CONCURRENT_LLM = 2
 MAX_LLM_PER_MINUTE = 30
 PUBLIC_CONCURRENCY = 20
 PUBLIC_PER_MINUTE = 120
+CSP_VIOLATION_CONCURRENCY = 5
+MAX_CSP_VIOLATIONS_PER_MINUTE = 30
 WINDOW_SECONDS = 60.0
 
 
@@ -36,6 +38,7 @@ class _Window:
 
 _APP_WINDOWS: dict[str, _Window] = {}
 _PUBLIC_WINDOWS: dict[str, _Window] = {}
+_CSP_WINDOWS: dict[str, _Window] = {}
 
 
 def _enter(window: _Window, *, concurrency: int, per_minute: int, metric: str) -> None:
@@ -99,18 +102,42 @@ async def public_slot(key: str) -> AsyncIterator[None]:
         _leave(window)
 
 
+@asynccontextmanager
+async def csp_violation_slot(key: str) -> AsyncIterator[None]:
+    """Hold a slot for one app/user's CSP violation reports.
+
+    Violations are telemetry, not work: the limit keeps a misbehaving (or
+    malicious) page from filling the audit log.
+    """
+    window = _CSP_WINDOWS.setdefault(key, _Window())
+    _enter(
+        window,
+        concurrency=CSP_VIOLATION_CONCURRENCY,
+        per_minute=MAX_CSP_VIOLATIONS_PER_MINUTE,
+        metric="light_app_csp_violation_rejected_total",
+    )
+    try:
+        yield
+    finally:
+        _leave(window)
+
+
 def reset_for_tests() -> None:
     _APP_WINDOWS.clear()
     _PUBLIC_WINDOWS.clear()
+    _CSP_WINDOWS.clear()
 
 
 __all__ = [
+    "CSP_VIOLATION_CONCURRENCY",
     "MAX_CONCURRENT_LLM",
+    "MAX_CSP_VIOLATIONS_PER_MINUTE",
     "MAX_LLM_PER_MINUTE",
     "PUBLIC_CONCURRENCY",
     "PUBLIC_PER_MINUTE",
     "acquire_app_llm",
     "app_llm_slot",
+    "csp_violation_slot",
     "public_slot",
     "release_app_llm",
     "reset_for_tests",

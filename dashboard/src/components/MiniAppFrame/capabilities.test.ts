@@ -18,8 +18,15 @@ describe("MiniApp capabilities", () => {
     expect(isMethodAllowed("composeMessage", [CAP.DATA_READ])).toBe(false);
   });
 
-  it("leaves untracked methods to the bridge switch", () => {
+  it("always allows the page to ask about itself", () => {
     expect(isMethodAllowed("me", [])).toBe(true);
-    expect(isMethodAllowed("unknownMethod", [])).toBe(true);
+  });
+
+  it("denies methods it does not know", () => {
+    // A method with no capability requirement must not be allowed by
+    // default: every method added later would be open until it is mapped.
+    expect(isMethodAllowed("unknownMethod", [])).toBe(false);
+    expect(isMethodAllowed("unknownMethod", undefined)).toBe(false);
+    expect(isMethodAllowed(undefined, [CAP.DATA_READ])).toBe(false);
   });
 });
