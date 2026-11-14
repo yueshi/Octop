@@ -233,7 +233,8 @@ class BoardService:
         for item in layout["items"]:
             app = self._app_repo.get(item["app_id"])
             accessible = app is not None and (
-                app.owner_user_id == row.owner_user_id
+                is_admin
+                or app.owner_user_id == row.owner_user_id
                 or self._app_repo.permission_for(app.app_id, row.owner_user_id) is not None
             )
             if not accessible:

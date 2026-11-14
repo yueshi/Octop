@@ -38,6 +38,7 @@ _DOCKER_CE_SOURCES = (
 )
 _OFFICIAL_SOURCE = "https://download.docker.com"
 _TENCENT_MIRROR_HOST = "mirror.ccs.tencentyun.com"
+_TENCENT_MIRROR_PORT = 443
 _TENCENT_MIRROR_URL = f"https://{_TENCENT_MIRROR_HOST}/"
 _DAEMON_JSON = Path("/etc/docker/daemon.json")
 
@@ -193,7 +194,8 @@ async def _probe_tencent_mirror() -> bool:
     """Plain TCP reachability check for the Tencent Cloud registry mirror."""
     try:
         _, writer = await asyncio.wait_for(
-            asyncio.open_connection(_TENCENT_MIRROR_HOST, 443), timeout=_PROBE_TIMEOUT
+            asyncio.open_connection(_TENCENT_MIRROR_HOST, _TENCENT_MIRROR_PORT),
+            timeout=_PROBE_TIMEOUT,
         )
     except (TimeoutError, OSError):
         return False

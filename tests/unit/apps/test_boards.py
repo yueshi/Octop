@@ -190,6 +190,26 @@ def test_set_layout_saves_and_bumps_version(service: BoardService, env: dict[str
     assert saved.layout["items"][0]["app_id"] == env["alice_app"]
 
 
+def test_admin_can_place_any_app_on_their_board(
+    service: BoardService, env: dict[str, object]
+) -> None:
+    view = service.create(user_id=env["admin"], name="Admin home")  # type: ignore[arg-type]
+
+    saved = service.set_layout(
+        view.board_id,
+        user_id=env["admin"],  # type: ignore[arg-type]
+        is_admin=True,
+        items=[_item(str(env["alice_app"])), _item(str(env["bob_app"]), x=4)],
+        expected_version=1,
+    )
+
+    assert saved.version == 2
+    assert {item["app_id"] for item in saved.layout["items"]} == {
+        env["alice_app"],
+        env["bob_app"],
+    }
+
+
 def test_set_layout_rejects_app_the_owner_cannot_access(
     service: BoardService, env: dict[str, object]
 ) -> None:
