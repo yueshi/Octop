@@ -151,7 +151,7 @@ describe("DesktopGrid", () => {
     expect(keys.size).toBeGreaterThan(4);
   });
 
-  it("requests fullscreen from the menu bar", () => {
+  it("plays the Agent OS boot before entering fullscreen from the menu bar", () => {
     const requestFullscreen = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(HTMLElement.prototype, "requestFullscreen", {
       configurable: true,
@@ -162,6 +162,10 @@ describe("DesktopGrid", () => {
     fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
 
     expect(requestFullscreen).toHaveBeenCalled();
+    expect(screen.getByTestId("desktop-boot")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(screen.queryByTestId("desktop-boot")).not.toBeInTheDocument();
   });
 
   it("auto-enters fullscreen and plays the 4.5-second 智管家 OS boot", () => {

@@ -1152,8 +1152,17 @@ export default function DesktopGrid({
     if (!root) return;
     if (document.fullscreenElement === root) {
       void document.exitFullscreen().catch(() => {});
-    } else {
-      void root.requestFullscreen().catch(() => {});
+      return;
+    }
+    // Play the Agent OS boot sequence as the transition into fullscreen.
+    // Request fullscreen in the same gesture (browsers reject delayed calls),
+    // so the animation covers the desktop until it finishes or is skipped.
+    setBooting(true);
+    try {
+      const request = root.requestFullscreen?.();
+      void request?.catch(() => {});
+    } catch {
+      // Safari / embedded browsers can reject; the boot sequence still runs.
     }
   }, []);
 
