@@ -248,7 +248,7 @@ def _host_page(token: str, app: PublicAppOut) -> str:
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_escape(app.name)}</title>
-<style>html,body{{margin:0;height:100%;background:#fff}}iframe{{border:0;width:100%;height:100%}}</style>
+<style>html,body{{margin:0;height:100%;background:#fff}}iframe{{border:0;width:100%;height:100%;display:block}}</style>
 </head><body>
 <iframe id="wrapper" sandbox="allow-scripts"></iframe>
 <script>

@@ -24,7 +24,12 @@ from pathlib import Path
 
 import pytest
 
-from octop.infra.apps.sandbox import WEBRTC_FREEZE, build_wrapper_doc
+from octop.infra.apps.sandbox import (
+    APP_CSP,
+    WEBRTC_FREEZE,
+    build_app_doc,
+    build_wrapper_doc,
+)
 
 
 def _frozen_app(body: str) -> str:
@@ -43,7 +48,10 @@ def _frozen_app(body: str) -> str:
 # The dashboard renders the app inside the wrapper; the public page does the
 # same through the server-rendered host. Both use the same structure.
 HOST_PAGE = """<!doctype html>
-<html><body>
+<html><head><style>
+html, body { margin: 0; height: 100%; }
+iframe { border: 0; width: 100%; height: 100%; display: block; }
+</style></head><body>
 <iframe id="wrapper" sandbox="allow-scripts"></iframe>
 <script>
 window.__messages = [];
@@ -459,6 +467,40 @@ def test_freeze_blocks_inner_html_frames(browser_path: str) -> None:
     probes = [m for m in messages if isinstance(m, dict) and m.get("type") == "frame-check2"]
     assert probes, messages
     assert probes[0]["out"] == {"html": "blocked", "write": "blocked"}, probes
+
+
+def test_app_csp_meta_does_not_block_its_own_frame(browser_path: str) -> None:
+    """An explicit frame-src in the app document makes Chrome skip its frame."""
+    from playwright.sync_api import sync_playwright
+
+    app_html = (
+        "<!doctype html><html><head><title>app</title></head><body>"
+        "<script>parent.postMessage({source:'octop-app',type:'csp-probe'},'*');</script>"
+        "</body></html>"
+    )
+    head = f'<meta http-equiv="Content-Security-Policy" content="{APP_CSP}">'
+    wrapper = build_wrapper_doc(build_app_doc(app_html, head))
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=browser_path)
+        try:
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.set_content(HOST_PAGE)
+            page.evaluate("(html) => window.__load(html)", wrapper)
+            page.wait_for_timeout(1000)
+            messages = page.evaluate("window.__messages")
+            rect = page.frames[1].evaluate(
+                "() => { const f = document.querySelector('iframe');"
+                " return f ? f.getBoundingClientRect().toJSON() : null; }"
+            )
+        finally:
+            browser.close()
+
+    kinds = [m.get("type") for m in messages if isinstance(m, dict)]
+    assert "csp-probe" in kinds, messages
+    assert rect is not None
+    assert rect["width"] >= 1200, rect
+    assert rect["height"] >= 800, rect
 
 
 def test_wrapper_escapes_a_script_tag_in_the_app() -> None:

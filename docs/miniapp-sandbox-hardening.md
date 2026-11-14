@@ -85,6 +85,10 @@ frame-src 'none'; object-src 'none'
 `location.href` / meta refresh 都走不出去。宿主页面自己的 `frame-src` 不受影响
 （它仍要加载 wrapper、游戏页等）。
 
+> 注意：`frame-src 'none'` **只放在 wrapper 的 CSP**，不要写进 App 文档自己的
+> CSP。Chrome 在 App 文档声明显式 `frame-src` 时会拒绝创建它的 srcdoc frame，
+> 表现为整页空白（`default-src 'none'` 的隐含限制仍然生效）。
+
 wrapper 同时负责双向转发消息：外层 frame 是 opaque origin，宿主无法直接访问
 inner frame 的 `contentWindow`，只能与 wrapper 通信。
 
@@ -184,7 +188,7 @@ Trusted Types 严格模式（`require-trusted-types-for 'script'; trusted-types 
 
 | 改动 | 原因 |
 |---|---|
-| `APP_CSP` 增加 `frame-src 'none'`、`object-src 'none'` | 禁止 App 嵌入嵌套 frame / 插件对象 |
+| `WRAPPER_CSP` 增加 `frame-src 'none'`；`APP_CSP` 增加 `object-src 'none'` | wrapper 负责禁止内层 frame 导航；App 文档**不写**显式 `frame-src`，否则 Chrome 会拒绝创建它自己的 srcdoc frame（实测空白页） |
 | 公开宿主页补 `event.source` 校验 | 旧实现任何窗口都能驱动只读桥 |
 | `isMethodAllowed` 对未知方法返回 `false` | 旧实现 fail-open；未来新增桥方法会默认放行 |
 | `find_external_refs` 增加 `meta refresh`、`location.href/assign/replace`、`window.open`、`RTCPeerConnection` | 把逃逸问题提前到写入阶段，给 Agent 明确修复提示（不是安全边界） |

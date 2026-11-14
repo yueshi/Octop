@@ -11,9 +11,12 @@ describe("APP_CSP", () => {
     expect(APP_CSP).toContain("base-uri 'none'");
   });
 
-  it("blocks nested frames and plugin objects", () => {
-    expect(APP_CSP).toContain("frame-src 'none'");
+  it("blocks plugin objects without an explicit frame-src", () => {
+    // An explicit frame-src in the app document makes Chrome skip creating the
+    // app's own srcdoc frame. `default-src 'none'` still implies no nested
+    // frames; the wrapper carries the explicit navigation ban.
     expect(APP_CSP).toContain("object-src 'none'");
+    expect(APP_CSP).not.toContain("frame-src");
   });
 });
 
@@ -32,6 +35,6 @@ describe("WRAPPER_CSP", () => {
     expect(WRAPPER_CSP).toContain("img-src data: blob:");
     expect(WRAPPER_CSP).toContain("font-src data:");
     expect(WRAPPER_CSP).toContain("media-src data: blob:");
-    expect(WRAPPER_CSP).toBe(APP_CSP);
+    expect(WRAPPER_CSP).toBe(`${APP_CSP}; frame-src 'none'`);
   });
 });

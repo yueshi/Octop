@@ -32,17 +32,22 @@ APP_CSP = (
     "default-src 'none'; script-src 'unsafe-inline'; "
     "style-src 'unsafe-inline'; img-src data: blob:; "
     "font-src data:; media-src data: blob:; connect-src 'none'; "
-    "base-uri 'none'; form-action 'none'; "
-    "frame-src 'none'; object-src 'none'"
+    "base-uri 'none'; form-action 'none'; object-src 'none'"
 )
-"""CSP for the app document itself."""
+"""CSP for the app document itself.
 
-WRAPPER_CSP = APP_CSP
+Do not add an explicit ``frame-src 'none'`` here: Chrome refuses to create the
+app's own srcdoc frame when the app document declares it, leaving a blank page.
+``default-src 'none'`` still implies no nested frames; the wrapper carries the
+explicit navigation ban.
+"""
+
+WRAPPER_CSP = APP_CSP + "; frame-src 'none'"
 """CSP for the wrapper document that hosts the app frame.
 
 A srcdoc child inherits its embedder's policy, so the wrapper must allow
 everything the app itself needs (data: images, fonts, media) in addition to
-denying navigation. `APP_CSP` already carries `frame-src 'none'`.
+denying navigation.
 """
 
 WEBRTC_FREEZE = r"""(function () {
@@ -282,6 +287,11 @@ def build_wrapper_doc(app_html: str) -> str:
 <html>
 <head>
 <meta http-equiv="Content-Security-Policy" content="{WRAPPER_CSP}">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body {{ margin: 0; padding: 0; height: 100%; background: #fff; }}
+  iframe {{ position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; }}
+</style>
 </head>
 <body>
 <script>{script}</script>

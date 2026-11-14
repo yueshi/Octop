@@ -34,7 +34,7 @@ def test_wrapper_keeps_the_inline_resource_allowances() -> None:
     assert "img-src data: blob:" in WRAPPER_CSP
     assert "font-src data:" in WRAPPER_CSP
     assert "media-src data: blob:" in WRAPPER_CSP
-    assert WRAPPER_CSP == APP_CSP
+    assert WRAPPER_CSP == APP_CSP + "; frame-src 'none'"
 
 
 def test_wrapper_runs_the_app_without_same_origin() -> None:
@@ -63,11 +63,23 @@ def test_wrapper_relays_both_directions() -> None:
     assert "event.source === parent" in doc
 
 
-def test_app_csp_blocks_remote_resources_and_frames() -> None:
+def test_app_csp_blocks_remote_resources_and_plugins() -> None:
     assert "connect-src 'none'" in APP_CSP
-    assert "frame-src 'none'" in APP_CSP
     assert "object-src 'none'" in APP_CSP
     assert "https:" not in APP_CSP
+    # An explicit frame-src in the app document makes Chrome skip creating the
+    # app's own srcdoc frame. The wrapper carries the navigation ban instead.
+    assert "frame-src" not in APP_CSP
+    assert "frame-src 'none'" in WRAPPER_CSP
+
+
+def test_wrapper_stretches_the_app_frame() -> None:
+    doc = build_wrapper_doc("<html></html>")
+    assert "position: fixed" in doc
+    assert "inset: 0" in doc
+    assert "width: 100%" in doc
+    assert "height: 100%" in doc
+    assert 'name="viewport"' in doc
 
 
 def test_webrtc_freeze_covers_the_rtc_and_frame_globals() -> None:
