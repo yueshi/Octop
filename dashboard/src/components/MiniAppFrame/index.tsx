@@ -11,6 +11,7 @@ import { buildSrcDoc, hasEmbeddedFrame } from "./sdk";
 import { buildWrapperDoc } from "./wrapper";
 import { attachBridge, type AppViolation, type BridgeParams } from "./bridge";
 import { effectiveCapabilities } from "./capabilities";
+import { fullscreenContainer } from "../../utils/overlayContainer";
 
 const { Text } = Typography;
 
@@ -26,6 +27,11 @@ interface Props {
   capabilities?: readonly string[];
   /** Fill the chat composer (never sends automatically). */
   onComposeMessage?: (text: string) => void | Promise<void>;
+  /**
+   * Host-side handler for `octopApp.openExternal`. Desktop mode uses this to
+   * open the URL in an in-desktop web window instead of a browser tab.
+   */
+  onOpenExternal?: (url: string) => void;
 }
 
 /**
@@ -45,6 +51,7 @@ export default function MiniAppFrame({
   onLaunchGame,
   capabilities,
   onComposeMessage,
+  onOpenExternal,
 }: Props) {
   const { t } = useTranslation();
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -218,12 +225,14 @@ export default function MiniAppFrame({
             // The app page runs sandboxed without popups, so the parent has
             // to open the link — after the user confirms the target domain.
             Modal.confirm({
+              getContainer: fullscreenContainer,
               title: t("apps.openExternalTitle"),
               content: url,
               okText: t("apps.openExternalConfirm"),
               cancelText: t("common.cancel"),
               onOk: () => {
-                window.open(url, "_blank", "noopener,noreferrer");
+                if (onOpenExternal) onOpenExternal(url);
+                else window.open(url, "_blank", "noopener,noreferrer");
               },
             });
             return { opened: true };
@@ -246,7 +255,15 @@ export default function MiniAppFrame({
       () => frameRef.current?.contentWindow ?? null,
     );
     return detach;
-  }, [appId, capabilities, onComposeMessage, onLaunchGame, reportViolation, t]);
+  }, [
+    appId,
+    capabilities,
+    onComposeMessage,
+    onLaunchGame,
+    onOpenExternal,
+    reportViolation,
+    t,
+  ]);
 
   const srcDoc = useMemo(() => {
     if (!html) return "";

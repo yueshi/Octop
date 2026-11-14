@@ -228,6 +228,17 @@ MiniApp 是 **Agent 交付物的着陆场**：Agent 用一组 `app_*` 工具创�
 - **指标**：`light_app_open_total`、`light_app_row_write_total`、`light_app_export_total`、`light_app_assistant_total`、`light_app_generate_total`、`light_app_public_view_total`、`light_app_csp_violation_total`、`light_app_sandbox_integrity_total`、`light_app_llm_rejected_total`、`light_app_public_rate_limited_total`。
 - **限流**：每进程；多 worker 是每 worker 一份预算，不是全局。
 
+### 2.12 桌面模式（AgentOS Shell）
+
+- 工作台顶部「看板 / 桌面」切换；进入桌面自动全屏并播放「智管家」启动动效。
+- 每个已启用专家都有独立桌面（即使还没有小程序）；「全部应用」是跨专家的全局小程序库，从它打开应用会跳到所属专家桌面。
+- 窗口统一由 `desktopWindows.ts` 的 Window Registry 描述（`app` / `chat` / `external` 的 id、最小尺寸、标题、图标与持久化规则）；窗口位置、大小、层级和最小化/最大化状态恢复到 `localStorage`。
+- Dock 2.0 汇总当前桌面的小程序、专家会话和外部网页窗口，显示运行/最小化状态，右键提供显示、最小化、关闭；末尾是「全部应用」启动器。
+- Mission Control（菜单栏按钮或 `F3`）一次展示所有专家桌面及打开的窗口，点击窗口会切回所属桌面并聚焦。
+- 智能体动态中心汇总运行中的专家、全部打开窗口和未处理的审批/安全提醒；桌宠会按专家状态显示空闲、工作、告警或离线。
+- 通知中心支持小程序审批、专家回复、任务、安全与定时任务等类型；当前由桌面会话产生审批/回复通知，其余类型供后续事件源接入。
+- 已打开窗口仍只通过 sandboxed MiniAppFrame、桌面会话或外链 webview 渲染，桌面 Shell 不新增任何后端权限。
+
 ---
 
 ## 3. 架构
@@ -469,6 +480,13 @@ App HTML 是 Agent 生成内容，按不可信代码处理：
 | `dashboard/src/pages/Apps/Detail.tsx` | 应用详情：界面/数据双 Tab、助手、分享、发布、能力、数据源、备份 |
 | `dashboard/src/pages/Apps/CreateMiniAppModal.tsx` | 创建弹窗：快速 / 模板 / 云端市场占位 |
 | `dashboard/src/pages/Apps/appBoard.ts` | 旧 localStorage Board 迁移与放置逻辑 |
+| `dashboard/src/pages/Apps/DesktopGrid.tsx` | AgentOS 桌面：专家工作空间、窗口管理、启动动效、桌宠 |
+| `dashboard/src/pages/Apps/desktopWindows.ts` | Window Registry、窗口工厂、会话恢复与标题解析 |
+| `dashboard/src/pages/Apps/DesktopDock.tsx` | Dock 2.0：运行窗口、全部应用、右键窗口操作 |
+| `dashboard/src/pages/Apps/DesktopMissionControl.tsx` | Mission Control：跨桌面窗口总览 |
+| `dashboard/src/pages/Apps/DesktopActivityCenter.tsx` | 智能体动态、打开窗口与待处理提醒 |
+| `dashboard/src/pages/Apps/DesktopChatWindow.tsx` | 桌面内专家会话窗口 |
+| `dashboard/src/pages/Apps/DesktopWebView.tsx` | 桌面内外链 web-view 窗口 |
 | `dashboard/src/components/MiniAppFrame/index.tsx` | 通用 MiniApp 宿主（聊天/侧栏） |
 | `.../wrapper.ts` | 双层 wrapper 文档 |
 | `.../bridge.ts` | 共享桥 + 能力检查 + 违规上报 |

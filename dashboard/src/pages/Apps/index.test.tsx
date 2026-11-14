@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { appsApi, type AppSummary } from "../../api/modules/apps";
@@ -90,6 +90,7 @@ vi.mock("../../hooks/useServerTimezone", () => ({
 }));
 vi.mock("../../context/AgentContext", () => ({
   useAgent: () => ({ agents: [], activeAgentId: null, loading: false }),
+  selectEnabledExperts: () => [],
 }));
 
 const app1: AppSummary = {
@@ -132,10 +133,13 @@ function savedBoard(items: BoardItem[], version = 2): BoardDetail {
   };
 }
 
-function renderPage() {
+function renderPage(initialEntry = "/apps/boards/board_1") {
   return render(
-    <MemoryRouter>
-      <AppsPage />
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <Routes>
+        <Route path="/apps" element={<AppsPage />} />
+        <Route path="/apps/boards/:boardId" element={<AppsPage />} />
+      </Routes>
     </MemoryRouter>,
   );
 }
@@ -159,6 +163,57 @@ beforeEach(() => {
 });
 
 describe("workbench board", () => {
+  it("lands on the board gallery and opens a board card", async () => {
+    renderPage("/apps");
+
+    expect(await screen.findByTestId("board-gallery")).toBeInTheDocument();
+    const cards = await screen.findAllByTestId("board-gallery-card");
+    expect(cards).toHaveLength(1);
+    expect(screen.getByText("我的看板")).toBeInTheDocument();
+
+    fireEvent.click(cards[0]);
+
+    expect(await screen.findByText(/看板上还没有小程序/)).toBeInTheDocument();
+  });
+
+  it("shows every board as a card thumbnail", async () => {
+    vi.mocked(boardsApi.list).mockResolvedValue([
+      board,
+      { ...board, board_id: "board_2", name: "运营看板" },
+    ]);
+    renderPage("/apps");
+
+    expect(await screen.findAllByTestId("board-gallery-card")).toHaveLength(2);
+    expect(screen.getByText("运营看板")).toBeInTheDocument();
+    await waitFor(() => expect(boardsApi.get).toHaveBeenCalledWith("board_2"));
+  });
+
+  it("draws the board's real layout inside its card thumbnail", async () => {
+    vi.mocked(boardsApi.get).mockResolvedValue(
+      savedBoard([{ app_id: "app_1", x: 0, y: 0, w: 4, h: 4 }], 2),
+    );
+    renderPage("/apps");
+
+    expect(await screen.findByTitle("客户跟进台账")).toBeInTheDocument();
+  });
+
+  it("defaults to board mode even when desktop mode was stored", async () => {
+    localStorage.setItem("octop:apps-view-mode:v1", "desktop");
+    renderPage("/apps");
+
+    expect(await screen.findByTestId("board-gallery")).toBeInTheDocument();
+    expect(screen.queryByTestId("desktop-root")).not.toBeInTheDocument();
+  });
+
+  it("returns to the gallery from a board", async () => {
+    renderPage();
+    await screen.findByText(/看板上还没有小程序/);
+
+    fireEvent.click(screen.getByRole("button", { name: "全部看板" }));
+
+    expect(await screen.findByTestId("board-gallery")).toBeInTheDocument();
+  });
+
   it("loads the selected board and lists every MiniApp", async () => {
     renderPage();
     expect(await screen.findByText("工作台")).toBeInTheDocument();
@@ -173,8 +228,24 @@ describe("workbench board", () => {
     expect(screen.queryByTestId("mini-app-frame")).not.toBeInTheDocument();
   });
 
-  it("keeps the board when arriving with a stored active board", async () => {
-    localStorage.setItem("octop:apps-active-board:v1", "board_1");
+  it("switches to desktop mode and shows every MiniApp", async () => {
+    renderPage();
+    await screen.findByText("工作台");
+    await waitFor(() => expect(appsApi.list).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("桌面"));
+
+    expect(await screen.findByTestId("desktop-root")).toBeInTheDocument();
+    expect(screen.getAllByTestId("desktop-icon")).toHaveLength(2);
+    expect(screen.getByText("客户跟进台账")).toBeInTheDocument();
+    expect(screen.getByText("本月业绩看板")).toBeInTheDocument();
+    expect(screen.queryByText(/看板上还没有小程序/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("看板"));
+    expect(await screen.findByText(/看板上还没有小程序/)).toBeInTheDocument();
+  });
+
+  it("loads a board directly from its URL before the catalog resolves", async () => {
     const pinned = savedBoard([{ app_id: "app_1", x: 0, y: 0, w: 4, h: 4 }], 1);
     vi.mocked(boardsApi.get).mockResolvedValue(pinned);
     let releaseApps!: () => void;
@@ -354,7 +425,7 @@ describe("workbench board", () => {
     vi.mocked(boardsApi.setLayout).mockResolvedValue(migrated);
     vi.mocked(boardsApi.get).mockResolvedValue(migrated);
 
-    renderPage();
+    renderPage("/apps");
 
     await waitFor(() =>
       expect(boardsApi.create).toHaveBeenCalledWith({ name: "我的看板" }),

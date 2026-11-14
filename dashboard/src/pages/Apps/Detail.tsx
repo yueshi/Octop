@@ -77,6 +77,7 @@ import {
 } from "../../api/modules/connectors";
 import PageShell, { pageShellStyles } from "../../layouts/PageShell";
 import Markdown from "../../components/Markdown";
+import { fullscreenContainer } from "../../utils/overlayContainer";
 import { apiErrorMessage, isNotFoundApiError } from "../../utils/apiError";
 import { formatBytes } from "../../utils/formatBytes";
 import { formatServerDateTime } from "../../utils/formatMessageTime";
@@ -580,6 +581,7 @@ export default function AppDetailPage() {
             // The app page runs sandboxed without popups, so the parent has
             // to open the link — after the user confirms the target domain.
             Modal.confirm({
+              getContainer: fullscreenContainer,
               title: t("apps.openExternalTitle"),
               content: url,
               okText: t("apps.openExternalConfirm"),

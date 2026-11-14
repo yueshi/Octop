@@ -13,6 +13,7 @@ import {
   Form,
   Input,
   Modal,
+  Segmented,
   Select,
   Space,
   Spin,
@@ -25,6 +26,7 @@ import type { UploadFile } from "antd";
 import {
   AppWindow,
   Bot,
+  ChevronLeft,
   Clock,
   Grid2x2,
   LayoutGrid,
@@ -38,8 +40,9 @@ import {
 } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { message } from "../../utils/antdMessage";
+import { fullscreenContainer } from "../../utils/overlayContainer";
 
 import {
   appsApi,
@@ -54,7 +57,9 @@ import {
 } from "../../api/modules/boards";
 import PageShell from "../../layouts/PageShell";
 import CreateMiniAppModal from "./CreateMiniAppModal";
+import BoardGallery from "./BoardGallery";
 import BoardGrid from "./BoardGrid";
+import DesktopGrid from "./DesktopGrid";
 import {
   addBoardItem,
   autoArrangeBoardLayout,
@@ -75,7 +80,7 @@ import { useAgent } from "../../context/AgentContext";
 import styles from "./index.module.less";
 
 const { Text } = Typography;
-const ACTIVE_BOARD_KEY = "octop:apps-active-board:v1";
+type ViewMode = "board" | "desktop";
 
 type BoardDialog = { mode: "create" } | { mode: "rename"; board: BoardSummary };
 
@@ -168,6 +173,7 @@ function MetaItem({
 export default function AppsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const { boardId: routeBoardId } = useParams();
   const timeZone = useServerTimezone();
   const { agents } = useAgent();
@@ -176,22 +182,33 @@ export default function AppsPage() {
   const [appsLoading, setAppsLoading] = useState(true);
   const [boards, setBoards] = useState<BoardSummary[]>([]);
   const [boardsLoading, setBoardsLoading] = useState(true);
-  const [activeId, setActiveId] = useState<string | null>(() => {
-    if (routeBoardId) return routeBoardId;
-    try {
-      return localStorage.getItem(ACTIVE_BOARD_KEY);
-    } catch {
-      return null;
-    }
-  });
+  const [activeId, setActiveId] = useState<string | null>(routeBoardId ?? null);
   const [board, setBoard] = useState<BoardDetail | null>(null);
   const [items, setItems] = useState<BoardItem[]>([]);
   const [detailLoading, setDetailLoading] = useState<boolean>(
-    activeId !== null,
+    Boolean(routeBoardId),
   );
   const [bootReady, setBootReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [undoDepth, setUndoDepth] = useState(0);
+  const [boardPreviews, setBoardPreviews] = useState<
+    Record<string, BoardDetail>
+  >({});
+  const [viewMode, setViewMode] = useState<ViewMode>("board");
+  const [autoFullscreen, setAutoFullscreen] = useState(false);
+  const changeViewMode = useCallback((next: ViewMode) => {
+    if (next === "desktop") setAutoFullscreen(true);
+    setViewMode(next);
+  }, []);
+
+  // The Workbench nav always lands on the board gallery (never the desktop or
+  // the last board). A new location key also covers clicking the active nav
+  // item while already on /apps; a board URL is always a board view.
+  useEffect(() => {
+    if (location.pathname !== "/apps" && !routeBoardId) return;
+    setViewMode("board");
+    setAutoFullscreen(false);
+  }, [location.key, location.pathname, routeBoardId]);
 
   const boardRef = useRef<BoardDetail | null>(null);
   const itemsRef = useRef<BoardItem[]>([]);
@@ -225,6 +242,7 @@ export default function AppsPage() {
     setBoard(clean);
     itemsRef.current = items;
     setItems(items);
+    setBoardPreviews((prev) => ({ ...prev, [detail.board_id]: clean }));
     setBoards((prev) =>
       prev.map((item) =>
         item.board_id === detail.board_id ? { ...detail } : item,
@@ -349,11 +367,8 @@ export default function AppsPage() {
         }
         if (!alive) return;
         setBoards(list);
-        setActiveId((prev) => {
-          const remembered = list.find((item) => item.board_id === prev);
-          return remembered?.board_id ?? list[0]?.board_id ?? null;
-        });
-        setDetailLoading(list.length > 0);
+        // Landing on /apps shows the gallery; only an explicit board route
+        // (or a card click) selects a board.
       } catch (err) {
         if (alive) {
           message.error(apiErrorMessage(err, t("apps.loadFailed"), t));
@@ -371,35 +386,72 @@ export default function AppsPage() {
     };
   }, [t]);
 
-  useEffect(() => {
-    try {
-      if (activeId) localStorage.setItem(ACTIVE_BOARD_KEY, activeId);
-      else localStorage.removeItem(ACTIVE_BOARD_KEY);
-    } catch {
-      /* storage may be unavailable */
-    }
-  }, [activeId]);
-
   // Each board has a stable URL so multiple tabs (or a shared link) can open
-  // different boards side by side.
+  // different boards side by side. /apps itself is the gallery.
   useEffect(() => {
-    if (routeBoardId && routeBoardId !== activeId) setActiveId(routeBoardId);
+    if (routeBoardId) {
+      if (routeBoardId !== activeId) setActiveId(routeBoardId);
+      return;
+    }
+    if (activeId !== null) {
+      setActiveId(null);
+      boardRef.current = null;
+      setBoard(null);
+      setItems([]);
+      setDetailLoading(false);
+    }
   }, [routeBoardId, activeId]);
 
   const selectBoard = useCallback(
     (value: string) => {
       setActiveId(value);
-      navigate(`/apps/boards/${encodeURIComponent(value)}`, { replace: true });
+      navigate(`/apps/boards/${encodeURIComponent(value)}`);
     },
     [navigate],
   );
+
+  const openBoardGallery = useCallback(() => {
+    navigate("/apps");
+  }, [navigate]);
+
+  const galleryVisible = viewMode === "board" && !routeBoardId;
+  const boardDetailVisible = viewMode === "board" && Boolean(routeBoardId);
+
+  // Gallery thumbnails need each board's real layout. Fetch them lazily once
+  // the gallery is visible; failures leave a plain empty canvas on the card.
+  useEffect(() => {
+    if (!bootReady || !galleryVisible) return;
+    const pending = boards.filter((item) => !boardPreviews[item.board_id]);
+    if (pending.length === 0) return;
+    let alive = true;
+    void Promise.all(
+      pending.map(async (item) => {
+        try {
+          return [item.board_id, await boardsApi.get(item.board_id)] as const;
+        } catch {
+          return null;
+        }
+      }),
+    ).then((entries) => {
+      if (!alive) return;
+      const loaded: Record<string, BoardDetail> = {};
+      for (const entry of entries) {
+        if (entry) loaded[entry[0]] = entry[1];
+      }
+      if (Object.keys(loaded).length > 0) {
+        setBoardPreviews((prev) => ({ ...prev, ...loaded }));
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [boardPreviews, boards, bootReady, galleryVisible]);
 
   // Load the selected board. A board just created is already in `boardRef`,
   // so skip the redundant fetch.
   useEffect(() => {
     // Wait for the catalog first: applyBoard drops cells whose app is not
-    // loaded yet, and navigating from another page can restore an active
-    // board id from localStorage before the app list arrives.
+    // loaded yet, and a board URL can resolve before the app list arrives.
     if (!bootReady) return;
     pendingRef.current = null;
     historyRef.current = [];
@@ -584,11 +636,13 @@ export default function AppsPage() {
           description: (values.description ?? "").trim(),
         });
         setBoards((prev) => [created, ...prev]);
+        setBoardPreviews((prev) => ({
+          ...prev,
+          [created.board_id]: created,
+        }));
         setActiveId(created.board_id);
         applyBoard(created);
-        navigate(`/apps/boards/${encodeURIComponent(created.board_id)}`, {
-          replace: true,
-        });
+        navigate(`/apps/boards/${encodeURIComponent(created.board_id)}`);
       } else {
         const updated = await boardsApi.update(dialog.board.board_id, {
           name: values.name.trim(),
@@ -614,6 +668,7 @@ export default function AppsPage() {
     const current = boardRef.current;
     if (!current) return;
     Modal.confirm({
+      getContainer: fullscreenContainer,
       title: t("apps.board.delete", "Delete board"),
       content: t(
         "apps.board.deleteConfirm",
@@ -630,6 +685,11 @@ export default function AppsPage() {
             (item) => item.board_id !== current.board_id,
           );
           setBoards(rest);
+          setBoardPreviews((prev) => {
+            const next = { ...prev };
+            delete next[current.board_id];
+            return next;
+          });
           const nextId =
             activeId === current.board_id
               ? rest[0]?.board_id ?? null
@@ -716,7 +776,8 @@ export default function AppsPage() {
     },
   };
 
-  const loading = appsLoading || boardsLoading;
+  const loading =
+    appsLoading || (viewMode === "board" && boardsLoading && !galleryVisible);
   const pinned = new Set(items.map((item) => item.app_id));
 
   return (
@@ -727,7 +788,30 @@ export default function AppsPage() {
       subtitle={t("apps.subtitle", "MiniApps built by your agents")}
       actions={
         <Space wrap>
-          {boards.length > 0 && (
+          <Segmented
+            value={viewMode}
+            onChange={(value) => changeViewMode(value as ViewMode)}
+            options={[
+              {
+                label: t("apps.viewMode.board", "Board"),
+                value: "board",
+              },
+              {
+                label: t("apps.viewMode.desktop", "Desktop"),
+                value: "desktop",
+              },
+            ]}
+          />
+          {boardDetailVisible && (
+            <Tooltip title={t("apps.board.allBoards", "All boards")}>
+              <Button
+                aria-label={t("apps.board.allBoards", "All boards")}
+                icon={<ChevronLeft size={16} />}
+                onClick={openBoardGallery}
+              />
+            </Tooltip>
+          )}
+          {viewMode === "board" && boardDetailVisible && boards.length > 0 && (
             <Select
               aria-label={t("apps.board.select", "Select board")}
               value={activeId ?? undefined}
@@ -739,64 +823,79 @@ export default function AppsPage() {
               onChange={selectBoard}
             />
           )}
-          <Tooltip title={t("apps.board.new", "New board")}>
+          {viewMode === "board" && (
+            <Tooltip title={t("apps.board.new", "New board")}>
+              <Button
+                aria-label={t("apps.board.new", "New board")}
+                icon={<Plus size={16} />}
+                onClick={openCreateBoard}
+              />
+            </Tooltip>
+          )}
+          {viewMode === "board" && boardDetailVisible && (
+            <Dropdown menu={boardMenu} trigger={["click"]}>
+              <Button
+                aria-label={t("apps.board.menu", "Board actions")}
+                icon={<MoreHorizontal size={16} />}
+              />
+            </Dropdown>
+          )}
+          {viewMode === "board" && boardDetailVisible && (
             <Button
-              aria-label={t("apps.board.new", "New board")}
-              icon={<Plus size={16} />}
-              onClick={openCreateBoard}
-            />
-          </Tooltip>
-          <Dropdown menu={boardMenu} trigger={["click"]}>
-            <Button
-              aria-label={t("apps.board.menu", "Board actions")}
-              icon={<MoreHorizontal size={16} />}
-            />
-          </Dropdown>
-          <Button
-            icon={<LayoutGrid size={16} />}
-            onClick={() => setCatalogOpen(true)}
-          >
-            {t("apps.all.title", "All MiniApps")}
-          </Button>
+              icon={<LayoutGrid size={16} />}
+              onClick={() => setCatalogOpen(true)}
+            >
+              {t("apps.all.title", "All MiniApps")}
+            </Button>
+          )}
           <Button type="primary" onClick={() => setCreateOpen(true)}>
             {t("apps.create.button", "Create")}
           </Button>
-          <Tooltip
-            title={t(
-              "apps.board.arrangeHint",
-              "Pack cells at their current sizes; undo from the toolbar",
-            )}
-          >
-            <Button
-              icon={<Grid2x2 size={16} />}
-              disabled={items.length === 0}
-              onClick={arrangeBoard}
-            >
-              {t("apps.board.arrange", "Auto-arrange")}
-            </Button>
-          </Tooltip>
-          <Tooltip title={t("apps.board.undo", "Undo the last layout change")}>
-            <Button
-              aria-label={t("apps.board.undo", "Undo the last layout change")}
-              icon={<Undo2 size={16} />}
-              disabled={undoDepth === 0}
-              onClick={undoLayout}
-            />
-          </Tooltip>
-          {saving && (
-            <Text className={styles.savingHint}>
-              {t("apps.board.saving", "Saving…")}
-            </Text>
+          {viewMode === "board" && boardDetailVisible && (
+            <>
+              <Tooltip
+                title={t(
+                  "apps.board.arrangeHint",
+                  "Pack cells at their current sizes; undo from the toolbar",
+                )}
+              >
+                <Button
+                  icon={<Grid2x2 size={16} />}
+                  disabled={items.length === 0}
+                  onClick={arrangeBoard}
+                >
+                  {t("apps.board.arrange", "Auto-arrange")}
+                </Button>
+              </Tooltip>
+              <Tooltip
+                title={t("apps.board.undo", "Undo the last layout change")}
+              >
+                <Button
+                  aria-label={t(
+                    "apps.board.undo",
+                    "Undo the last layout change",
+                  )}
+                  icon={<Undo2 size={16} />}
+                  disabled={undoDepth === 0}
+                  onClick={undoLayout}
+                />
+              </Tooltip>
+              {saving && (
+                <Text className={styles.savingHint}>
+                  {t("apps.board.saving", "Saving…")}
+                </Text>
+              )}
+              <Tooltip title={t("apps.board.presentHint", "Open in a new tab")}>
+                <Button
+                  icon={<Maximize2 size={16} />}
+                  disabled={items.length === 0}
+                  onClick={openPresent}
+                >
+                  {t("apps.board.present", "Present")}
+                </Button>
+              </Tooltip>
+            </>
           )}
-          <Tooltip title={t("apps.board.presentHint", "Open in a new tab")}>
-            <Button
-              icon={<Maximize2 size={16} />}
-              disabled={items.length === 0}
-              onClick={openPresent}
-            >
-              {t("apps.board.present", "Present")}
-            </Button>
-          </Tooltip>
         </Space>
       }
     >
@@ -804,6 +903,18 @@ export default function AppsPage() {
         <div className={styles.boardState}>
           <Spin />
         </div>
+      ) : viewMode === "desktop" ? (
+        <DesktopGrid apps={apps} autoFullscreen={autoFullscreen} />
+      ) : galleryVisible ? (
+        <BoardGallery
+          boards={boards}
+          apps={apps}
+          previews={boardPreviews}
+          loading={boardsLoading}
+          timeZone={timeZone}
+          onOpen={selectBoard}
+          onCreate={openCreateBoard}
+        />
       ) : apps.length === 0 ? (
         <div className={styles.boardState}>
           <Empty
