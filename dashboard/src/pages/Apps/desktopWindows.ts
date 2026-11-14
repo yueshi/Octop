@@ -100,6 +100,7 @@ export const WINDOW_REGISTRY: Record<DesktopWindowKind, DesktopWindowKindSpec> =
   };
 
 export const MENU_BAR_HEIGHT = 38;
+/** Default gap above the visible dock surface before it is measured. */
 export const DOCK_SPACE = 80;
 
 export const WINDOWS_STORE_KEY = "octop:apps-desktop-windows:v1";
@@ -163,6 +164,8 @@ export interface NewDesktopWindowInput extends DesktopWindowIdentity {
   appSpace: ReadonlyMap<string, string>;
   viewportWidth: number;
   viewportHeight: number;
+  /** Pixels reserved at the bottom for the dock (measured by the desktop). */
+  bottomInset?: number;
 }
 
 /**
@@ -177,6 +180,11 @@ export function createDesktopWindow(
   if (!id) return null;
   const maxW = input.viewportWidth || 1280;
   const maxH = input.viewportHeight || 800;
+  const bottomInset = input.bottomInset ?? DOCK_SPACE;
+  const maxWindowH = Math.max(
+    spec.minHeight,
+    maxH - MENU_BAR_HEIGHT - 8 - bottomInset,
+  );
   const peers = input.list.filter(
     (win) => windowSpaceId(win, input.appSpace) === input.spaceId,
   ).length;
@@ -188,17 +196,17 @@ export function createDesktopWindow(
   let y: number;
   if (input.kind === "chat") {
     width = Math.max(spec.minWidth, Math.min(920, maxW - 56));
-    height = Math.max(spec.minHeight, Math.min(680, maxH - 140));
+    height = Math.max(spec.minHeight, Math.min(680, maxWindowH));
     x = Math.round((maxW - width) / 2) + cascade * 20;
     y = 48 + cascade * 20;
   } else if (input.kind === "external") {
     width = Math.max(spec.minWidth, Math.min(430, maxW - 64));
-    height = Math.max(spec.minHeight, Math.min(780, maxH - 130));
+    height = Math.max(spec.minHeight, Math.min(780, maxWindowH));
     x = Math.round((maxW - width) / 2) + cascade * 22;
     y = 44 + cascade * 22;
   } else {
     width = Math.max(spec.minWidth, Math.min(760, maxW - 40));
-    height = Math.max(spec.minHeight, Math.min(560, maxH - 140));
+    height = Math.max(spec.minHeight, Math.min(560, maxWindowH));
     x = 64 + cascade * 28;
     y = 56 + cascade * 24;
   }
@@ -217,7 +225,7 @@ export function createDesktopWindow(
     contextAppId: input.contextAppId,
     seed: input.seed,
     x: Math.max(8, Math.min(maxW - width - 8, x)),
-    y: Math.max(MENU_BAR_HEIGHT + 8, Math.min(maxH - height - DOCK_SPACE, y)),
+    y: Math.max(MENU_BAR_HEIGHT + 8, Math.min(maxH - bottomInset - height, y)),
     w: width,
     h: height,
     z: input.z,

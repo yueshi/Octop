@@ -1,6 +1,6 @@
 # MiniApp 功能与架构现状
 
-> 快照：2026-11-13，分支 `feature/miniapp-capabilities`，HEAD `3ced4a2c`，schema **v30**。
+> 快照：2026-11-14，分支 `feature/miniapp-capabilities`，schema **v30**。
 >
 > 口径：**以当前代码与测试为准**。仓库里多份 `light-apps-*` / `miniapp-*` 文档是不同阶段的设计稿，只保留动机与历史记录，并在文首指向本文；本文把已落地的事实和明确未落地的部分分开写。
 >
@@ -205,7 +205,9 @@ MiniApp 是 **Agent 交付物的着陆场**：Agent 用一组 `app_*` 工具创�
 
 - 每个用户多个 Board；独立 URL `/apps/boards/{board_id}` 与全屏 `/apps/boards/{board_id}/view`。
 - 12 列网格；每个单元格 `{app_id,x,y,w,h,locked}`；最多 24 个应用。
-- 拖拽/缩放、锁定、撤销、自动排列、全屏；布局保存带 CAS 版本，冲突提示并重载。
+- 拖拽/缩放、锁定、撤销、自动排列；展示页可全屏并隐藏顶部工具栏，按 ESC 退出。
+- 布局保存带 CAS 版本，冲突提示并重载。
+- 管理员可在自己的 Board 放置任意应用；普通用户只能放自己可访问的应用。
 - 首次加载把旧 `localStorage` 单 Board 无损迁移为默认 Board。
 - **仅个人看板**：没有 `share_token_hash`，没有公开看板接口。
 
@@ -233,6 +235,9 @@ MiniApp 是 **Agent 交付物的着陆场**：Agent 用一组 `app_*` 工具创�
 - 工作台顶部「看板 / 桌面」切换；进入桌面自动全屏并播放「智管家」启动动效。
 - 每个已启用专家都有独立桌面（即使还没有小程序）；「全部应用」是跨专家的全局小程序库，从它打开应用会跳到所属专家桌面。
 - 窗口统一由 `desktopWindows.ts` 的 Window Registry 描述（`app` / `chat` / `external` 的 id、最小尺寸、标题、图标与持久化规则）；窗口位置、大小、层级和最小化/最大化状态恢复到 `localStorage`。
+- 窗口拖动用合成层 `transform` 预览、缩放时保持内容起始尺寸做视觉缩放，松手一次性提交，避免 iframe 每帧重排和边缘白线。
+- Dock 高度按实际渲染测量后避让，窗口最大化与放置都不会压住 Dock；Dock 最多展示 10 个小程序，其余从「全部应用」进入。
+- 窗口内容层按圆角裁剪，MiniApp wrapper 与 iframe 背景透明，深色桌面下不再露出白边。
 - Dock 2.0 汇总当前桌面的小程序、专家会话和外部网页窗口，显示运行/最小化状态，右键提供显示、最小化、关闭；末尾是「全部应用」启动器。
 - Mission Control（菜单栏按钮或 `F3`）一次展示所有专家桌面及打开的窗口，点击窗口会切回所属桌面并聚焦。
 - 智能体动态中心汇总运行中的专家、全部打开窗口和未处理的审批/安全提醒；桌宠会按专家状态显示空闲、工作、告警或离线。
@@ -455,6 +460,7 @@ App HTML 是 Agent 生成内容，按不可信代码处理：
 1. **写入时**：`validate_html` 拒绝远程资源、网络 API、导航 API、frame/object/embed、WebRTC、`javascript:` URL；已有旧应用若静态含 frame，渲染时直接显示安全错误页。
 2. **渲染时**：
    - 外层固定 wrapper 文档由 Octop 自己编写，声明 `frame-src 'none'`；App 在 wrapper 的 inner iframe 中，opaque origin。
+   - App 文档自身不写显式 `frame-src`：Chrome 会因此拒绝创建它自己的 srcdoc frame（表现为整页空白）；`default-src 'none'` 仍隐含禁止嵌套 frame。
    - wrapper 负责双向转发；第二次 `load` 视为导航逃逸，移除 inner frame 并向宿主发 `escaped`。
    - App 脚本之前注入 `WEBRTC_FREEZE`：RTC 全局不可配置 `undefined`；封堵 frame 创建 API；MutationObserver 兜底。
    - SDK 每次桥请求前自检 RTC/frame 不变量，失败拒绝请求并上报。

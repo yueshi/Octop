@@ -6,13 +6,16 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import {
   Alert,
+  App,
   Button,
   Checkbox,
   Descriptions,
   Drawer,
+  Dropdown,
   Empty,
   Form,
   Input,
@@ -29,10 +32,11 @@ import {
   Typography,
   Upload,
 } from "antd";
-import type { UploadFile } from "antd";
+import type { MenuProps, UploadFile } from "antd";
 import {
   AlignCenterHorizontal,
   ArrowLeft,
+  ChevronDown,
   ChevronsLeft,
   ChevronsRight,
   Download,
@@ -42,6 +46,7 @@ import {
   Info,
   Link2,
   MessageSquareText,
+  MoreHorizontal,
   Plus,
   RefreshCw,
   Share2,
@@ -82,6 +87,8 @@ import { apiErrorMessage, isNotFoundApiError } from "../../utils/apiError";
 import { formatBytes } from "../../utils/formatBytes";
 import { formatServerDateTime } from "../../utils/formatMessageTime";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
+import { useIsMobile } from "../../hooks/useIsMobile";
+import { useCurrentUser } from "../../hooks/useCurrentUser";
 import GameFrame, {
   MINIAPP_GAME_FINISHED_EVENT,
   type MiniAppGameFinishedDetail,
@@ -114,10 +121,40 @@ const assistantMaxWidth = () =>
 function permissionLabel(
   permission: AppDetail["permission"],
   t: (key: string) => string,
+  isOwner?: boolean,
 ): string {
-  if (permission === "edit_structure") return t("apps.editStructure");
+  if (permission === "edit_structure") {
+    return isOwner === false
+      ? t("apps.permissionAdmin")
+      : t("apps.editStructure");
+  }
   if (permission === "edit_data") return t("apps.editData");
   return t("apps.viewOnly");
+}
+
+/** One titled block in the details drawer; keeps section rhythm consistent. */
+function InfoSection({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section style={{ marginTop: 24 }}>
+      <Text strong>{title}</Text>
+      {hint ? (
+        <div style={{ marginTop: 4 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {hint}
+          </Text>
+        </div>
+      ) : null}
+      <div style={{ marginTop: 10 }}>{children}</div>
+    </section>
+  );
 }
 
 const SOURCE_COLUMN_WIDTH = 90;
@@ -261,6 +298,9 @@ export default function AppDetailPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { appId = "" } = useParams<{ appId: string }>();
+  const { modal } = App.useApp();
+  const isMobile = useIsMobile();
+  const currentUser = useCurrentUser();
   const timeZone = useServerTimezone();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const capabilitiesRef = useRef<readonly string[] | undefined>(undefined);
@@ -1268,6 +1308,30 @@ export default function AppDetailPage() {
     }
   };
 
+  const confirmRestoreHtml = () => {
+    modal.confirm({
+      title: t("apps.restoreHtmlTitle", "Restore the previous version?"),
+      content: t(
+        "apps.restoreHtmlConfirm",
+        "The current HTML will become the previous version.",
+      ),
+      okText: t("apps.restoreHtml", "Restore previous"),
+      cancelText: t("common.cancel"),
+      onOk: () => restoreHtml(),
+    });
+  };
+
+  const confirmDeleteApp = () => {
+    modal.confirm({
+      title: t("apps.deleteTitle"),
+      content: t("apps.deleteConfirm"),
+      okText: t("apps.delete"),
+      cancelText: t("common.cancel"),
+      okButtonProps: { danger: true },
+      onOk: () => removeApp(),
+    });
+  };
+
   if (loading) {
     return (
       <PageShell title={t("apps.title")}>
@@ -1290,85 +1354,122 @@ export default function AppDetailPage() {
 
   const canEditStructure = detail.permission === "edit_structure";
   const canEditData = detail.permission !== "view";
+  // `edit_structure` covers both the owner and admins; only the owner should
+  // see the permissions tag, while admins get an explicit label.
+  const isOwner = currentUser
+    ? detail.owner_username === currentUser.username
+    : undefined;
+  const permissionText = permissionLabel(detail.permission, t, isOwner);
+  const showPermissionTag =
+    detail.permission !== "edit_structure" || isOwner === false;
+
+  const sharePublishMenu: MenuProps = {
+    items: [
+      { key: "share", icon: <Share2 size={14} />, label: t("apps.share") },
+      {
+        key: "publish",
+        icon: <Link2 size={14} />,
+        label: t("apps.publishLink"),
+      },
+    ],
+    onClick: ({ key }) => {
+      if (key === "share") void openShare();
+      else if (key === "publish") void openPublish();
+    },
+  };
+
+  const moreMenu: MenuProps = {
+    items: [
+      { key: "rename", icon: <Edit3 size={14} />, label: t("apps.rename") },
+      ...(detail.previous_html_at
+        ? [
+            {
+              key: "restore",
+              icon: <History size={14} />,
+              label: t("apps.restoreHtml"),
+            },
+          ]
+        : []),
+      { type: "divider" as const },
+      {
+        key: "delete",
+        icon: <Trash2 size={14} />,
+        label: t("apps.delete"),
+        danger: true,
+      },
+    ],
+    onClick: ({ key }) => {
+      if (key === "rename") openRename();
+      else if (key === "restore") confirmRestoreHtml();
+      else if (key === "delete") confirmDeleteApp();
+    },
+  };
 
   return (
     <PageShell
       title={detail.name}
       subtitle={detail.description || undefined}
+      leading={
+        <Tooltip title={t("apps.back")}>
+          <Button
+            type="text"
+            icon={<ArrowLeft size={18} />}
+            aria-label={t("apps.back")}
+            onClick={() => navigate("/apps")}
+          />
+        </Tooltip>
+      }
+      titleSuffix={
+        showPermissionTag ? (
+          <Tag style={{ marginInlineEnd: 0 }}>{permissionText}</Tag>
+        ) : undefined
+      }
       fill
       actions={
-        <Space size={8}>
-          <Tag style={{ marginInlineEnd: 0 }}>
-            {permissionLabel(detail.permission, t)}
-          </Tag>
-          <Button
-            type="text"
-            icon={<Sparkles size={16} />}
-            onClick={() => void openAssistant()}
-          >
-            {t("apps.assistant")}
-          </Button>
-          <Button
-            type="text"
-            icon={<Info size={16} />}
-            onClick={() => void openInfo()}
-          >
-            {t("apps.info")}
-          </Button>
-          <Button
-            type="text"
-            icon={<ArrowLeft size={16} />}
-            onClick={() => navigate("/apps")}
-          >
-            {t("apps.back")}
-          </Button>
+        <Space size={isMobile ? 4 : 8}>
+          <Tooltip title={t("apps.assistantTitle")}>
+            <Button
+              type="text"
+              icon={<Sparkles size={16} />}
+              aria-label={t("apps.assistant")}
+              onClick={() => void openAssistant()}
+            >
+              {isMobile ? null : t("apps.assistant")}
+            </Button>
+          </Tooltip>
           {canEditStructure && (
-            <>
+            <Dropdown menu={sharePublishMenu} trigger={["click"]}>
               <Button
                 icon={<Share2 size={16} />}
-                onClick={() => void openShare()}
+                aria-label={t("apps.shareAndPublish")}
               >
-                {t("apps.share")}
+                {isMobile ? null : (
+                  <>
+                    {t("apps.shareAndPublish")}
+                    <ChevronDown size={14} />
+                  </>
+                )}
               </Button>
+            </Dropdown>
+          )}
+          <Tooltip title={t("apps.infoTitle")}>
+            <Button
+              type="text"
+              icon={<Info size={16} />}
+              aria-label={t("apps.info")}
+              onClick={() => void openInfo()}
+            >
+              {isMobile ? null : t("apps.info")}
+            </Button>
+          </Tooltip>
+          {canEditStructure && (
+            <Dropdown menu={moreMenu} trigger={["click"]}>
               <Button
-                icon={<Link2 size={16} />}
-                onClick={() => void openPublish()}
-              >
-                {t("apps.publishLink")}
-              </Button>
-              <Button icon={<Edit3 size={16} />} onClick={openRename}>
-                {t("apps.rename")}
-              </Button>
-              {detail.previous_html_at ? (
-                <Popconfirm
-                  title={t(
-                    "apps.restoreHtmlTitle",
-                    "Restore the previous version?",
-                  )}
-                  description={t(
-                    "apps.restoreHtmlConfirm",
-                    "The current HTML will become the previous version.",
-                  )}
-                  okText={t("apps.restoreHtml", "Restore previous")}
-                  cancelText={t("common.cancel")}
-                  onConfirm={() => void restoreHtml()}
-                >
-                  <Button icon={<History size={16} />}>
-                    {t("apps.restoreHtml", "Restore previous")}
-                  </Button>
-                </Popconfirm>
-              ) : null}
-              <Popconfirm
-                title={t("apps.deleteTitle")}
-                description={t("apps.deleteConfirm")}
-                okButtonProps={{ danger: true }}
-                okText={t("apps.delete")}
-                cancelText={t("common.cancel")}
-                onConfirm={() => void removeApp()}
-              >
-                <Button danger icon={<Trash2 size={16} />} />
-              </Popconfirm>
-            </>
+                type="text"
+                icon={<MoreHorizontal size={16} />}
+                aria-label={t("common.more")}
+              />
+            </Dropdown>
           )}
         </Space>
       }
@@ -2149,10 +2250,16 @@ export default function AppDetailPage() {
         title={t("apps.infoTitle")}
         open={infoOpen}
         onClose={() => setInfoOpen(false)}
-        width={420}
+        width={isMobile ? "100%" : 560}
+        styles={{ body: { padding: "20px 24px 28px" } }}
       >
         {detail && (
-          <Descriptions column={1} size="small" bordered>
+          <Descriptions
+            column={1}
+            size="small"
+            bordered
+            labelStyle={{ width: 120, whiteSpace: "nowrap" }}
+          >
             <Descriptions.Item label={t("apps.createdByLabel")}>
               {detail.owner_username || "—"}
             </Descriptions.Item>
@@ -2160,7 +2267,7 @@ export default function AppDetailPage() {
               {detail.agent_name || detail.agent_id}
             </Descriptions.Item>
             <Descriptions.Item label={t("apps.permissionLabel")}>
-              {permissionLabel(detail.permission, t)}
+              {permissionText}
             </Descriptions.Item>
             <Descriptions.Item label={t("apps.rowsLabel")}>
               {t("apps.rows", { count: detail.row_count })}
@@ -2180,18 +2287,13 @@ export default function AppDetailPage() {
         )}
 
         {detail && (
-          <div style={{ marginTop: 20 }}>
-            <Text strong>
-              {t("apps.capabilities.title", "Page capabilities")}
-            </Text>
-            <div style={{ marginTop: 6 }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t(
-                  "apps.capabilities.hint",
-                  "Controls what the MiniApp page may ask the host to do; agent tools and this dashboard are not affected.",
-                )}
-              </Text>
-            </div>
+          <InfoSection
+            title={t("apps.capabilities.title", "Page capabilities")}
+            hint={t(
+              "apps.capabilities.hint",
+              "Controls what the MiniApp page may ask the host to do; agent tools and this dashboard are not affected.",
+            )}
+          >
             <Checkbox.Group
               value={capabilityDraft}
               onChange={(values) => setCapabilityDraft(values as string[])}
@@ -2199,10 +2301,10 @@ export default function AppDetailPage() {
                 detail.permission !== "edit_structure" || savingCapabilities
               }
               style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-                marginTop: 8,
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",
+                columnGap: 12,
+                rowGap: 8,
               }}
             >
               {CAPABILITY_OPTIONS.map((option) => (
@@ -2215,23 +2317,18 @@ export default function AppDetailPage() {
               <Button
                 type="primary"
                 size="small"
-                style={{ marginTop: 10 }}
+                style={{ marginTop: 12 }}
                 loading={savingCapabilities}
                 onClick={() => void saveCapabilities()}
               >
                 {t("apps.capabilities.save", "Save")}
               </Button>
             )}
-          </div>
+          </InfoSection>
         )}
 
-        <div style={{ marginTop: 20 }}>
-          <Text strong>{t("apps.tablesTitle")}</Text>
-          <Space
-            direction="vertical"
-            size={8}
-            style={{ width: "100%", marginTop: 8 }}
-          >
+        <InfoSection title={t("apps.tablesTitle")} hint={t("apps.tablesHint")}>
+          <Space direction="vertical" size={10} style={{ width: "100%" }}>
             {detail.tables.map((table) => {
               const source = sources.find(
                 (item) => item.table_key === table.table_key,
@@ -2240,9 +2337,9 @@ export default function AppDetailPage() {
                 <div
                   key={table.table_key}
                   style={{
-                    padding: "8px 10px",
+                    padding: "10px 12px",
                     border: "1px solid rgba(5, 5, 5, 0.06)",
-                    borderRadius: 6,
+                    borderRadius: 8,
                     background: "#fafafa",
                   }}
                 >
@@ -2250,77 +2347,91 @@ export default function AppDetailPage() {
                     style={{
                       display: "flex",
                       alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 12,
+                      gap: 8,
+                      minWidth: 0,
                     }}
                   >
-                    <Space size={8} style={{ minWidth: 0 }}>
-                      <Table2 size={14} />
-                      <Text style={{ fontSize: 13 }}>
-                        {table.label || table.table_key}
-                      </Text>
-                      {table.is_main && (
-                        <Tag style={{ marginInlineEnd: 0 }}>
-                          {t("apps.mainTable")}
-                        </Tag>
-                      )}
-                    </Space>
-                    <Space size={4}>
-                      {canEditStructure && (
-                        <Tooltip title={t("apps.tableVisibilityHint")}>
-                          <Space size={4}>
-                            <Text type="secondary" style={{ fontSize: 12 }}>
-                              {t("apps.publicTable")}
-                            </Text>
-                            <Switch
-                              size="small"
-                              checked={table.public_visible}
-                              onChange={(checked) =>
-                                void setTableVisibility(
-                                  table.table_key,
-                                  checked,
-                                )
-                              }
-                            />
-                          </Space>
-                        </Tooltip>
-                      )}
-                      {canEditData && (
-                        <Button
-                          type="text"
-                          size="small"
-                          icon={<UploadIcon size={13} />}
-                          onClick={() => openImport(table.table_key)}
-                        >
-                          {t("apps.importButton")}
-                        </Button>
-                      )}
-                      {canEditStructure && (
-                        <Button
-                          type="text"
-                          size="small"
-                          icon={<Link2 size={13} />}
-                          onClick={() => openSourceModal(table.table_key)}
-                        >
-                          {t("apps.sourceButton")}
-                        </Button>
-                      )}
-                      <Text
-                        type="secondary"
-                        style={{ fontSize: 12, whiteSpace: "nowrap" }}
+                    <Table2 size={14} style={{ flexShrink: 0 }} />
+                    <Text
+                      strong
+                      ellipsis
+                      style={{ fontSize: 13, minWidth: 0, flex: "1 1 auto" }}
+                    >
+                      {table.label || table.table_key}
+                    </Text>
+                    {table.is_main && (
+                      <Tag style={{ marginInlineEnd: 0, flexShrink: 0 }}>
+                        {t("apps.mainTable")}
+                      </Tag>
+                    )}
+                    <Text
+                      type="secondary"
+                      style={{
+                        fontSize: 12,
+                        whiteSpace: "nowrap",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {t("apps.tableRows", { count: table.row_count })}
+                    </Text>
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                      gap: 8,
+                      marginTop: 8,
+                    }}
+                  >
+                    {canEditStructure && (
+                      <Tooltip title={t("apps.tableVisibilityHint")}>
+                        <Space size={4}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {t("apps.publicTable")}
+                          </Text>
+                          <Switch
+                            size="small"
+                            checked={table.public_visible}
+                            onChange={(checked) =>
+                              void setTableVisibility(table.table_key, checked)
+                            }
+                          />
+                        </Space>
+                      </Tooltip>
+                    )}
+                    <span style={{ flex: 1 }} />
+                    {canEditData && (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<UploadIcon size={13} />}
+                        onClick={() => openImport(table.table_key)}
                       >
-                        {t("apps.tableRows", { count: table.row_count })}
-                      </Text>
-                    </Space>
+                        {t("apps.importButton")}
+                      </Button>
+                    )}
+                    {canEditStructure && (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<Link2 size={13} />}
+                        onClick={() => openSourceModal(table.table_key)}
+                      >
+                        {t("apps.sourceButton")}
+                      </Button>
+                    )}
                   </div>
                   {source && (
                     <div
                       style={{
                         display: "flex",
                         alignItems: "center",
+                        flexWrap: "wrap",
                         gap: 8,
-                        marginTop: 6,
-                        paddingLeft: 22,
+                        marginTop: 8,
+                        paddingTop: 8,
+                        borderTop: "1px dashed rgba(5, 5, 5, 0.08)",
                       }}
                     >
                       <Tag
@@ -2345,7 +2456,7 @@ export default function AppDetailPage() {
                       </Tag>
                       <Text
                         type="secondary"
-                        style={{ fontSize: 12, flex: 1, minWidth: 0 }}
+                        style={{ fontSize: 12, flex: "1 1 200px", minWidth: 0 }}
                         ellipsis
                       >
                         {source.kind === "workspace_file"
@@ -2403,24 +2514,16 @@ export default function AppDetailPage() {
                 </div>
               );
             })}
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {t("apps.tablesHint")}
-            </Text>
           </Space>
-        </div>
+        </InfoSection>
 
-        <div style={{ marginTop: 20 }}>
-          <Text strong>{t("apps.filesTitle")}</Text>
+        <InfoSection title={t("apps.filesTitle")} hint={t("apps.filesHint")}>
           {filesLoading ? (
             <div style={{ padding: 24, textAlign: "center" }}>
               <Spin />
             </div>
           ) : (
-            <Space
-              direction="vertical"
-              size={8}
-              style={{ width: "100%", marginTop: 8 }}
-            >
+            <Space direction="vertical" size={10} style={{ width: "100%" }}>
               {files.map((file) => (
                 <div
                   key={file.name}
@@ -2429,16 +2532,26 @@ export default function AppDetailPage() {
                     alignItems: "center",
                     justifyContent: "space-between",
                     gap: 12,
-                    padding: "8px 10px",
+                    padding: "10px 12px",
                     border: "1px solid rgba(5, 5, 5, 0.06)",
-                    borderRadius: 6,
+                    borderRadius: 8,
                     background: "#fafafa",
                   }}
                 >
-                  <Space size={8} style={{ minWidth: 0 }}>
-                    <FileCode size={14} />
-                    <Text style={{ fontSize: 13 }}>{file.name}</Text>
-                  </Space>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      minWidth: 0,
+                      flex: 1,
+                    }}
+                  >
+                    <FileCode size={14} style={{ flexShrink: 0 }} />
+                    <Text ellipsis style={{ fontSize: 13, minWidth: 0 }}>
+                      {file.name}
+                    </Text>
+                  </div>
                   <Text
                     type="secondary"
                     style={{ fontSize: 12, whiteSpace: "nowrap" }}
@@ -2447,12 +2560,9 @@ export default function AppDetailPage() {
                   </Text>
                 </div>
               ))}
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t("apps.filesHint")}
-              </Text>
             </Space>
           )}
-        </div>
+        </InfoSection>
       </Drawer>
 
       <Drawer

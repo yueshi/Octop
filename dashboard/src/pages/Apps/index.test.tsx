@@ -146,7 +146,7 @@ function renderPage(initialEntry = "/apps/boards/board_1") {
 
 /** The full MiniApp catalog lives behind the title-row button. */
 async function openCatalog(): Promise<HTMLElement[]> {
-  fireEvent.click(screen.getByRole("button", { name: "全部小程序" }));
+  fireEvent.click(screen.getByRole("button", { name: "添加已有小程序" }));
   return screen.findAllByRole("button", { name: "加入看板" });
 }
 
@@ -170,6 +170,11 @@ describe("workbench board", () => {
     const cards = await screen.findAllByTestId("board-gallery-card");
     expect(cards).toHaveLength(1);
     expect(screen.getByText("我的看板")).toBeInTheDocument();
+    expect(screen.getByText("看板")).toBeInTheDocument();
+    expect(screen.getByText("桌面")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "创建小程序" }),
+    ).toBeInTheDocument();
 
     fireEvent.click(cards[0]);
 
@@ -219,6 +224,12 @@ describe("workbench board", () => {
     expect(await screen.findByText("工作台")).toBeInTheDocument();
     await screen.findByText(/看板上还没有小程序/);
     expect(boardsApi.get).toHaveBeenCalledWith("board_1");
+    // Board detail has no Board/Desktop mode toggle.
+    expect(screen.queryByText("看板")).not.toBeInTheDocument();
+    expect(screen.queryByText("桌面")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "创建小程序" }),
+    ).toBeInTheDocument();
 
     // The catalog stays closed until the top button opens it.
     expect(screen.queryByText("客户跟进台账")).not.toBeInTheDocument();
@@ -229,8 +240,8 @@ describe("workbench board", () => {
   });
 
   it("switches to desktop mode and shows every MiniApp", async () => {
-    renderPage();
-    await screen.findByText("工作台");
+    renderPage("/apps");
+    expect(await screen.findByTestId("board-gallery")).toBeInTheDocument();
     await waitFor(() => expect(appsApi.list).toHaveBeenCalled());
 
     fireEvent.click(screen.getByText("桌面"));
@@ -242,7 +253,7 @@ describe("workbench board", () => {
     expect(screen.queryByText(/看板上还没有小程序/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText("看板"));
-    expect(await screen.findByText(/看板上还没有小程序/)).toBeInTheDocument();
+    expect(await screen.findByTestId("board-gallery")).toBeInTheDocument();
   });
 
   it("loads a board directly from its URL before the catalog resolves", async () => {
@@ -329,7 +340,8 @@ describe("workbench board", () => {
       expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(2),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "自动整理" }));
+    fireEvent.click(screen.getByRole("button", { name: "看板操作" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "自动整理" }));
 
     await waitFor(() =>
       expect(boardsApi.setLayout).toHaveBeenCalledWith("board_1", {
@@ -390,12 +402,14 @@ describe("workbench board", () => {
       expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(1),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "自动整理" }));
+    fireEvent.click(screen.getByRole("button", { name: "看板操作" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "自动整理" }));
     await waitFor(() => expect(boardsApi.setLayout).toHaveBeenCalledTimes(1));
 
-    const undo = screen.getByRole("button", { name: "撤销上一次布局" });
-    await waitFor(() => expect(undo).toBeEnabled());
-    fireEvent.click(undo);
+    fireEvent.click(screen.getByRole("button", { name: "看板操作" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "撤销上一次布局" }),
+    );
 
     await waitFor(() =>
       expect(boardsApi.setLayout).toHaveBeenLastCalledWith("board_1", {
@@ -472,7 +486,7 @@ describe("workbench board", () => {
       expect(screen.getAllByTestId("mini-app-frame")).toHaveLength(1),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "全屏展示" }));
+    fireEvent.click(screen.getByRole("button", { name: "演示" }));
     expect(window.open).toHaveBeenCalledWith(
       "/apps/boards/board_1/view",
       "_blank",

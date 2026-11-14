@@ -341,6 +341,7 @@ const ICON_STYLE_CLASS: Record<AppIconStyle, string> = {
 
 const UNASSIGNED_SPACE = "__unassigned__";
 const ALL_APPS_SPACE = "__all_apps__";
+const DOCK_APP_LIMIT = 10;
 const ACTIVE_SPACE_KEY = "octop:apps-desktop-space:v1";
 const EMPTY_APPS: AppSummary[] = [];
 
@@ -363,6 +364,7 @@ function spaceIdForApp(app: AppSummary): string {
 
 interface WindowDrag {
   id: string;
+  kind: DesktopWindowState["kind"];
   mode: "move" | "resize";
   startX: number;
   startY: number;
@@ -370,6 +372,11 @@ interface WindowDrag {
   y: number;
   w: number;
   h: number;
+  /** Pending geometry for a pointer gesture, committed on pointerup. */
+  nextX?: number;
+  nextY?: number;
+  nextW?: number;
+  nextH?: number;
 }
 
 function AppIcon({
@@ -508,11 +515,51 @@ export default function DesktopGrid({
   const [visibleTitleBars, setVisibleTitleBars] = useState<Set<string>>(
     new Set(),
   );
+  const [dragPreview, setDragPreview] = useState<{
+    id: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [resizePreview, setResizePreview] = useState<{
+    id: string;
+    w: number;
+    h: number;
+    startW: number;
+    startH: number;
+  } | null>(null);
   const titleBarTimersRef = useRef(new Map<string, number>());
   const windowsRef = useRef(windows);
+  const [dockInset, setDockInset] = useState(DOCK_SPACE);
   useEffect(() => {
     windowsRef.current = windows;
   }, [windows]);
+
+  // The dock height depends on its content and CSS. Measure its top edge
+  // instead of hard-coding a gap, so windows always stop above the dock.
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const measure = () => {
+      const surface = root.querySelector<HTMLElement>(
+        '[data-testid="desktop-dock-surface"]',
+      );
+      if (!surface) return;
+      const rootRect = root.getBoundingClientRect();
+      const surfaceRect = surface.getBoundingClientRect();
+      if (rootRect.height <= 0 || surfaceRect.height <= 0) return;
+      const next = Math.max(0, Math.ceil(rootRect.bottom - surfaceRect.top));
+      setDockInset((current) => (current === next ? current : next));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    const dock = root.querySelector<HTMLElement>(
+      '[data-testid="desktop-dock"]',
+    );
+    if (dock) observer.observe(dock);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => saveDesktopWindows(windows), 250);
@@ -537,16 +584,33 @@ export default function DesktopGrid({
     if (!root) return;
     const maxW = root.clientWidth;
     const maxH = root.clientHeight;
+    const dockTop = maxH - dockInset;
     setWindows((list) => {
       let changed = false;
       const next = list.map((win) => {
-        if (win.maximized) return win;
+        const spec = WINDOW_REGISTRY[win.kind];
+        if (win.maximized) {
+          const h = Math.max(spec.minHeight, dockTop - MENU_BAR_HEIGHT);
+          if (
+            win.x === 0 &&
+            win.y === MENU_BAR_HEIGHT &&
+            win.w === maxW &&
+            win.h === h
+          ) {
+            return win;
+          }
+          changed = true;
+          return { ...win, x: 0, y: MENU_BAR_HEIGHT, w: maxW, h };
+        }
         const w = Math.min(win.w, Math.max(220, maxW - 8));
-        const h = Math.min(win.h, Math.max(180, maxH - MENU_BAR_HEIGHT - 8));
+        const h = Math.min(
+          win.h,
+          Math.max(spec.minHeight, dockTop - MENU_BAR_HEIGHT - 8),
+        );
         const x = Math.max(0, Math.min(Math.max(0, maxW - w), win.x));
         const y = Math.max(
           MENU_BAR_HEIGHT,
-          Math.min(Math.max(MENU_BAR_HEIGHT, maxH - 40), win.y),
+          Math.min(Math.max(MENU_BAR_HEIGHT, dockTop - h), win.y),
         );
         if (x === win.x && y === win.y && w === win.w && h === win.h) {
           return win;
@@ -556,7 +620,7 @@ export default function DesktopGrid({
       });
       return changed ? next : list;
     });
-  }, []);
+  }, [dockInset]);
 
   const byId = useMemo(
     () => new Map(apps.map((app) => [app.app_id, app])),
@@ -732,13 +796,14 @@ export default function DesktopGrid({
           z: ++zRef.current,
           list,
           appSpace,
+          bottomInset: dockInset,
           viewportWidth: root?.clientWidth ?? 1280,
           viewportHeight: root?.clientHeight ?? 800,
         });
         return win ? [...list, win] : list;
       });
     },
-    [appSpace],
+    [appSpace, dockInset],
   );
 
   const openExternalWindow = useCallback(
@@ -762,13 +827,14 @@ export default function DesktopGrid({
           z: ++zRef.current,
           list,
           appSpace,
+          bottomInset: dockInset,
           viewportWidth: root?.clientWidth ?? 1280,
           viewportHeight: root?.clientHeight ?? 800,
         });
         return win ? [...list, win] : list;
       });
     },
-    [appSpace],
+    [appSpace, dockInset],
   );
 
   const consumeChatSeed = useCallback((id: string) => {
@@ -981,39 +1047,78 @@ export default function DesktopGrid({
       const maxH = root?.clientHeight ?? 800;
       const dx = event.clientX - drag.startX;
       const dy = event.clientY - drag.startY;
-      setWindows((list) =>
-        list.map((win) => {
-          if (win.id !== drag.id || win.maximized) return win;
-          if (drag.mode === "move") {
-            return {
-              ...win,
-              x: Math.max(0, Math.min(maxW - win.w, drag.x + dx)),
-              y: Math.max(MENU_BAR_HEIGHT, Math.min(maxH - 48, drag.y + dy)),
-            };
-          }
-          const spec = WINDOW_REGISTRY[win.kind];
-          const minW = spec.minWidth;
-          const minH = spec.minHeight;
-          return {
-            ...win,
-            w: Math.max(minW, Math.min(maxW - win.x, drag.w + dx)),
-            h: Math.max(minH, Math.min(maxH - win.y - 8, drag.h + dy)),
-          };
-        }),
+      if (drag.mode === "move") {
+        // Move through a transform preview: left/top only change once, on
+        // release. This keeps the iframe on one composited layer instead of
+        // forcing a repaint (and edge flicker) on every pointer move.
+        drag.nextX = Math.max(0, Math.min(maxW - drag.w, drag.x + dx));
+        drag.nextY = Math.max(
+          MENU_BAR_HEIGHT,
+          Math.min(maxH - dockInset - drag.h, drag.y + dy),
+        );
+        setDragPreview({ id: drag.id, x: drag.nextX, y: drag.nextY });
+        return;
+      }
+      // Resize the window chrome immediately, but keep the content at its
+      // starting size and scale it visually. The iframe therefore does not
+      // reflow on every pointer move (which exposes a white backing edge).
+      const spec = WINDOW_REGISTRY[drag.kind];
+      drag.nextW = Math.max(
+        spec.minWidth,
+        Math.min(maxW - drag.x, drag.w + dx),
       );
+      drag.nextH = Math.max(
+        spec.minHeight,
+        Math.min(maxH - dockInset - drag.y, drag.h + dy),
+      );
+      setResizePreview({
+        id: drag.id,
+        w: drag.nextW,
+        h: drag.nextH,
+        startW: drag.w,
+        startH: drag.h,
+      });
     };
-    const onPointerUp = () => {
+    const finishDrag = () => {
+      const drag = dragRef.current;
       dragRef.current = null;
+      setDragPreview(null);
+      setResizePreview(null);
+      if (
+        drag?.mode === "move" &&
+        drag.nextX !== undefined &&
+        drag.nextY !== undefined
+      ) {
+        const nextX = drag.nextX;
+        const nextY = drag.nextY;
+        setWindows((list) =>
+          list.map((win) =>
+            win.id === drag.id ? { ...win, x: nextX, y: nextY } : win,
+          ),
+        );
+      } else if (
+        drag?.mode === "resize" &&
+        drag.nextW !== undefined &&
+        drag.nextH !== undefined
+      ) {
+        const nextW = drag.nextW;
+        const nextH = drag.nextH;
+        setWindows((list) =>
+          list.map((win) =>
+            win.id === drag.id ? { ...win, w: nextW, h: nextH } : win,
+          ),
+        );
+      }
     };
     window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
-    window.addEventListener("pointercancel", onPointerUp);
+    window.addEventListener("pointerup", finishDrag);
+    window.addEventListener("pointercancel", finishDrag);
     return () => {
       window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener("pointerup", finishDrag);
+      window.removeEventListener("pointercancel", finishDrag);
     };
-  }, []);
+  }, [dockInset]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -1030,8 +1135,8 @@ export default function DesktopGrid({
                 y: MENU_BAR_HEIGHT,
                 w: maxW,
                 h: Math.max(
-                  WINDOW_REGISTRY.app.minHeight,
-                  maxH - MENU_BAR_HEIGHT - DOCK_SPACE,
+                  WINDOW_REGISTRY[win.kind].minHeight,
+                  maxH - MENU_BAR_HEIGHT - dockInset,
                 ),
               }
             : win,
@@ -1040,7 +1145,7 @@ export default function DesktopGrid({
     });
     observer.observe(root);
     return () => observer.disconnect();
-  }, []);
+  }, [dockInset]);
 
   const toggleFullscreen = useCallback(() => {
     const root = rootRef.current;
@@ -1083,13 +1188,14 @@ export default function DesktopGrid({
           z: ++zRef.current,
           list,
           appSpace,
+          bottomInset: dockInset,
           viewportWidth: root?.clientWidth ?? 1280,
           viewportHeight: root?.clientHeight ?? 800,
         });
         return win ? [...list, win] : list;
       });
     },
-    [appSpace, space?.kind],
+    [appSpace, dockInset, space?.kind],
   );
 
   const commandItems = useMemo<DesktopCommandItem[]>(() => {
@@ -1241,52 +1347,58 @@ export default function DesktopGrid({
     );
   }, []);
 
-  const toggleMaximize = useCallback((id: string) => {
-    setWindows((list) =>
-      list.map((win) => {
-        if (win.id !== id) return win;
-        const root = rootRef.current;
-        const maxW = root?.clientWidth ?? 1280;
-        const maxH = root?.clientHeight ?? 800;
-        if (win.maximized) {
-          const restore = win.restore ?? {
-            x: win.x,
-            y: win.y,
-            w: win.w,
-            h: win.h,
-          };
+  const toggleMaximize = useCallback(
+    (id: string) => {
+      setWindows((list) =>
+        list.map((win) => {
+          if (win.id !== id) return win;
+          const root = rootRef.current;
+          const maxW = root?.clientWidth ?? 1280;
+          const maxH = root?.clientHeight ?? 800;
+          if (win.maximized) {
+            const restore = win.restore ?? {
+              x: win.x,
+              y: win.y,
+              w: win.w,
+              h: win.h,
+            };
+            return {
+              ...win,
+              ...restore,
+              maximized: false,
+              restore: undefined,
+              z: ++zRef.current,
+            };
+          }
           return {
             ...win,
-            ...restore,
-            maximized: false,
-            restore: undefined,
+            restore: { x: win.x, y: win.y, w: win.w, h: win.h },
+            x: 0,
+            y: MENU_BAR_HEIGHT,
+            w: maxW,
+            h: Math.max(
+              WINDOW_REGISTRY[win.kind].minHeight,
+              maxH - MENU_BAR_HEIGHT - dockInset,
+            ),
+            maximized: true,
             z: ++zRef.current,
           };
-        }
-        return {
-          ...win,
-          restore: { x: win.x, y: win.y, w: win.w, h: win.h },
-          x: 0,
-          y: MENU_BAR_HEIGHT,
-          w: maxW,
-          h: Math.max(
-            WINDOW_REGISTRY.app.minHeight,
-            maxH - MENU_BAR_HEIGHT - DOCK_SPACE,
-          ),
-          maximized: true,
-          z: ++zRef.current,
-        };
-      }),
-    );
-  }, []);
+        }),
+      );
+    },
+    [dockInset],
+  );
 
   const startDrag = useCallback(
     (win: DesktopWindowState, event: ReactPointerEvent<HTMLElement>) => {
       if (event.button !== 0 || win.maximized) return;
       if ((event.target as HTMLElement).closest("button")) return;
       event.preventDefault();
+      setDragPreview(null);
+      setResizePreview(null);
       dragRef.current = {
         id: win.id,
+        kind: win.kind,
         mode: "move",
         startX: event.clientX,
         startY: event.clientY,
@@ -1305,8 +1417,11 @@ export default function DesktopGrid({
       if (event.button !== 0 || win.maximized) return;
       event.preventDefault();
       event.stopPropagation();
+      setDragPreview(null);
+      setResizePreview(null);
       dragRef.current = {
         id: win.id,
+        kind: win.kind,
         mode: "resize",
         startX: event.clientX,
         startY: event.clientY,
@@ -1446,25 +1561,27 @@ export default function DesktopGrid({
     })
     .sort((left, right) => left.spaceName.localeCompare(right.spaceName));
 
-  const dockItems: DesktopDockItem[] = currentApps.map((app) => {
-    const win = currentWindows.find(
-      (item) => item.kind === "app" && item.appId === app.app_id,
-    );
-    return {
-      id: `dock:app:${app.app_id}`,
-      kind: "app",
-      appId: app.app_id,
-      windowId: win?.id,
-      label: app.name,
-      icon: <AppIcon app={app} size={46} />,
-      running: Boolean(win),
-      minimized: win?.minimized,
-      active: Boolean(win && !win.minimized && win.z === topZ),
-      onActivate: () => openWindow(app),
-      onMinimize: win ? () => minimizeWindow(win.id) : undefined,
-      onClose: win ? () => closeWindow(win.id) : undefined,
-    };
-  });
+  const dockItems: DesktopDockItem[] = currentApps
+    .slice(0, DOCK_APP_LIMIT)
+    .map((app) => {
+      const win = currentWindows.find(
+        (item) => item.kind === "app" && item.appId === app.app_id,
+      );
+      return {
+        id: `dock:app:${app.app_id}`,
+        kind: "app",
+        appId: app.app_id,
+        windowId: win?.id,
+        label: app.name,
+        icon: <AppIcon app={app} size={46} />,
+        running: Boolean(win),
+        minimized: win?.minimized,
+        active: Boolean(win && !win.minimized && win.z === topZ),
+        onActivate: () => openWindow(app),
+        onMinimize: win ? () => minimizeWindow(win.id) : undefined,
+        onClose: win ? () => closeWindow(win.id) : undefined,
+      };
+    });
   const chatWindows = currentWindows.filter((win) => win.kind === "chat");
   for (const win of chatWindows) {
     const owner = ownerOf(win);
@@ -1623,12 +1740,6 @@ export default function DesktopGrid({
           </div>
         )}
         <div className={styles.desktopMenuActions}>
-          <span className={styles.desktopHint}>
-            {t(
-              "apps.desktop.hint",
-              "Click an icon to select it and see expert actions; double-click to open.",
-            )}
-          </span>
           <button
             type="button"
             className={styles.desktopMenuButton}
@@ -1811,6 +1922,8 @@ export default function DesktopGrid({
           const inSpace = windowSpaceId(win, appSpace) === space?.id;
           const focused = inSpace && win.z === topZ;
           const titleBarVisible = visibleTitleBars.has(win.id);
+          const preview = dragPreview?.id === win.id ? dragPreview : null;
+          const resizing = resizePreview?.id === win.id ? resizePreview : null;
           return (
             <section
               key={win.id}
@@ -1820,15 +1933,22 @@ export default function DesktopGrid({
                 win.maximized ? styles.desktopWindowMaximized : "",
                 win.minimized ? styles.desktopWindowMinimized : "",
                 !inSpace ? styles.desktopWindowHidden : "",
+                preview ? styles.desktopWindowDragging : "",
+                resizing ? styles.desktopWindowResizing : "",
               ]
                 .filter(Boolean)
                 .join(" ")}
               style={{
                 left: win.x,
                 top: win.y,
-                width: win.w,
-                height: win.h,
+                width: resizing?.w ?? win.w,
+                height: resizing?.h ?? win.h,
                 zIndex: win.z,
+                transform: preview
+                  ? `translate3d(${preview.x - win.x}px, ${
+                      preview.y - win.y
+                    }px, 0)`
+                  : undefined,
               }}
               data-testid="desktop-window"
               data-kind={win.kind}
@@ -1838,6 +1958,8 @@ export default function DesktopGrid({
               data-url={win.url ?? ""}
               data-minimized={win.minimized ? "true" : "false"}
               data-maximized={win.maximized ? "true" : "false"}
+              data-dragging={preview ? "true" : "false"}
+              data-resizing={resizing ? "true" : "false"}
               role="group"
               aria-label={title}
               onPointerDown={() => focusWindow(win.id)}
@@ -1902,52 +2024,75 @@ export default function DesktopGrid({
                 <span className={styles.desktopWindowSpacer} />
               </header>
               <div className={styles.desktopWindowBody}>
-                {app ? (
-                  <MiniAppFrame
-                    appId={app.app_id}
-                    title={app.name}
-                    fill
-                    capabilities={app.capabilities}
-                    onComposeMessage={(text) => {
-                      const target = app.agent_id?.trim() || winSpace?.agentId;
-                      if (target) {
-                        openChatWindow(target, { app, prompt: text });
+                <div
+                  className={styles.desktopWindowContent}
+                  data-testid="desktop-window-content"
+                  style={
+                    resizing
+                      ? {
+                          width: Math.max(1, resizing.startW - 2),
+                          height: Math.max(1, resizing.startH - 2),
+                          transform: `scale(${
+                            Math.max(1, resizing.w - 2) /
+                            Math.max(1, resizing.startW - 2)
+                          }, ${
+                            Math.max(1, resizing.h - 2) /
+                            Math.max(1, resizing.startH - 2)
+                          })`,
+                          transformOrigin: "top left",
+                        }
+                      : undefined
+                  }
+                >
+                  {app ? (
+                    <MiniAppFrame
+                      appId={app.app_id}
+                      title={app.name}
+                      fill
+                      capabilities={app.capabilities}
+                      onComposeMessage={(text) => {
+                        const target =
+                          app.agent_id?.trim() || winSpace?.agentId;
+                        if (target) {
+                          openChatWindow(target, { app, prompt: text });
+                        }
+                      }}
+                      onOpenExternal={(url) =>
+                        openExternalWindow(
+                          url,
+                          win.spaceId ??
+                            winSpace?.id ??
+                            space?.id ??
+                            UNASSIGNED_SPACE,
+                        )
                       }
-                    }}
-                    onOpenExternal={(url) =>
-                      openExternalWindow(
-                        url,
-                        win.spaceId ??
-                          winSpace?.id ??
-                          space?.id ??
-                          UNASSIGNED_SPACE,
-                      )
-                    }
-                  />
-                ) : win.kind === "external" && win.url ? (
-                  <DesktopWebView
-                    url={win.url}
-                    title={win.title}
-                    onClose={() => closeWindow(win.id)}
-                  />
-                ) : win.agentId ? (
-                  <DesktopChatWindow
-                    agentId={win.agentId}
-                    agentName={winSpace?.name ?? win.agentId}
-                    agent={chatAgent}
-                    apps={winSpace?.apps ?? EMPTY_APPS}
-                    initialAppId={win.contextAppId}
-                    seed={win.seed}
-                    onSeedConsumed={() => consumeChatSeed(win.id)}
-                    onOpenApp={openWindow}
-                    windowId={win.id}
-                    active={focused && !win.minimized}
-                  />
-                ) : null}
+                    />
+                  ) : win.kind === "external" && win.url ? (
+                    <DesktopWebView
+                      url={win.url}
+                      title={win.title}
+                      onClose={() => closeWindow(win.id)}
+                    />
+                  ) : win.agentId ? (
+                    <DesktopChatWindow
+                      agentId={win.agentId}
+                      agentName={winSpace?.name ?? win.agentId}
+                      agent={chatAgent}
+                      apps={winSpace?.apps ?? EMPTY_APPS}
+                      initialAppId={win.contextAppId}
+                      seed={win.seed}
+                      onSeedConsumed={() => consumeChatSeed(win.id)}
+                      onOpenApp={openWindow}
+                      windowId={win.id}
+                      active={focused && !win.minimized}
+                    />
+                  ) : null}
+                </div>
               </div>
               {!win.maximized && (
                 <span
                   className={styles.desktopWindowResize}
+                  data-testid="desktop-window-resize"
                   aria-hidden
                   onPointerDown={(event) => startResize(win, event)}
                 />

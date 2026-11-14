@@ -1912,7 +1912,6 @@
       "errorHint": "The site may block embedding. Open it in your browser instead."
     },
     "desktop": {
-      "hint": "Click an icon to select it and see expert actions; double-click to open.",
       "open": "Open",
       "fullscreen": "Full screen",
       "exitFullscreen": "Exit full screen",
@@ -2058,7 +2057,7 @@
       "newHint": "Start with an empty canvas and pin MiniApps."
     },
     "board": {
-      "empty": "No MiniApp on the board yet. Open “All MiniApps” at the top right to pin some.",
+      "empty": "No MiniApp on the board yet. Use “Add existing MiniApps” at the top right to pin some.",
       "add": "Pin to board",
       "remove": "Remove from board",
       "defaultName": "My board",
@@ -2073,9 +2072,9 @@
       "nameLabel": "Board name",
       "nameRequired": "Enter a board name",
       "descriptionLabel": "Description",
-      "select": "Select board",
+      "select": "Switch board",
       "present": "Present",
-      "presentHint": "Open in a new tab",
+      "presentHint": "Open fullscreen in a new tab",
       "back": "Back to workbench",
       "saving": "Saving…",
       "saveFailed": "Could not save the board",
@@ -2104,7 +2103,7 @@
       "menu": "Board actions"
     },
     "all": {
-      "title": "All MiniApps"
+      "title": "Add existing MiniApps"
     },
     "empty": "No MiniApps yet. Ask an expert in chat to build one.",
     "emptyHint": "Try: \"Create a reading tracker with title, author and status\"",
@@ -2128,6 +2127,7 @@
     "deleteTitle": "Delete this MiniApp?",
     "deleteConfirm": "This deletes the app, its interface and all of its data. This cannot be undone.",
     "share": "Share",
+    "shareAndPublish": "Share & publish",
     "shareTitle": "Share \"{{name}}\"",
     "shareHint": "Collaborators can view. Edit-data collaborators can also add rows.",
     "shareUser": "Username",
@@ -2143,6 +2143,7 @@
     "viewOnly": "View only",
     "editData": "Can add rows",
     "editStructure": "Owner",
+    "permissionAdmin": "Administrator",
     "iframeTitle": "MiniApp content",
     "loadHtmlFailed": "Failed to load the app interface",
     "noInterface": "No interface yet",
@@ -2276,7 +2277,7 @@
       "cardOpenSidePanel": "Open in sidebar",
       "cardDetail": "Details",
       "cardNoHtml": "The UI has not been generated yet",
-      "button": "Create",
+      "button": "Create MiniApp",
       "title": "Create MiniApp",
       "modeMarket": "Cloud market",
       "marketTitle": "Cloud template market",
@@ -4689,7 +4690,6 @@
     "languageHint": "Choose the console display language.",
     "themeLight": "Light",
     "themeDark": "Dark",
-    "helpFeedback": "Help & Feedback",
     "helpBuilding": "Under construction",
     "projectUrl": "Project",
     "checkUpdates": "Check for Updates",

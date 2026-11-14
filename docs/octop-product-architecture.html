@@ -1,0 +1,1664 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="智总管（开源项目 Octop）产品与架构全景：功能地图、应用场景、产品与技术架构、成熟度与销售边界。">
+<meta name="theme-color" content="#0b2434">
+<title>智总管 产品与架构全景 · 销售 / 产品 / 研发共用版</title>
+<style>
+  :root {
+    --bg: #f5f7fb;
+    --surface: #ffffff;
+    --surface-2: #eef3f8;
+    --surface-3: #e5edf5;
+    --ink: #122033;
+    --muted: #5b6b82;
+    --faint: #8a99ad;
+    --line: #d9e2ee;
+    --brand: #0f766e;
+    --brand-2: #0891b2;
+    --brand-3: #0ea5e9;
+    --brand-soft: #e8f7f4;
+    --accent: #f59e0b;
+    --accent-soft: #fff7e6;
+    --danger: #dc2626;
+    --danger-soft: #fff1f1;
+    --ok: #059669;
+    --ok-soft: #e9f9f1;
+    --beta: #d97706;
+    --beta-soft: #fff4df;
+    --preview: #64748b;
+    --preview-soft: #f1f5f9;
+    --shadow: 0 12px 32px rgba(15, 35, 60, .08);
+    --shadow-sm: 0 4px 14px rgba(15, 35, 60, .06);
+    --radius: 16px;
+    --radius-sm: 10px;
+    --sidebar: 276px;
+    --max: 1140px;
+    --font: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    --mono: "SFMono-Regular", "Cascadia Code", "Consolas", "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 78px; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background: var(--bg);
+    font-family: var(--font);
+    font-size: 15px;
+    line-height: 1.72;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--brand); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  p { margin: 0 0 12px; }
+  ul, ol { margin: 0 0 12px; padding-left: 20px; }
+  li { margin: 4px 0; }
+  strong { color: var(--ink); }
+  small { color: var(--muted); }
+  code {
+    font-family: var(--mono);
+    font-size: .92em;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 1px 6px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  pre {
+    margin: 14px 0;
+    padding: 16px 18px;
+    background: #0d1b2a;
+    color: #dce9f5;
+    border-radius: 12px;
+    overflow: auto;
+    max-width: 100%;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.65;
+  }
+  pre code { background: none; border: 0; padding: 0; color: inherit; white-space: pre; }
+
+  /* progress */
+  .progress { position: fixed; top: 0; left: 0; height: 3px; width: 0; background: linear-gradient(90deg, var(--brand), var(--brand-3)); z-index: 100; transition: width .12s linear; }
+
+  /* top bar */
+  .topbar {
+    position: sticky; top: 0; z-index: 60;
+    height: 64px;
+    display: flex; align-items: center; gap: 18px;
+    padding: 0 26px;
+    background: rgba(255,255,255,.86);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid rgba(217,226,238,.9);
+  }
+  .topbar .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: .08em; color: var(--ink); }
+  .topbar .brand:hover { text-decoration: none; }
+  .brand-mark {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: linear-gradient(135deg, var(--brand), var(--brand-3));
+    display: inline-grid; place-items: center; color: #fff; font-size: 13px; font-weight: 800;
+    box-shadow: 0 6px 14px rgba(15,118,110,.28);
+  }
+  .topbar .tagline { color: var(--muted); font-size: 13px; }
+  .topbar .spacer { flex: 1; }
+  .mobile-toc { display: none; }
+  .top-actions { display: flex; gap: 8px; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+    border-radius: 999px; padding: 8px 15px; font-size: 13px; font-weight: 650;
+    cursor: pointer; transition: all .16s ease;
+  }
+  .btn:hover { border-color: var(--brand); color: var(--brand); text-decoration: none; transform: translateY(-1px); }
+  .btn.primary { background: linear-gradient(135deg, var(--brand), var(--brand-2)); border-color: transparent; color: #fff; box-shadow: 0 8px 18px rgba(15,118,110,.22); }
+  .btn.primary:hover { color: #fff; filter: brightness(1.05); }
+
+  /* layout */
+  .layout { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); max-width: 1600px; margin: 0 auto; }
+  .sidebar {
+    position: sticky; top: 64px; align-self: start;
+    height: calc(100vh - 64px); overflow: auto;
+    padding: 26px 18px 30px 26px;
+    border-right: 1px solid var(--line);
+  }
+  .side-label { font-size: 11px; font-weight: 800; letter-spacing: .12em; color: var(--faint); text-transform: uppercase; margin: 22px 10px 8px; }
+  .side-label:first-child { margin-top: 0; }
+  .toc a {
+    display: block; padding: 7px 10px; margin: 1px 0;
+    border-radius: 8px; color: var(--muted); font-size: 13.5px; line-height: 1.4;
+  }
+  .toc a:hover { background: var(--surface-2); color: var(--ink); text-decoration: none; }
+  .toc a.active { background: var(--brand-soft); color: var(--brand); font-weight: 700; }
+  .side-note { margin: 24px 10px 0; padding: 12px 13px; background: var(--surface-2); border-radius: 10px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+  main { min-width: 0; }
+  .container { max-width: var(--max); margin: 0 auto; padding: 0 34px; }
+
+  /* hero */
+  .hero {
+    position: relative; overflow: hidden;
+    background:
+      radial-gradient(900px 420px at 12% -10%, rgba(14,165,233,.28), transparent 60%),
+      radial-gradient(700px 500px at 90% 8%, rgba(16,185,129,.22), transparent 55%),
+      linear-gradient(135deg, #071426 0%, #0b2434 52%, #0c3434 100%);
+    color: #eaf6f5;
+  }
+  .hero::before {
+    content: ""; position: absolute; inset: 0;
+    background-image: linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: linear-gradient(180deg, rgba(0,0,0,.8), transparent 88%);
+    pointer-events: none;
+  }
+  .hero-inner {
+    position: relative; z-index: 1;
+    display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, .85fr);
+    gap: 44px; align-items: center;
+    max-width: var(--max); margin: 0 auto; padding: 70px 34px 58px;
+  }
+  .hero-kicker { font-size: 11px; letter-spacing: .2em; color: #7fe3d4; font-weight: 800; margin-bottom: 16px; }
+  .hero h1 { margin: 0 0 16px; font-size: clamp(36px, 5vw, 58px); line-height: 1.1; letter-spacing: -.02em; font-weight: 850; }
+  .hero-sub { margin: 0 0 22px; color: #b9d6d8; font-size: 17px; line-height: 1.7; max-width: 720px; }
+  .hero-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+  .hero-tags span { padding: 5px 11px; border: 1px solid rgba(127,227,212,.35); border-radius: 999px; color: #c9f5ee; font-size: 12px; background: rgba(127,227,212,.08); }
+  .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 22px; }
+  .hero-actions .btn { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.18); color: #eaf6f5; }
+  .hero-actions .btn.primary { background: linear-gradient(135deg, #10b981, #06b6d4); border-color: transparent; color: #04121a; }
+  .hero-actions .btn:hover { border-color: #7fe3d4; color: #fff; text-decoration: none; }
+  .hero-meta { color: #7f9da4; font-size: 12px; }
+  .hero-panel {
+    background: rgba(8, 26, 38, .62);
+    border: 1px solid rgba(127,227,212,.2);
+    border-radius: 18px; padding: 20px;
+    box-shadow: 0 24px 60px rgba(0,0,0,.28);
+    backdrop-filter: blur(10px);
+  }
+  .hero-panel .panel-title { font-size: 12px; font-weight: 800; letter-spacing: .12em; color: #7fe3d4; margin-bottom: 14px; text-transform: uppercase; }
+  .hero-layer {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; margin: 7px 0;
+    border: 1px solid rgba(255,255,255,.09);
+    border-radius: 10px; background: rgba(255,255,255,.035);
+    font-size: 12.5px; color: #d5e9ea;
+  }
+  .hero-layer b { min-width: 66px; color: #fff; font-size: 12px; }
+  .hero-layer .dot { width: 7px; height: 7px; border-radius: 50%; background: #34d399; box-shadow: 0 0 0 4px rgba(52,211,153,.12); flex: none; }
+  .hero-kpis { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 1px; background: rgba(255,255,255,.1); border-top: 1px solid rgba(255,255,255,.12); }
+  .hero-kpi { background: rgba(4,16,26,.55); padding: 16px 20px; }
+  .hero-kpi b { display: block; font-size: 24px; line-height: 1.2; color: #fff; letter-spacing: -.02em; }
+  .hero-kpi span { display: block; margin-top: 3px; color: #8db0b6; font-size: 11.5px; }
+
+  /* sections */
+  .section { padding: 62px 0 58px; border-bottom: 1px solid var(--line); }
+  .section:last-of-type { border-bottom: 0; }
+  .section-head { margin-bottom: 26px; }
+  .eyebrow { display: inline-block; font-size: 11px; font-weight: 850; letter-spacing: .14em; color: var(--brand); text-transform: uppercase; margin-bottom: 8px; }
+  .section h2 { margin: 0 0 10px; font-size: clamp(25px, 3.2vw, 34px); line-height: 1.25; letter-spacing: -.02em; }
+  .lede { margin: 0; max-width: 900px; color: var(--muted); font-size: 15.5px; }
+  .audience { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; border: 1px solid transparent; }
+  .badge.sales { background: var(--accent-soft); color: #9a5b00; border-color: #f5d79b; }
+  .badge.product { background: #eef5ff; color: #1d4ed8; border-color: #c7dbff; }
+  .badge.dev { background: var(--brand-soft); color: var(--brand); border-color: #b9e6df; }
+  .badge.neutral { background: var(--surface-2); color: var(--muted); border-color: var(--line); }
+
+  h3 { margin: 0 0 8px; font-size: 18px; line-height: 1.35; }
+  h4 { margin: 0 0 7px; font-size: 14px; line-height: 1.4; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .mono { font-family: var(--mono); }
+  .nowrap { white-space: nowrap; }
+
+  .grid { display: grid; gap: 16px; min-width: 0; }
+  .g2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .g3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+  .g4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
+  .grid > *, .two-col > *, .scenario-grid > * { min-width: 0; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 20px 21px;
+    box-shadow: var(--shadow-sm);
+    min-width: 0;
+  }
+  .card h3 { font-size: 16px; }
+  .card p:last-child, .card ul:last-child { margin-bottom: 0; }
+  .card .icon {
+    width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+    background: var(--brand-soft); color: var(--brand); font-size: 18px; margin-bottom: 12px;
+  }
+  .card.accent .icon { background: var(--accent-soft); color: #b45309; }
+  .card.danger .icon { background: var(--danger-soft); color: var(--danger); }
+  .card.blue .icon { background: #eef5ff; color: #1d4ed8; }
+
+  .callout { border: 1px solid var(--line); border-left: 4px solid var(--brand); background: var(--surface); border-radius: 12px; padding: 15px 17px; margin: 18px 0; }
+  .callout strong { display: block; margin-bottom: 3px; }
+  .callout.sales { border-left-color: var(--accent); background: #fffdf7; }
+  .callout.product { border-left-color: #2563eb; background: #f8fbff; }
+  .callout.dev { border-left-color: var(--brand); background: #f6fffc; }
+  .callout.warn { border-left-color: var(--danger); background: #fff9f9; }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-sm); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--surface-2); font-size: 12px; letter-spacing: .03em; color: var(--muted); font-weight: 800; white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: #fbfdff; }
+  td code { white-space: nowrap; }
+
+  .status { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; white-space: nowrap; }
+  .status.ga { background: var(--ok-soft); color: var(--ok); }
+  .status.beta { background: var(--beta-soft); color: var(--beta); }
+  .status.preview { background: var(--preview-soft); color: var(--preview); }
+  .status.gap { background: var(--danger-soft); color: var(--danger); }
+  .status.partial { background: #fff8e6; color: #a16207; }
+
+  /* architecture */
+  .arch { display: flex; flex-direction: column; gap: 8px; margin: 18px 0; }
+  .arch-row { display: grid; grid-template-columns: repeat(var(--n, 5), minmax(0,1fr)); gap: 8px; }
+  .arch-box {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 11px 12px; text-align: center; font-size: 12.5px; font-weight: 650; color: var(--ink);
+    box-shadow: var(--shadow-sm);
+  }
+  .arch-box small { display: block; font-weight: 500; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .arch-box.hot { background: var(--brand-soft); border-color: #b9e6df; color: var(--brand); }
+  .arch-box.dark { background: #0d1b2a; color: #dce9f5; border-color: #0d1b2a; }
+  .arch-box.dark small { color: #8fb0c4; }
+  .arch-arrow { text-align: center; color: var(--faint); font-size: 18px; line-height: 1; }
+  .arch-caption { text-align: center; color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+  /* steps */
+  .steps { counter-reset: step; display: grid; gap: 12px; margin: 16px 0; }
+  .step { position: relative; padding: 14px 16px 14px 52px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-sm); }
+  .step::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; left: 15px; top: 14px;
+    width: 24px; height: 24px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--brand); color: #fff; font-size: 12px; font-weight: 800;
+  }
+  .step b { display: block; margin-bottom: 2px; }
+  .step span { color: var(--muted); font-size: 13.5px; }
+
+  /* scenarios */
+  .scenario {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 22px 23px; box-shadow: var(--shadow-sm); margin-bottom: 16px;
+  }
+  .scenario-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+  .scenario-num {
+    flex: none; width: 40px; height: 40px; border-radius: 12px;
+    display: grid; place-items: center; background: #0d1b2a; color: #7fe3d4;
+    font-weight: 850; font-size: 13px; letter-spacing: .04em;
+  }
+  .scenario-head h3 { margin: 1px 0 3px; }
+  .scenario-head .meta { color: var(--muted); font-size: 12.5px; }
+  .scenario-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; }
+  .scenario-grid h4 { color: var(--brand); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 5px; }
+  .scenario-grid ul { padding-left: 17px; margin: 0; font-size: 13px; color: var(--muted); }
+  .scenario-grid li { margin: 3px 0; }
+  .scenario-foot { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); color: var(--muted); font-size: 12.5px; }
+  .scenario-foot strong { color: var(--ink); }
+
+  /* misc */
+  .pill-row { display: flex; flex-wrap: wrap; gap: 7px; margin: 10px 0 0; }
+  .pill { padding: 4px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+  .hr { height: 1px; background: var(--line); margin: 24px 0; border: 0; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; min-width: 0; }
+  .list-tight li { margin: 2px 0; }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { position: relative; padding-left: 25px; }
+  .checklist li::before { content: "✓"; position: absolute; left: 0; color: var(--ok); font-weight: 800; }
+  .xlist { list-style: none; padding-left: 0; }
+  .xlist li { position: relative; padding-left: 25px; }
+  .xlist li::before { content: "×"; position: absolute; left: 2px; color: var(--danger); font-weight: 800; }
+  details { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin: 10px 0; }
+  summary { cursor: pointer; font-weight: 700; color: var(--ink); }
+  details[open] summary { margin-bottom: 8px; }
+  .footer { padding: 36px 34px 50px; color: var(--muted); font-size: 12.5px; text-align: center; }
+  .footer .brandline { color: var(--ink); font-weight: 800; letter-spacing: .12em; margin-bottom: 6px; }
+
+  @media (max-width: 1120px) {
+    .hero-inner { grid-template-columns: 1fr; gap: 28px; }
+    .hero-kpis { grid-template-columns: repeat(3, minmax(0,1fr)); }
+    .g4 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .scenario-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  }
+  @media (max-width: 980px) {
+    html { scroll-padding-top: 112px; }
+    .layout { display: block; }
+    .sidebar { display: none; }
+    .topbar .tagline { display: none; }
+    .mobile-toc {
+      display: flex; gap: 4px; overflow-x: auto;
+      position: sticky; top: 64px; z-index: 55;
+      padding: 8px 14px;
+      background: rgba(255,255,255,.94);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--line);
+      scrollbar-width: none;
+    }
+    .mobile-toc::-webkit-scrollbar { display: none; }
+    .mobile-toc a {
+      flex: none; padding: 4px 9px; border-radius: 999px;
+      background: var(--surface-2); color: var(--muted);
+      font-size: 12px; font-weight: 700;
+    }
+    .mobile-toc a:hover { color: var(--brand); text-decoration: none; }
+    .container { padding: 0 22px; }
+    .hero-inner { padding: 52px 22px 44px; }
+    .g3 { grid-template-columns: 1fr; }
+    .two-col { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px) {
+    body { font-size: 14.5px; }
+    .hero h1 { font-size: 31px; }
+    .topbar { padding: 0 16px; }
+    .top-actions .btn { padding: 7px 11px; }
+    .hero-kpis { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .g2, .g4, .scenario-grid { grid-template-columns: 1fr; }
+    .arch-row { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .section { padding: 46px 0 42px; }
+    .card, .scenario { padding: 18px; }
+  }
+  @media print {
+    body { background: #fff; font-size: 11.5pt; }
+    .topbar, .sidebar, .progress, .hero-actions, .hero-kpis { display: none !important; }
+    .layout { display: block; max-width: none; }
+    .hero { background: #0d1b2a !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .hero-inner { display: block; padding: 34px 0; }
+    .hero-panel { display: none; }
+    .section { padding: 22px 0; break-inside: avoid; }
+    .card, .scenario, .callout, .table-wrap, .arch { break-inside: avoid; }
+    .container { max-width: none; padding: 0 14mm; }
+    a { color: #0f766e; }
+  }
+</style>
+</head>
+<body>
+<div class="progress" id="progress"></div>
+
+<header class="topbar">
+  <a class="brand" href="#top"><span class="brand-mark">Z</span> 智总管</a>
+  <span class="tagline">自托管 · 多用户 · 多 Agent · 从对话到交付</span>
+  <div class="spacer"></div>
+  <div class="top-actions">
+    <a class="btn" href="#reading">按角色阅读</a>
+    <button class="btn" type="button" onclick="window.print()">打印 / 导出 PDF</button>
+  </div>
+</header>
+
+<nav class="mobile-toc" aria-label="章节导航">
+  <a href="#summary">01 读懂</a>
+  <a href="#positioning">02 定位</a>
+  <a href="#map">03 功能</a>
+  <a href="#scenarios">04 场景</a>
+  <a href="#product-arch">05 产品架构</a>
+  <a href="#tech-arch">06 技术架构</a>
+  <a href="#maturity">07 成熟度</a>
+  <a href="#sales">08 销售</a>
+  <a href="#ops">09 部署</a>
+  <a href="#reading">10 阅读</a>
+  <a href="#appendix">11 附录</a>
+</nav>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="side-label">开始</div>
+    <nav class="toc" id="toc">
+      <a href="#summary">01 · 30 秒读懂</a>
+      <a href="#positioning">02 · 定位与边界</a>
+      <a href="#map">03 · 功能全景</a>
+      <a href="#scenarios">04 · 应用场景</a>
+      <a href="#product-arch">05 · 产品架构</a>
+      <a href="#tech-arch">06 · 技术架构</a>
+      <a href="#maturity">07 · 成熟度与路线图</a>
+      <a href="#sales">08 · 销售与方案指南</a>
+      <a href="#ops">09 · 部署与交付</a>
+      <a href="#reading">10 · 角色阅读路径</a>
+      <a href="#appendix">11 · 附录</a>
+    </nav>
+    <div class="side-note">
+      <strong>品牌口径</strong><br>
+      对外品牌 / 产品名称：<b>智总管</b>。开源项目、代码标识与命令仍为 <code>Octop</code> / <code>octop</code>（仓库 <code>TencentCloud/Octop</code>、<code>octop run</code>、<code>~/.octop/</code>）。<br><br>
+      <strong>文档口径</strong><br>
+      基于仓库 <code>v1.0.2</code>（2026-11-13）代码与文档整理。能力数量为当前仓库实测；路线图不代表交付承诺。对外引用前请确认版本、授权与商务条款。
+    </div>
+  </aside>
+
+  <main>
+    <!-- HERO -->
+    <section class="hero" id="top">
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <div class="hero-kicker">智总管 · PRODUCT &amp; ARCHITECTURE BRIEF</div>
+          <h1>智总管 产品与架构全景</h1>
+          <p class="hero-sub">
+            一个自托管、多用户、多 Agent 的 AI 工作平台：把 Web / CLI / IM / API 入口、专家与团队、连接器、知识库、自动化、MiniApp 交付面，放进一个可以自己掌控的进程里。
+          </p>
+          <div class="hero-tags">
+            <span>销售：卖点、场景、边界</span>
+            <span>产品：能力地图、成熟度、路线</span>
+            <span>研发：架构、模块、约束</span>
+          </div>
+          <div class="hero-actions">
+            <a class="btn primary" href="#summary">30 秒读懂 智总管</a>
+            <a class="btn" href="#scenarios">看 8 个应用场景</a>
+            <a class="btn" href="#tech-arch">看技术架构</a>
+          </div>
+          <div class="hero-meta">v1.0.2 · 2026-11-13 · 对外品牌：智总管 · 单进程 · SQLite / PostgreSQL · MIT</div>
+        </div>
+        <div class="hero-panel">
+          <div class="panel-title">一个进程，七个能力平面</div>
+          <div class="hero-layer"><span class="dot"></span><b>入口</b> Web · CLI · 10 个 IM · API · Desktop</div>
+          <div class="hero-layer"><span class="dot"></span><b>协作</b> 专家 · 团队 · 群聊 · 审批 · 收件箱</div>
+          <div class="hero-layer"><span class="dot"></span><b>执行</b> LangGraph · 模型 · 工具 · 技能 · 子代理</div>
+          <div class="hero-layer"><span class="dot"></span><b>集成</b> 30 连接器 · OAuth · MCP · 知识库 · 记忆</div>
+          <div class="hero-layer"><span class="dot"></span><b>自动化</b> Cron · 外部事件 · 主动关怀 · 通知</div>
+          <div class="hero-layer"><span class="dot"></span><b>交付</b> MiniApp · 看板 · 公开链接 · 交付物</div>
+          <div class="hero-layer"><span class="dot"></span><b>治理</b> 多用户 · ACL · 审计 · PII · 备份 · TLS</div>
+        </div>
+      </div>
+      <div class="hero-kpis">
+        <div class="hero-kpi"><b>1</b><span>单进程 / 无外部队列</span></div>
+        <div class="hero-kpi"><b>10</b><span>IM / 消息通道</span></div>
+        <div class="hero-kpi"><b>30</b><span>内置连接器</span></div>
+        <div class="hero-kpi"><b>20+</b><span>内置专家模板</span></div>
+        <div class="hero-kpi"><b>60+</b><span>内置工具位</span></div>
+        <div class="hero-kpi"><b>2</b><span>SQLite / PostgreSQL</span></div>
+      </div>
+    </section>
+
+    <!-- 01 SUMMARY -->
+    <section class="section" id="summary">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">01 · 30 秒读懂</span>
+          <h2>智总管不是“另一个聊天机器人”，而是可自托管的 AI 工作平台</h2>
+          <p class="lede">
+            智总管把“人和 AI 对话”升级为“每个用户拥有自己的 Agent，团队拥有可编排的专家，业务结果以应用、看板、文档和交付物的形式落地”。所有状态默认放在自己的机器上，模型、存储、通道和连接器都可以替换。
+          </p>
+          <div class="audience"><span class="badge sales">销售</span><span class="badge product">产品</span><span class="badge dev">研发</span></div>
+        </div>
+
+        <div class="grid g3">
+          <article class="card">
+            <div class="icon">◎</div>
+            <h3>对个人：一个记得你、能动手的专属助理</h3>
+            <p>专属 Agent、长期记忆、知识库、浏览器、终端、定时任务和 IM 触达。它不只回答问题，还能查资料、整理文件、写周报、跑自动化。</p>
+          </article>
+          <article class="card blue">
+            <div class="icon">◫</div>
+            <h3>对团队：多用户、多专家、可编排的数字同事</h3>
+            <p>每个成员有自己的 Agent；专家可共享；团队由主持人调度成员；目标、任务、审批、预算、交付物在看板上闭环。</p>
+          </article>
+          <article class="card accent">
+            <div class="icon">↗</div>
+            <h3>对企业：可私有化、可接业务系统、可交付应用</h3>
+            <p>JWT / SSO / LDAP、ACL、审批、PII 脱敏、审计、TLS、备份；连接器与 MCP 接入现有系统；MiniApp 把数据变成可用的看板与台账。</p>
+          </article>
+        </div>
+
+        <div class="callout">
+          <strong>一句话理解</strong>
+          <p>智总管 = <b>多用户 Agent 运行时</b> + <b>IM 网关</b> + <b>专家/团队编排</b> + <b>连接器/知识库</b> + <b>自动化/事件</b> + <b>MiniApp 交付面</b> + <b>自托管运维</b>。它用一个 Python 进程把这些能力装在一起，除 LLM provider 外不依赖外部队列或必需服务。</p>
+        </div>
+
+        <div class="two-col" style="margin-top:18px">
+          <div class="card">
+            <h3>适合谁</h3>
+            <ul class="checklist list-tight">
+              <li>10–500 人的团队或部门，日常协作在飞书 / 钉钉 / 企微 / 微信 / Telegram / Discord</li>
+              <li>希望数据留在自己机器、内网或自有云上的企业</li>
+              <li>有大量文档、制度、产品资料，需要“能引用、能追溯”的知识助手</li>
+              <li>需要多个角色 Agent 分工，而不是一个通用聊天窗口</li>
+              <li>有运营台账、客户跟进、报表看板等“最后一公里”交付需求</li>
+              <li>有研发/运维团队，希望把 ACP、终端、浏览器、定时任务接进 AI</li>
+            </ul>
+          </div>
+          <div class="card danger">
+            <h3>不适合谁</h3>
+            <ul class="xlist list-tight">
+              <li>需要多租户 SaaS、跨地域高可用、分布式集群的超大规模场景</li>
+              <li>需要严格确定性的 BPM / 工作流引擎，且不能接受 Agent 的不确定性</li>
+              <li>没有 LLM provider、没有可运行服务的机器，且不愿做任何运维</li>
+              <li>希望“完全无人值守、零人工审批”的高风险业务</li>
+              <li>只需要一个开箱即用的垂直行业 SaaS，不需要定制与集成</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 02 POSITIONING -->
+    <section class="section" id="positioning">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">02 · 定位与边界</span>
+          <h2>它的位置：Agent 交付物的着陆场，而不是业务数据库</h2>
+          <p class="lede">
+            智总管的强项是“把 AI 能力组装成一个可运行、可协作、可交付的平台”。理解它“是什么”和“不是什么”，比记住功能列表更重要。
+          </p>
+          <div class="audience"><span class="badge sales">销售</span><span class="badge product">产品</span></div>
+        </div>
+
+        <div class="grid g2">
+          <div class="card">
+            <h3>它是什么</h3>
+            <ul>
+              <li><b>多用户 Agent 平台</b>：每个用户可有多个 Agent，各自拥有工作区、模型、通道、定时任务与记忆。</li>
+              <li><b>统一入口</b>：Web、CLI、IM、HTTP/WebSocket API 共用同一套 Agent 运行时。</li>
+              <li><b>可编排的专家团队</b>：专家库、人格、技能、子代理、团队主持人 + 成员。</li>
+              <li><b>可接入外部世界</b>：30 个连接器、OAuth、MCP、浏览器、终端、远程桌面、ACP。</li>
+              <li><b>可交付的业务面</b>：知识库问答、定时任务、外部事件、MiniApp 台账/看板/公开链接。</li>
+              <li><b>可自托管的运维形态</b>：安装向导、TLS、服务化、备份、更新、i18n、API 文档。</li>
+            </ul>
+          </div>
+          <div class="card danger">
+            <h3>它不是什么</h3>
+            <ul>
+              <li><b>不是纯云端 SaaS</b>：默认自托管，数据和密钥在本地；也不是开箱即用的多租户云服务。</li>
+              <li><b>不是 RPA / BPM 工作流引擎</b>：Agent 擅长灵活判断与工具调用，不擅长严格确定性的流程编排。</li>
+              <li><b>不是分布式集群</b>：单进程、单节点设计；跨节点请用“每节点一个智总管 + 外部协调层”。</li>
+              <li><b>不是业务数据库的权威源</b>：MiniApp 是投影层；任务实体、审计、审批仍落原生表。</li>
+              <li><b>不是零配置的行业 SaaS</b>：需要配置模型、通道、连接器、权限和运维。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout product">
+          <strong>产品经理提示</strong>
+          <p>对外表达时，建议把智总管描述为“<b>可自托管的 AI 工作平台</b>”，而不是“万能 Agent”或“企业级分布式 AI 中台”。前者准确且可验证；后者会带来多租户、分布式、SLA 等不必要的高预期。</p>
+        </div>
+
+        <div class="table-wrap" style="margin-top:18px">
+          <table>
+            <thead><tr><th>典型买家</th><th>核心诉求</th><th>最匹配的能力</th><th>建议切入方式</th></tr></thead>
+            <tbody>
+              <tr><td>中小企业 / 部门负责人</td><td>团队提效、知识沉淀、IM 内可用</td><td>多用户 + 专家 + IM + 知识库 + 定时任务</td><td>从一个 IM 群 + 一个知识库 POC 开始</td></tr>
+              <tr><td>企业 IT / 数字化负责人</td><td>私有化、SSO、权限、审计、可运维</td><td>JWT / OIDC / LDAP、ACL、审计、TLS、备份、PostgreSQL</td><td>先做内网单节点，验证模型与权限，再扩团队</td></tr>
+              <tr><td>业务运营 / 销售负责人</td><td>客户跟进、台账、报表、提醒</td><td>连接器 + 记忆 + Cron + MiniApp + 公开链接</td><td>用 Excel 台账 → 看板的 10 分钟演示切入</td></tr>
+              <tr><td>研发 / 运维负责人</td><td>排障、自动化、代码与浏览器操作</td><td>ACP + 终端 + 浏览器 + 事件 + Cron</td><td>从“只读排障助手”开始，逐步开放写操作</td></tr>
+              <tr><td>家庭 / 个人极客</td><td>一个长期陪伴、能动手的助理</td><td>个人 Agent + 记忆 + IM + 浏览器 + 知识库</td><td>Desktop / Docker 一键部署，先个人使用</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 03 FEATURE MAP -->
+    <section class="section" id="map">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">03 · 功能全景</span>
+          <h2>八块能力，拼成一个完整的 AI 工作平台</h2>
+          <p class="lede">
+            下面按“用户能感知到的能力域”组织，而不是按代码目录。每个域都标注了成熟度，方便销售判断能不能承诺、产品判断先做什么、研发判断改哪里。
+          </p>
+          <div class="audience"><span class="badge sales">销售</span><span class="badge product">产品</span><span class="badge dev">研发</span></div>
+        </div>
+
+        <div class="grid g2">
+          <article class="card">
+            <div class="icon">◉</div>
+            <h3>1. 多用户与多入口</h3>
+            <ul>
+              <li><b>Web Dashboard</b>：聊天、专家、团队、连接器、通道、Cron、知识库、插件、设置、MiniApp 工作台、ACP、远程桌面。</li>
+              <li><b>CLI</b>：<code>octop run</code>、<code>init</code>、<code>service</code>、<code>chats</code>、<code>provider</code>、<code>cron</code>、<code>backup</code>、<code>skills</code>、<code>plugin</code>、<code>acp</code> 等。</li>
+              <li><b>10 个 IM / 消息通道</b>：飞书、钉钉、QQ、微信、企业微信、Telegram、Discord、MQTT、小艺、元宝。</li>
+              <li><b>API</b>：HTTP + WebSocket；流式聊天走 WS，部分 HITL/流式接口用 SSE；<code>/api/docs</code> 可在配置中开启。</li>
+              <li><b>桌面端</b>：Windows / macOS / Linux；FnOS NAS 包；移动端在内部测试阶段。</li>
+              <li><b>认证与权限</b>：JWT、管理员、邀请码、OIDC SSO、LDAP、验证码、登录锁定、资源级 ACL。</li>
+            </ul>
+          </article>
+
+          <article class="card blue">
+            <div class="icon">✦</div>
+            <h3>2. Agent 与专家</h3>
+            <ul>
+              <li><b>每用户多个 Agent</b>：独立工作区、模型 provider、通道、Cron、记忆。</li>
+              <li><b>专家库</b>：20+ 内置模板，覆盖通用助理、工程、设计、运营、财务、法务、医疗学习、腾讯云、微信运营等。</li>
+              <li><b>人格</b>：16 型 MBTI 模板 + 自定义系统提示 + <code>SOUL.md</code>，让角色稳定。</li>
+              <li><b>技能 / 子代理</b>：技能包、SkillHub、共享资源池、子代理派生。</li>
+              <li><b>工具</b>：60+ 内置工具位（文件、搜索、浏览器、终端、记忆、Cron、知识库、MiniApp、移动端等），外加 MCP / 插件工具。</li>
+              <li><b>模型</b>：OpenAI 兼容、DashScope、Ollama 及多种预设；provider 健康检查与熔断。</li>
+            </ul>
+          </article>
+
+          <article class="card accent">
+            <div class="icon">◇</div>
+            <h3>3. 团队与自治</h3>
+            <ul>
+              <li><b>专家团队</b>：主持人 + 至少 2 名成员；主持人调度，成员独立工作区；群聊上墙、成员侧栏、异步派工。</li>
+              <li><b>目标 / 任务 / 看板</b>：目标、9 态任务机、依赖、优先级、截止、CAS 更新、交付物。</li>
+              <li><b>Autopilot（Beta）</b>：runtime / events / decisions / waits / sweeper；启动、暂停、恢复、完成、全停。</li>
+              <li><b>预算与审批</b>：团队/数字员工预算、HITL 持久化、<code>ask_creator</code>、收件箱。</li>
+              <li><b>数字员工（Beta）</b>：单专家自治，复用目标/任务底座，自己执行、自己回写。</li>
+              <li><b>共享与桥接</b>：专家分享、知识库分享、跨实例 Bridge。</li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <div class="icon">▤</div>
+            <h3>4. 知识与记忆</h3>
+            <ul>
+              <li><b>知识库</b>：文档导入、切分、向量检索、引用、部署内共享。</li>
+              <li><b>本地 embedding</b>：可选 ONNX 模型，离线可用；大文档后台索引。</li>
+              <li><b>长期记忆</b>：octop-memory，分层召回 + 全文检索；记忆随工作区迁移。</li>
+              <li><b>上下文效率</b>：文件系统 offload、分层提示词、记忆压缩、<code>memory slim</code>。</li>
+              <li><b>历史</b>：threads / messages 投影、执行轨迹、可选分段归档。</li>
+            </ul>
+          </article>
+
+          <article class="card blue">
+            <div class="icon">⇄</div>
+            <h3>5. 连接器与扩展</h3>
+            <ul>
+              <li><b>30 个内置连接器</b>：腾讯文档、腾讯会议、腾讯乐享、微云、微信读书、Notion、Obsidian、语雀、飞书/企微/钉钉 CLI、企查查、滴滴、有道、Dify、WeKnora、HTTP 取数等。</li>
+              <li><b>OAuth + MCP</b>：OAuth 应用、MCP 网关、自定义 MCP server、只读工具校验。</li>
+              <li><b>插件</b>：27 个内置插件 + 第三方插件；工具、UI 卡片、技能、钩子、通道。</li>
+              <li><b>ACP</b>：入站（Zed/OpenCode 等使用你的 Agent）与出站（OpenCode、Claude Code、CodeBuddy、Codex）。</li>
+              <li><b>外部系统</b>：浏览器、终端、远程桌面、远程 Android 控制、语音 STT/TTS。</li>
+            </ul>
+          </article>
+
+          <article class="card accent">
+            <div class="icon">↻</div>
+            <h3>6. 自动化与触达</h3>
+            <ul>
+              <li><b>Cron</b>：APScheduler；自然语言 / slash 创建；文本推送或跑 Agent；按 Agent 管理。</li>
+              <li><b>外部事件</b>：Webhook（HMAC）+ 连接器轮询；订阅、过滤、映射、合并窗口、限流、重试、死信、30 天保留。</li>
+              <li><b>事件目标</b>：专家 turn、团队 judge、MiniApp refresh/import。</li>
+              <li><b>主动关怀</b>：免打扰窗、随机频控、去重、预算、升级、责任范围、工具范围。</li>
+              <li><b>通知</b>：Dashboard WebSocket、IM 推送、审批卡片。</li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <div class="icon">▦</div>
+            <h3>7. 交付与 MiniApp</h3>
+            <ul>
+              <li><b>MiniApp</b>：Agent 生成单文件 HTML + 控制面数据表；沙箱 iframe、SDK、能力清单。</li>
+              <li><b>数据</b>：多表、行级 CAS、幂等、导入/导出、PII 脱敏、备份/恢复。</li>
+              <li><b>发布</b>：只读公开链接、发布快照、表级可见性、限流、撤销。</li>
+              <li><b>AI</b>：应用内只读数据助手（含图表）、一次性文本生成。</li>
+              <li><b>工作台</b>：个人多 Board、12 列网格、锁定、撤销、全屏、自动排列。</li>
+              <li><b>交付物</b>：团队目标可挂载文件、链接、文本或 MiniApp。</li>
+            </ul>
+          </article>
+
+          <article class="card danger">
+            <div class="icon">⛨</div>
+            <h3>8. 安全与运维</h3>
+            <ul>
+              <li><b>身份</b>：JWT、角色、邀请码、OIDC、LDAP、验证码、登录锁定。</li>
+              <li><b>执行控制</b>：HITL 工具审批、<code>app_delete</code> 强制审批、Shell 命令防护、SSRF 校验。</li>
+              <li><b>数据保护</b>：PII 检测/脱敏、沙箱工作区、MiniApp 双层沙箱 + CSP + WebRTC 冻结。</li>
+              <li><b>运维</b>：安装向导、TLS / Let's Encrypt、systemd/launchd/Windows 服务、备份、更新、日志、资源限制。</li>
+              <li><b>可观测</b>：usage log、audit log、METRICS、API 文档、i18n（zh/en）。</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="callout warn" style="margin-top:22px">
+          <strong>能力边界提醒</strong>
+          <p>“有功能”不等于“开箱即用”。连接器需要外部账号与授权；IM 通道需要平台应用凭证；知识库效果取决于文档质量与 embedding 模型；团队/数字员工仍是 Beta；MiniApp 的 R2/R3（外部服务、事件、统一调度、公开看板）尚未实现。销售承诺前请按第 07、08 节核对。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 SCENARIOS -->
+    <section class="section" id="scenarios">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">04 · 应用场景</span>
+          <h2>8 个可落地的参考场景</h2>
+          <p class="lede">
+            每个场景都按“痛点 → 智总管组合 → 交付结果 → 衡量指标”展开，并注明当前边界。它们不是行业模板的替代品，而是销售做方案、产品做需求、研发做集成的共同语言。
+          </p>
+          <div class="audience"><span class="badge sales">销售</span><span class="badge product">产品</span></div>
+        </div>
+
+        <article class="scenario" id="s1">
+          <div class="scenario-head">
+            <div class="scenario-num">S1</div>
+            <div>
+              <h3>个人 / 家庭超级助理</h3>
+              <div class="meta">适合：个人、自由职业者、家庭共享部署 · 入口：Web / IM / Desktop</div>
+            </div>
+          </div>
+          <div class="scenario-grid">
+            <div><h4>痛点</h4><ul><li>信息散落在 IM、文档、网页和本地文件</li><li>重复写周报、整理资料、设提醒</li><li>通用聊天机器人不记得长期偏好</li></ul></div>
+            <div><h4>智总管组合</h4><ul><li>专属 Agent + 长期记忆</li><li>知识库 + 浏览器 + 文件工具</li><li>Cron 提醒 + IM 推送</li><li>可选 MiniApp 个人台账</li></ul></div>
+            <div><h4>交付结果</h4><ul><li>每日简报 / 周报</li><li>个人资料库与问答</li><li>日程、提醒、订阅</li><li>家庭多用户共享</li></ul></div>
+            <div><h4>衡量指标</h4><ul><li>每日节省时间</li><li>周报生成耗时</li><li>提醒到达率</li><li>资料命中率</li></ul></div>
+          </div>
+          <div class="scenario-foot"><strong>边界：</strong>需要一台可运行服务的机器与 LLM provider；长期记忆和大量文档会占用磁盘；不是“零配置”的消费级 App。</div>
+        </article>
+
+        <article class="scenario" id="s2">
+          <div class="scenario-head">
+            <div class="scenario-num">S2</div>
+            <div>
+              <h3>中小企业 IM 团队助手</h3>
+              <div class="meta">适合：10–200 人团队、部门 · 入口：飞书 / 钉钉 / 企微 / 微信 / Telegram / Discord</div>
+            </div>
+          </div>
+          <div class="scenario-grid">
+            <div><h4>痛点</h4><ul><li>知识和决策淹没在群聊里</li><li>新人重复问同样的问题</li><li>任务跟进靠人肉提醒</li></ul></div>
+            <div><h4>智总管组合</h4><ul><li>多用户 + 多专家</li><li>IM 通道 + slash 命令 + 审批</li><li>知识库 + 连接器</li><li>Cron 提醒 + 团队看板</li></ul></div>
+            <div><h4>交付结果</h4><ul><li>群内可用的专家</li><li>会议纪要 / 周报</li><li>制度与产品问答</li><li>任务提醒与升级</li></ul></div>
+            <div><h4>衡量指标</h4><ul><li>群内响应时间</li><li>知识命中率</li><li>任务按时率</li><li>人工转接率</li></ul></div>
+          </div>
+          <div class="scenario-foot"><strong>边界：</strong>IM 通道需要平台应用与权限配置；团队/自治能力为 Beta；群聊策略、数据可见范围需在 POC 中确认。</div>
+        </article>
+
+        <article class="scenario" id="s3">
+          <div class="scenario-head">
+            <div class="scenario-num">S3</div>
+            <div>
+              <h3>企业知识库与文档问答</h3>
+              <div class="meta">适合：制度多、产品资料多、培训成本高的企业 · 入口：Web / IM</div>
+            </div>
+          </div>
+          <div class="scenario-grid">
+            <div><h4>痛点</h4><ul><li>文档找不到、版本乱</li><li>回答不可追溯、不敢信</li><li>权限边界不清</li></ul></div>
+            <div><h4>智总管组合</h4><ul><li>知识库 + RAG + 引用</li><li>本地 ONNX embedding（可选）</li><li>连接器：腾讯文档 / Notion / Obsidian / 语雀 / Dify / WeKnora</li><li>ACL + 审计</li></ul></div>
+            <div><h4>交付结果</h4><ul><li>可引用的企业问答</li><li>培训 / 客服助手</li><li>文档摘要与对比</li><li>按用户/部门隔离</li></ul></div>
+            <div><h4>衡量指标</h4><ul><li>回答命中率</li><li>引用可追溯率</li><li>搜索时间下降</li><li>重复提问下降</li></ul></div>
+          </div>
+          <div class="scenario-foot"><strong>边界：</strong>RAG 效果取决于文档解析、切分、embedding 与数据质量；不是“把所有文档丢进去就准确”；敏感文档需配合 ACL 与 PII 策略。</div>
+        </article>
+
+        <article class="scenario" id="s4">
+          <div class="scenario-head">
+            <div class="scenario-num">S4</div>
+            <div>
+              <h3>销售 / 客户运营</h3>
+              <div class="meta">适合：销售团队、客户成功、渠道运营 · 入口：IM / Web / MiniApp</div>
+            </div>
+          </div>
+          <div class="scenario-grid">
+            <div><h4>痛点</h4><ul><li>客户信息散落在表格、聊天、邮件</li><li>跟进靠记忆，容易漏</li><li>话术不统一，新人上手慢</li></ul></div>
+            <div><h4>智总管组合</h4><ul><li>连接器：企查查、腾讯文档、邮箱、CRM/MCP</li><li>记忆 + 知识库（产品/话术）</li><li>Cron 跟进提醒</li><li>MiniApp 客户跟进台账 / 漏斗</li><li>只读公开链接</li></ul></div>
+            <div><h4>交付结果</h4><ul><li>客户 360 台账</li><li>每日跟进清单</li><li>话术与方案草稿</li><li>周报 / 漏斗看板</li></ul></div>
+            <div><h4>衡量指标</h4><ul><li>跟进及时率</li><li>人均客户数</li><li>转化率</li><li>新人上手时间</li></ul></div>
+          </div>
+          <div class="scenario-foot"><strong>边界：</strong>外部 CRM/邮箱需连接器或 MCP 接入；客户敏感信息必须做 PII 标记与权限控制；公开链接只读，不能作为写入入口。</div>
+        </article>
+
+        <article class="scenario" id="s5">
+          <div class="scenario-head">
+            <div class="scenario-num">S5</div>
+            <div>
+              <h3>运营数据台账与看板</h3>
+              <div class="meta">适合：运营、门店、行政、财务、项目团队 · 入口：Web / MiniApp / 公开链接</div>
+            </div>
+          </div>
+          <div class="scenario-grid">
+            <div><h4>痛点</h4><ul><li>Excel 多、版本乱、汇总慢</li><li>数据只有少数人会做透视表</li><li>分享靠截图，无法实时更新</li></ul></div>
+            <div><h4>智总管组合</h4><ul><li>工作台「创建」：上传 Excel/CSV → 确认字段 → 生成看板/台账/进度板</li><li>多表 + 行级 CAS + 导入/导出</li><li>应用内数据助手（含图表）</li><li>发布快照 + 只读公开链接</li><li>多 Board 工作台</li></ul></div>
+            <div><h4>交付结果</h4><ul><li>分钟级生成台账/看板</li><li>手机可看的公开链接</li><li>多人协作与数据维护</li><li>门店/项目大屏</li></ul></div>
+            <div><h4>衡量指标</h4><ul><li>报表制作时间</li><li>数据更新频率</li><li>查看人数</li><li>手工汇总工时</li></ul></div>
+          </div>
+          <div class="scenario-foot"><strong>边界：</strong>单表上限 2 万行 / 5 MB；公开链接只读；PII 默认不导入/脱敏；复杂审批流、实时协同编辑、公开可写表单不做。</div>
+        </article>
+
+        <article class="scenario" id="s6">
+          <div class="scenario-head">
+            <div class="scenario-num">S6</div>
+            <div>
+              <h3>研发效能与运维</h3>
+              <div class="meta">适合：研发、测试、运维、SRE · 入口：Web / CLI / IDE / IM</div>
+            </div>
+          </div>
+          <div class="scenario-grid">
+            <div><h4>痛点</h4><ul><li>排障要在日志、终端、浏览器、文档间切换</li><li>重复巡检、重复命令</li><li>告警响应慢、知识不沉淀</li></ul></div>
+            <div><h4>智总管组合</h4><ul><li>ACP：OpenCode / Claude Code / CodeBuddy / Codex</li><li>终端 + 浏览器 + 文件工具</li><li>Cron 巡检 + 外部事件（告警 webhook）</li><li>知识库 + 记忆</li><li>Shell 防护 + HITL 审批</li></ul></div>
+            <div><h4>交付结果</h4><ul><li>IDE/终端里的 AI 搭档</li><li>自动巡检与告警处置</li><li>排障知识库</li><li>浏览器自动化</li></ul></div>
+            <div><h4>衡量指标</h4><ul><li>MTTR</li><li>重复任务自动化率</li><li>告警一次解决率</li><li>人工审批次数</li></ul></div>
+          </div>
+          <div class="scenario-foot"><strong>边界：</strong>高风险命令应保持 HITL；不是无限制的服务器权限；ACP runner 需要外部 CLI 与凭据；生产变更仍需人工审批。</div>
+        </article>
+
+        <article class="scenario" id="s7">
+          <div class="scenario-head">
+            <div class="scenario-num">S7</div>
+            <div>
+              <h3>数字员工与自治团队</h3>
+              <div class="meta">适合：业务负责人、管理者、项目制团队 · 入口：Web / IM / 看板</div>
+            </div>
+          </div>
+          <div class="scenario-grid">
+            <div><h4>痛点</h4><ul><li>任务多、跨角色协作、跟进难</li><li>目标定了但没人拆解和追踪</li><li>AI 只回答问题，不交付结果</li></ul></div>
+            <div><h4>智总管组合</h4><ul><li>团队主持人 + 成员</li><li>目标 / 任务 / 看板 / 交付物</li><li>Autopilot（Beta）+ 预算 + HITL</li><li>数字员工（Beta）</li><li>Cron + 外部事件触发</li></ul></div>
+            <div><h4>交付结果</h4><ul><li>目标驱动的任务看板</li><li>成员派工与汇总</li><li>文件/链接/MiniApp 交付物</li><li>审批与预算闭环</li></ul></div>
+            <div><h4>衡量指标</h4><ul><li>任务完成率</li><li>人工介入率</li><li>成本 / 任务</li><li>交付准时率</li></ul></div>
+          </div>
+          <div class="scenario-foot"><strong>边界：</strong>Beta 能力，不建议承诺“完全无人值守”；需要清晰验收标准、预算与审批；团队不共享工作区，成员不能被嵌套为团队。</div>
+        </article>
+
+        <article class="scenario" id="s8">
+          <div class="scenario-head">
+            <div class="scenario-num">S8</div>
+            <div>
+              <h3>私有化与合规部署</h3>
+              <div class="meta">适合：金融、医疗、政企、大型企业 · 入口：内网 Web / IM / API</div>
+            </div>
+          </div>
+          <div class="scenario-grid">
+            <div><h4>痛点</h4><ul><li>数据不能出内网</li><li>需要 SSO/LDAP、权限、审计</li><li>需要可控的备份、升级与运维</li></ul></div>
+            <div><h4>智总管组合</h4><ul><li>自托管单进程 + SQLite/PG</li><li>OIDC / LDAP / 邀请码 / ACL</li><li>PII 脱敏 + HITL + Shell 防护</li><li>审计、usage、日志、备份、TLS</li><li>本地模型（Ollama）/ 本地 embedding</li></ul></div>
+            <div><h4>交付结果</h4><ul><li>内网多用户 AI 平台</li><li>统一入口与权限</li><li>数据不出域</li><li>可备份、可升级</li></ul></div>
+            <div><h4>衡量指标</h4><ul><li>合规检查通过</li><li>数据出域事件为 0</li><li>可用性</li><li>审计覆盖率</li></ul></div>
+          </div>
+          <div class="scenario-foot"><strong>边界：</strong>单节点、非多租户；跨部门强隔离建议“每部门/每环境一个实例”；不承诺等保、密评等认证，需按客户合规流程单独评估。</div>
+        </article>
+
+        <h3 style="margin-top:28px">场景选型矩阵</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>场景</th><th>核心能力</th><th>上线复杂度</th><th>主要限制</th><th>建议 POC 周期</th></tr></thead>
+            <tbody>
+              <tr><td>S1 个人 / 家庭</td><td>Agent + 记忆 + IM + Cron</td><td>低</td><td>单机资源、模型费用</td><td>1–3 天</td></tr>
+              <tr><td>S2 IM 团队助手</td><td>多用户 + 专家 + IM + 知识库</td><td>中</td><td>平台应用审核、群策略</td><td>1–2 周</td></tr>
+              <tr><td>S3 企业知识库</td><td>RAG + 连接器 + ACL</td><td>中</td><td>文档质量、embedding、权限</td><td>1–3 周</td></tr>
+              <tr><td>S4 销售运营</td><td>连接器 + 记忆 + Cron + MiniApp</td><td>中高</td><td>外部系统接入、PII</td><td>2–4 周</td></tr>
+              <tr><td>S5 数据台账</td><td>快速创建 + MiniApp + 公开链接</td><td>低</td><td>2 万行 / 5 MB、只读公开</td><td>1–5 天</td></tr>
+              <tr><td>S6 研发运维</td><td>ACP + 终端 + 浏览器 + 事件</td><td>中高</td><td>权限、审批、外部 CLI</td><td>2–4 周</td></tr>
+              <tr><td>S7 数字员工</td><td>团队 + 目标 + 看板 + Autopilot</td><td>高</td><td>Beta、验收标准、预算</td><td>3–6 周</td></tr>
+              <tr><td>S8 私有化</td><td>自托管 + SSO + 审计 + 备份</td><td>中高</td><td>单节点、非多租户、合规评估</td><td>2–6 周</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin-top:24px">行业映射（参考）</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>行业 / 团队</th><th>优先场景</th><th>典型切入点</th></tr></thead>
+            <tbody>
+              <tr><td>专业服务 / 咨询</td><td>S1、S3</td><td>项目资料库、方案草稿、客户问答</td></tr>
+              <tr><td>电商 / 零售</td><td>S4、S5</td><td>门店台账、活动复盘看板、客服话术</td></tr>
+              <tr><td>制造 / 供应链</td><td>S3、S5、S7</td><td>制度问答、巡检台账、异常跟进</td></tr>
+              <tr><td>教育 / 培训</td><td>S1、S3</td><td>课程资料助手、学习计划、答疑</td></tr>
+              <tr><td>医疗 / 生命科学</td><td>S3、S8</td><td>文献/指南检索、内部知识库、私有化</td></tr>
+              <tr><td>金融 / 法务</td><td>S3、S8</td><td>制度与合同问答、权限与审计、私有化</td></tr>
+              <tr><td>互联网 / 软件</td><td>S2、S6</td><td>研发/运维助手、群内知识助手、告警处理</td></tr>
+              <tr><td>家庭 / 个人</td><td>S1</td><td>个人资料库、提醒、家庭共享</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted" style="margin-top:8px">以上为参考映射，不是行业模板；实际方案需结合数据、权限、系统接入与验收标准设计。</p>
+
+        <div class="callout sales" style="margin-top:18px">
+          <strong>销售提示：POC 不要从“平台全功能”开始</strong>
+          <p>选一个能在一周内看到结果的场景（通常是 S5 台账看板或 S2 群内知识助手），先证明“有用”；再扩到连接器、团队和自动化。一次性演示所有功能，客户记不住，也很难验收。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 05 PRODUCT ARCH -->
+    <section class="section" id="product-arch">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">05 · 产品架构</span>
+          <h2>一个进程，五个架构平面</h2>
+          <p class="lede">
+            按能力域看是七层，按架构职责看可以归为入口、编排、执行、数据、治理五个平面。它们共享同一套用户、Agent、会话和存储，而不是五个独立系统。
+          </p>
+          <div class="audience"><span class="badge product">产品</span><span class="badge dev">研发</span></div>
+        </div>
+
+        <div class="arch">
+          <div class="arch-row" style="--n:5">
+            <div class="arch-box hot">入口平面<small>Web · CLI · IM · API · Desktop</small></div>
+            <div class="arch-box hot">编排平面<small>专家 · 团队 · 目标 · 任务 · 审批</small></div>
+            <div class="arch-box hot">执行平面<small>LangGraph · 模型 · 工具 · 技能</small></div>
+            <div class="arch-box hot">数据平面<small>控制面 DB · 工作区 · 知识库 · 记忆</small></div>
+            <div class="arch-box hot">治理平面<small>用户 · ACL · 审计 · PII · 备份</small></div>
+          </div>
+          <div class="arch-arrow">↓ 同一套 Agent 运行时 / 同一套会话与状态 ↓</div>
+          <div class="arch-row" style="--n:3">
+            <div class="arch-box dark">OctopServer<small>进程组合根 + 生命周期</small></div>
+            <div class="arch-box dark">SharedServices<small>repo / config / 依赖注入</small></div>
+            <div class="arch-box dark">FastAPI + uvicorn<small>HTTP / WS / SSE</small></div>
+          </div>
+          <div class="arch-arrow">↓</div>
+          <div class="arch-row" style="--n:2">
+            <div class="arch-box">SQLite / PostgreSQL<small>控制面</small></div>
+            <div class="arch-box">BackendWorkspace<small>本地 / Docker / PG / COS / S3 / OSS / OBS</small></div>
+          </div>
+          <div class="arch-caption">产品架构：入口共享同一运行时，状态可从数据库重建</div>
+        </div>
+
+        <h3 style="margin-top:28px">一次请求的旅程</h3>
+        <div class="steps">
+          <div class="step"><b>入口</b><span>用户从 Dashboard、CLI、IM、Cron 或外部事件进入；不同入口被归一化为同一条消息/任务。</span></div>
+          <div class="step"><b>路由</b><span>GlobalProcessor 解析 slash 命令、会话键、权限与目标 Agent；确定 thread / session。</span></div>
+          <div class="step"><b>执行</b><span>HarnessAgent（LangGraph）加载系统提示、记忆、技能、工具与模型；进入 ReAct / 工具循环。</span></div>
+          <div class="step"><b>工具</b><span>文件、搜索、浏览器、终端、连接器、MCP、Cron、知识库、MiniApp、子代理等被调用；高风险动作走 HITL。</span></div>
+          <div class="step"><b>投影</b><span>流式 token、工具事件、审批卡、媒体与最终答案投影到对应通道；Web 走 WebSocket，IM 走网关。</span></div>
+          <div class="step"><b>持久化</b><span>消息、轨迹、usage、audit、任务状态落库；重启后从数据库恢复。</span></div>
+        </div>
+
+        <h3 style="margin-top:28px">核心对象模型</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>对象</th><th>是什么</th><th>关键关系</th><th>典型使用</th></tr></thead>
+            <tbody>
+              <tr><td><b>User</b></td><td>登录用户 / 管理员</td><td>拥有 Agent、知识库、MiniApp、连接器凭据</td><td>多用户隔离、ACL</td></tr>
+              <tr><td><b>Agent</b></td><td>可运行的 AI 角色</td><td>属于 User；有工作区、模型、通道、Cron、记忆</td><td>个人助理、专家、团队主持人、数字员工</td></tr>
+              <tr><td><b>Expert</b></td><td>预设的 Agent 模板 / 人格</td><td>可从专家库创建 Agent；可分享/发布</td><td>快速获得一个角色</td></tr>
+              <tr><td><b>Team</b></td><td>主持人 + 成员专家</td><td><code>agents.kind=team</code>；成员是普通专家</td><td>多角色协作、派工、汇总</td></tr>
+              <tr><td><b>Thread</b></td><td>一段会话</td><td>关联 Agent、用户、通道、消息</td><td>Web/IM/CLI/Cron 共用</td></tr>
+              <tr><td><b>Workspace</b></td><td>Agent 的文件空间</td><td>本地 / Docker / PG / 对象存储</td><td>SOUL、技能、附件、checkpoint</td></tr>
+              <tr><td><b>Knowledge Base</b></td><td>文档语料 + 向量索引</td><td>可共享给用户/Agent</td><td>RAG、引用、问答</td></tr>
+              <tr><td><b>Connector</b></td><td>外部系统连接</td><td>OAuth / MCP / CLI / HTTP</td><td>文档、会议、邮件、CRM、地图、搜索</td></tr>
+              <tr><td><b>MiniApp</b></td><td>数据表 + 单文件 HTML 界面</td><td>归属 Agent；可发布公开链接</td><td>台账、看板、客户跟进、大屏</td></tr>
+              <tr><td><b>Cron Job</b></td><td>定时任务</td><td>属于 Agent / 用户；可推送文本或跑 Agent</td><td>日报、巡检、提醒</td></tr>
+              <tr><td><b>Event Source</b></td><td>外部事件入口</td><td>Webhook / 连接器轮询 → 订阅 → 投递</td><td>告警、订单、邮件、数据变更</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="grid g2" style="margin-top:18px">
+          <div class="card">
+            <h3>隔离与权限</h3>
+            <ul>
+              <li><b>用户隔离</b>：JWT 解析用户；Agent 行级归属校验；管理员可绕过。</li>
+              <li><b>资源 ACL</b>：Agent、MiniApp、知识库、频道等资源级授权。</li>
+              <li><b>工作区隔离</b>：每个 Agent 独立工作区；可选 Docker 沙箱。</li>
+              <li><b>数据隔离</b>：单实例内按用户/资源授权；不是多租户分区。</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>扩展点</h3>
+            <ul>
+              <li><b>模型</b>：Provider 配置 / OpenAI 兼容 / Ollama。</li>
+              <li><b>工具</b>：MCP server、连接器、插件工具。</li>
+              <li><b>角色</b>：专家模板、人格、SOUL、技能包、子代理。</li>
+              <li><b>通道</b>：内置 10 个 + 插件通道。</li>
+              <li><b>存储</b>：SQLite/PG；本地/Docker/对象存储工作区。</li>
+              <li><b>交付</b>：MiniApp 模板、看板、公开链接。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 06 TECH ARCH -->
+    <section class="section" id="tech-arch">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">06 · 技术架构</span>
+          <h2>单进程、分层、可重建：研发视角的智总管</h2>
+          <p class="lede">
+            智总管的技术选择非常克制：一个 Python 进程、两个数据库选项、三个外部运行时库、没有外部队列。理解这一点，就能理解它的部署优势与扩展边界。
+          </p>
+          <div class="audience"><span class="badge dev">研发</span><span class="badge product">产品</span></div>
+        </div>
+
+        <h3>技术栈</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>层</th><th>技术</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>语言</td><td>Python 3.12+</td><td>asyncio 全链路；阻塞调用进线程池</td></tr>
+              <tr><td>Web</td><td>FastAPI + uvicorn</td><td>HTTP / WebSocket / SSE；Scalar API 文档</td></tr>
+              <tr><td>Agent 运行时</td><td>octop-harness（LangGraph）</td><td>模型路由、工具、技能、checkpoint、记忆</td></tr>
+              <tr><td>IM 网关</td><td>octop-gateway</td><td>多平台消息归一化、通道管理</td></tr>
+              <tr><td>记忆</td><td>octop-memory</td><td>分层召回、全文检索、可迁移</td></tr>
+              <tr><td>浏览器</td><td>octop-browser</td><td>CDP 浏览器自动化、持久 profile</td></tr>
+              <tr><td>控制面 DB</td><td>SQLite（WAL）/ PostgreSQL</td><td>同一套 schema，成对迁移文件</td></tr>
+              <tr><td>调度</td><td>APScheduler</td><td>Cron / 定时任务</td></tr>
+              <tr><td>前端</td><td>React 18 + TypeScript + Vite + Ant Design</td><td>构建后打进 wheel，由 FastAPI 托管</td></tr>
+              <tr><td>ACP</td><td>agent-client-protocol</td><td>入站/出站 coding agent 协作</td></tr>
+              <tr><td>质量</td><td>Ruff · mypy --strict · pytest · CI Linux/Windows</td><td><code>make all</code> 为 ship bar</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin-top:28px">关键架构决策</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>决策</th><th>内容</th><th>收益</th><th>代价 / 边界</th></tr></thead>
+            <tbody>
+              <tr><td><b>单进程、无外部队列</b></td><td>Web / IM / CLI / Cron / Event 共享一个运行时；无 Redis、RabbitMQ、Celery</td><td>部署极简、重启语义简单、状态可从 DB 重建</td><td>只能纵向扩展；重 CPU 任务会占事件循环</td></tr>
+              <tr><td><b>SQLite / PostgreSQL 双后端</b></td><td>同一套 schema；<code>00N.sql</code> + <code>00N.pg.sql</code></td><td>小机器开箱即用；大客户可迁 PG</td><td>SQLite 不支持的重建要写幂等 helper</td></tr>
+              <tr><td><b>资源双 ID</b></td><td>整数 PK + 对外字符串 <code>{entity}_id</code></td><td>外部引用稳定；迁移/导入不破坏链接</td><td>repo 需要同时映射 <code>id</code> / <code>pk</code></td></tr>
+              <tr><td><b>运行时外置</b></td><td>harness / gateway / memory / browser 为独立 PyPI 包</td><td>平台层不背模型适配债；可替换</td><td>版本协同与兼容成本</td></tr>
+              <tr><td><b>依赖向内</b></td><td><code>dashboard → api → infra → db/utils</code></td><td>边界清晰、可测试、可替换传输层</td><td>新功能必须放对层，不能图快</td></tr>
+              <tr><td><b>状态先落库</b></td><td>事件、HITL、Cron 先持久化，再执行</td><td>崩溃后可恢复；多实例可协调</td><td>需要 outbox / lease / 清理机制</td></tr>
+              <tr><td><b>工作区与控制面分离</b></td><td>DB 管元数据，<code>BackendWorkspace</code> 管文件</td><td>支持远程存储与迁移</td><td>跨存储一致性需谨慎处理</td></tr>
+              <tr><td><b>单一 Agent 运行时</b></td><td>所有入口共用 Agent；差异在投影层处理</td><td>行为一致、减少重复逻辑</td><td>入口差异（富卡片/纯文本）要做适配</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin-top:28px">运行时树</h3>
+        <div class="arch">
+          <div class="arch-row" style="--n:1"><div class="arch-box dark">OctopServer.start()<small>组合根：按依赖顺序装配</small></div></div>
+          <div class="arch-arrow">↓</div>
+          <div class="arch-row" style="--n:4">
+            <div class="arch-box">PathLayout / config<small>~/.octop · env · config.json</small></div>
+            <div class="arch-box">DatabasePool<small>SQLite WAL / PostgreSQL</small></div>
+            <div class="arch-box">SharedServices<small>repo + 工厂 + DI 根</small></div>
+            <div class="arch-box">Migrations<small>00N.sql / 00N.pg.sql</small></div>
+          </div>
+          <div class="arch-arrow">↓</div>
+          <div class="arch-row" style="--n:4">
+            <div class="arch-box">ExpertCatalog<small>内置专家库扫描</small></div>
+            <div class="arch-box">SubagentCatalog<small>子代理库</small></div>
+            <div class="arch-box">PluginManager<small>内置/第三方插件</small></div>
+            <div class="arch-box">UserManager<small>认证 / 用户</small></div>
+          </div>
+          <div class="arch-arrow">↓</div>
+          <div class="arch-row" style="--n:1"><div class="arch-box hot">AgentManager（进程级注册表）<small>按需构建每个 Agent 的 AgentRuntime</small></div></div>
+          <div class="arch-arrow">↓</div>
+          <div class="arch-row" style="--n:4">
+            <div class="arch-box">HarnessAgent<small>LangGraph 运行时</small></div>
+            <div class="arch-box">GlobalProcessor<small>slash / 投影 / 会话</small></div>
+            <div class="arch-box">ChannelManager<small>IM 通道</small></div>
+            <div class="arch-box">CronManager<small>APScheduler</small></div>
+          </div>
+          <div class="arch-arrow">↓</div>
+          <div class="arch-row" style="--n:2">
+            <div class="arch-box">Gateway / WebSocketHub<small>IM + Dashboard + CLI</small></div>
+            <div class="arch-box">FastAPI app<small>uvicorn 托管</small></div>
+          </div>
+        </div>
+
+        <h3 style="margin-top:28px">模块地图</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>路径</th><th>职责</th><th>关键点</th></tr></thead>
+            <tbody>
+              <tr><td><code>octop/config.py</code></td><td>环境变量 + config.json</td><td>进程配置；不得依赖 infra</td></tr>
+              <tr><td><code>octop/launch.py</code></td><td>组合根</td><td>唯一同时 import infra/server 与 api/app 的模块</td></tr>
+              <tr><td><code>infra/server.py</code></td><td>OctopServer.start()</td><td>装配运行时树；重启从 DB 重建</td></tr>
+              <tr><td><code>infra/agents/</code></td><td>Agent 运行时、专家、团队、provider、记忆、插件、技能、安全</td><td>最大子包</td></tr>
+              <tr><td><code>infra/gateway/</code></td><td>IM 入口、消息处理、threads、slash、HITL、媒体</td><td>与 octop-gateway 协作</td></tr>
+              <tr><td><code>infra/db/</code></td><td>连接池、迁移、repos、SharedServices</td><td>repo 只写 SQL</td></tr>
+              <tr><td><code>infra/connectors/</code></td><td>连接器目录、OAuth、MCP gateway、凭据加密</td><td>30 个内置连接器</td></tr>
+              <tr><td><code>infra/knowledge/</code></td><td>知识库、文档解析、检索、embedding</td><td>RAG</td></tr>
+              <tr><td><code>infra/cron/</code></td><td>Cron 任务、触发器、Agent 工具钩子</td><td>APScheduler</td></tr>
+              <tr><td><code>infra/events/</code></td><td>外部事件源、订阅、投递、重试</td><td>DB outbox + lease</td></tr>
+              <tr><td><code>infra/apps/</code></td><td>MiniApp 数据、生成、发布、看板、沙箱</td><td>详见 <code>docs/miniapp-overview.md</code></td></tr>
+              <tr><td><code>infra/history/</code></td><td>版本化历史、轨迹、消息投影</td><td>读写分离</td></tr>
+              <tr><td><code>infra/backend/</code></td><td>工作区存储适配、解析、探测</td><td>本地 / Docker / PG / COS / S3 / OSS / OBS</td></tr>
+              <tr><td><code>infra/bridge/</code></td><td>智总管 ↔ 智总管 跨实例连接</td><td>WebSocket 联邦 + HTTP 隧道</td></tr>
+              <tr><td><code>infra/auth/</code> <code>users/</code></td><td>OIDC/LDAP/SSO、用户、角色</td><td>JWT / ACL</td></tr>
+              <tr><td><code>infra/setup/</code></td><td>首启向导、服务安装、TLS</td><td>Let's Encrypt</td></tr>
+              <tr><td><code>infra/backup/</code></td><td>手动/自动备份</td><td>配置 + 工作区 + 知识库</td></tr>
+              <tr><td><code>infra/skills/</code></td><td>技能包、SkillHub</td><td>共享资源池</td></tr>
+              <tr><td><code>infra/browser/</code> <code>desktop/</code> <code>mobile/</code> <code>voice/</code> <code>proactive/</code></td><td>浏览器、远程桌面、Android、语音、主动关怀</td><td>可选能力，按部署启用</td></tr>
+              <tr><td><code>api/routers/</code></td><td>HTTP 适配层</td><td>60+ 路由模块；薄适配</td></tr>
+              <tr><td><code>cli/</code></td><td>Click 命令行</td><td>离线 / 嵌入式 / 外部三类</td></tr>
+              <tr><td><code>dashboard/</code></td><td>React 前端源码</td><td>构建产物在 <code>src/octop/dashboard/</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin-top:28px">消息与执行链路</h3>
+        <div class="arch">
+          <div class="arch-row" style="--n:5">
+            <div class="arch-box">Web WS<small>Dashboard</small></div>
+            <div class="arch-box">IM<small>Feishu / DingTalk / …</small></div>
+            <div class="arch-box">CLI<small>chats / repl</small></div>
+            <div class="arch-box">Cron<small>APScheduler</small></div>
+            <div class="arch-box">Event<small>Webhook / poll</small></div>
+          </div>
+          <div class="arch-arrow">↓ 归一化 ↓</div>
+          <div class="arch-row" style="--n:1"><div class="arch-box hot">GlobalProcessor / HarnessProcessor<small>会话键、slash、权限、目标 Agent、投影</small></div></div>
+          <div class="arch-arrow">↓</div>
+          <div class="arch-row" style="--n:3">
+            <div class="arch-box">HarnessAgent<small>LangGraph ReAct</small></div>
+            <div class="arch-box">Tools<small>文件 / 搜索 / 浏览器 / 终端 / MCP / 连接器 / MiniApp</small></div>
+            <div class="arch-box">HITL<small>审批 / 中断 / 恢复</small></div>
+          </div>
+          <div class="arch-arrow">↓</div>
+          <div class="arch-row" style="--n:3">
+            <div class="arch-box">流式投影<small>token / tool / chart / approval</small></div>
+            <div class="arch-box">持久化<small>messages / trajectory / usage / audit</small></div>
+            <div class="arch-box">通道回写<small>WS / IM / 通知</small></div>
+          </div>
+        </div>
+
+        <h3 style="margin-top:28px">数据与存储</h3>
+        <div class="two-col">
+          <div class="card">
+            <h3>控制面</h3>
+            <ul>
+              <li>SQLite（默认，WAL）或 PostgreSQL。</li>
+              <li>同一套 schema；<code>00N.sql</code> + <code>00N.pg.sql</code> 成对迁移。</li>
+              <li>资源表双 ID：整数 PK + 对外字符串 <code>{entity}_id</code>。</li>
+              <li>约 60 张表：用户、Agent、provider、通道、会话、Cron、知识库、MiniApp、事件、审计、usage。</li>
+              <li>当前 schema v30（以代码断言为准）。</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>工作区</h3>
+            <ul>
+              <li>每个 Agent 独立目录：<code>~/.octop/agents/&lt;id&gt;/</code>。</li>
+              <li>内容文件统一走 <code>BackendWorkspace</code>。</li>
+              <li>后端：本地、Docker 沙箱、PostgreSQL、COS / S3 / OSS / OBS / custom。</li>
+              <li>记忆、checkpoint、技能、附件、MiniApp 的 <code>app.html</code> 等在此。</li>
+              <li>控制面 DB 与工作区存储解耦，便于迁移与远程存储。</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 style="margin-top:28px">安全架构</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>层</th><th>机制</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>身份</td><td>JWT / OIDC / LDAP / 邀请码 / 角色</td><td>登录、用户隔离、管理员</td></tr>
+              <tr><td>授权</td><td>资源级 ACL</td><td>Agent、MiniApp、知识库、频道</td></tr>
+              <tr><td>执行审批</td><td>HITL / <code>interrupt_on</code></td><td>高风险工具、<code>app_delete</code> 强制审批</td></tr>
+              <tr><td>命令防护</td><td>Shell guard 规则</td><td>可编辑的 allow/deny 规则</td></tr>
+              <tr><td>数据脱敏</td><td>PII 检测 / 脱敏</td><td>模型输入输出、MiniApp 查看者/公开链接</td></tr>
+              <tr><td>沙箱</td><td>Docker 工作区 / MiniApp 双层 iframe</td><td>CSP、frame-src none、WebRTC 冻结、逃逸熔断</td></tr>
+              <tr><td>网络</td><td>SSRF 校验 / URL 白名单</td><td>外部取数、图片、连接器</td></tr>
+              <tr><td>审计</td><td><code>audit_log</code> + <code>usage_log</code></td><td>管理动作、用量；工具调用审计仍不完整</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout dev">
+          <strong>研发提示：单进程不是“简单”，而是“边界清晰”</strong>
+          <p>依赖方向是 <code>dashboard → api → infra → db/utils</code>；<code>infra/</code> 永不 import <code>api/</code>、<code>cli/</code>、<code>launch.py</code>。新增功能优先落在 <code>infra/</code>，HTTP 只做薄适配。多实例部署时，注意进程内锁/限流不是全局；数据库事务与 CAS 才是跨进程正确性的基础。</p>
+        </div>
+
+        <details>
+          <summary>深入：MiniApp 的技术架构（简版）</summary>
+          <p><b>数据</b>：`light_apps` / `light_app_tables` / `light_app_rows` 等表；行级 CAS、幂等键、懒迁移。 <b>界面</b>：Agent 生成单文件 HTML，存在 Agent 工作区。 <b>运行</b>：固定 wrapper（`frame-src 'none'`）内嵌 App iframe（`sandbox=allow-scripts`），CSP 禁网，WebRTC/frame 冻结，宿主 bridge 按能力清单代调。 <b>发布</b>：只读公开 token；发布时冻结 HTML + 公开表结构，数据行实时读取；PII 实时脱敏。 <b>边界</b>：单表 2 万行 / 5 MB，不支持实时协同编辑、公开写入、复杂审批流。完整内容见 <code>docs/miniapp-overview.md</code>。</p>
+        </details>
+
+        <details>
+          <summary>深入：外部事件与 Cron 的可靠性</summary>
+          <p><b>Cron</b>：APScheduler 进程级调度；任务行落库；支持文本推送或 Agent 回合；按 Agent 管理。 <b>外部事件</b>：Webhook HMAC + 连接器轮询 → <code>external_events</code> inbox → 订阅过滤 → <code>external_deliveries</code> outbox（条件 UPDATE 租约、指数退避、死信、30 天保留）→ 专家/团队/MiniApp target。 <b>原则</b>：先落库、再执行；崩溃后靠 DB 状态恢复，不依赖内存队列。 <b>边界</b>：语义级过滤、事件契约、严格顺序、公开事件 API 仍在后续设计（见 <code>docs/miniapp-event-api-design.md</code>）。</p>
+        </details>
+      </div>
+    </section>
+
+    <!-- 07 MATURITY -->
+    <section class="section" id="maturity">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">07 · 成熟度与路线图</span>
+          <h2>哪些能承诺，哪些要加“Beta / 规划中”</h2>
+          <p class="lede">
+            下面这张表是销售、产品、研发共同使用的“承诺边界”。GA 代表可以作为标准能力介绍；Beta 代表可用但需要 POC 与人工兜底；未实现代表不要写进标书或合同。
+          </p>
+          <div class="audience"><span class="badge sales">销售</span><span class="badge product">产品</span></div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>能力域</th><th>状态</th><th>依据 / 说明</th><th>对外建议</th></tr></thead>
+            <tbody>
+              <tr><td>多用户与认证</td><td><span class="status ga">GA</span></td><td>JWT、管理员、邀请码、OIDC、LDAP、验证码、锁定、ACL</td><td>可作为标准能力</td></tr>
+              <tr><td>Agent 运行时</td><td><span class="status ga">GA</span></td><td>LangGraph、工具、技能、子代理、记忆、checkpoint</td><td>可作为标准能力</td></tr>
+              <tr><td>专家与人格</td><td><span class="status ga">GA</span></td><td>20+ 专家模板、16 型 MBTI、SOUL、系统提示</td><td>可作为标准能力</td></tr>
+              <tr><td>技能 / 插件</td><td><span class="status ga">GA</span></td><td>技能包、SkillHub、27 个内置插件、第三方插件</td><td>注意插件质量与权限</td></tr>
+              <tr><td>IM 通道</td><td><span class="status ga">GA</span></td><td>10 个通道；部分通道依赖平台审核/外部账号</td><td>按通道逐个确认</td></tr>
+              <tr><td>连接器 / MCP</td><td><span class="status ga">GA</span></td><td>30 个内置连接器、OAuth、MCP 网关、自定义 MCP</td><td>按连接器确认授权与只读/写能力</td></tr>
+              <tr><td>知识库 / RAG</td><td><span class="status ga">GA</span></td><td>文档、切分、检索、引用、共享；本地 embedding 可选</td><td>效果依赖文档质量，需 POC</td></tr>
+              <tr><td>长期记忆</td><td><span class="status ga">GA</span></td><td>octop-memory、分层召回、全文检索、可迁移</td><td>可作为标准能力</td></tr>
+              <tr><td>Cron</td><td><span class="status ga">GA</span></td><td>APScheduler、自然语言/slash、文本/Agent 任务</td><td>可作为标准能力</td></tr>
+              <tr><td>外部事件</td><td><span class="status ga">GA</span></td><td>Webhook + 轮询、订阅、重试、死信、30 天；Phase 0–3</td><td>可作为标准能力；Phase 4 未做</td></tr>
+              <tr><td>MiniApp 核心</td><td><span class="status ga">GA</span></td><td>多表、导入导出、沙箱、SDK、助手、发布、看板</td><td>注意 2 万行 / 5 MB 上限</td></tr>
+              <tr><td>浏览器 / 终端 / 远程桌面</td><td><span class="status ga">GA</span></td><td>Playwright/CDP、交互式终端、远程桌面</td><td>按部署环境启用</td></tr>
+              <tr><td>ACP</td><td><span class="status ga">GA</span></td><td>入站/出站，OpenCode / Claude Code / CodeBuddy / Codex</td><td>需要外部 CLI 与凭据</td></tr>
+              <tr><td>AgentTeams / Autopilot</td><td><span class="status beta">Beta</span></td><td>目标/任务/看板/派工/预算/审批已落地；v2 驱动 0–3</td><td>必须 POC + 人工兜底</td></tr>
+              <tr><td>数字员工</td><td><span class="status beta">Beta</span></td><td>单专家自治复用团队底座；部分能力仍在推进</td><td>不要承诺完全无人值守</td></tr>
+              <tr><td>Bridge 跨实例</td><td><span class="status beta">Beta</span></td><td>Phase 0–3；多连接稳定性/令牌刷新待完善</td><td>可作为“跨实例协作”介绍</td></tr>
+              <tr><td>移动客户端</td><td><span class="status beta">Beta</span></td><td>内部测试；远程 Android 控制为可选能力</td><td>不要作为标准交付项</td></tr>
+              <tr><td>MiniApp R2/R3</td><td><span class="status gap">未实现</span></td><td>外部服务、事件收件箱/发送、统一调度、公开看板、迁移包 v2、认证链接、渠道身份</td><td>不要写进当前版本承诺</td></tr>
+              <tr><td>云端模板市场</td><td><span class="status gap">未实现</span></td><td>前端占位；只有系统/专家模板</td><td>不要承诺“模板市场”</td></tr>
+              <tr><td>分布式 / 多租户</td><td><span class="status gap">不支持</span></td><td>单进程、单节点；无 tenant 维度</td><td>用“每节点一个实例”规避</td></tr>
+              <tr><td>确定性工作流引擎</td><td><span class="status gap">不支持</span></td><td>有 Cron/团队任务/事件，但不是 BPM</td><td>复杂流程需外挂状态机</td></tr>
+              <tr><td>工具调用级审计</td><td><span class="status partial">部分</span></td><td><code>audit_log</code> 覆盖管理动作；工具调用审计不完整</td><td>合规项目需单独评估</td></tr>
+              <tr><td>模型自动降级</td><td><span class="status gap">未实现</span></td><td>只有配额/拒绝，没有自动切换</td><td>不要承诺“永不中断”</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="grid g2" style="margin-top:20px">
+          <div class="card">
+            <h3>已交付 / 可用</h3>
+            <ul>
+              <li>共享资源池（技能/子代理）</li>
+              <li>专家分享</li>
+              <li>PC 桌面客户端</li>
+              <li>MiniApp 工作台、能力清单、发布快照、多 Board</li>
+              <li>外部事件平面 Phase 0–3</li>
+              <li>SSO / LDAP / 邀请码 / ACL</li>
+            </ul>
+          </div>
+          <div class="card accent">
+            <h3>推进中 / 规划中（非承诺）</h3>
+            <ul>
+              <li>AgentTeams / 数字员工 Beta 收敛</li>
+              <li>移动客户端内部测试</li>
+              <li>浏览器/终端能力打磨</li>
+              <li>自我进化：对话沉淀技能</li>
+              <li>Managed Agents / Project / 云边协同</li>
+              <li>插件市场 / 对话式控制平面</li>
+              <li>MiniApp R2/R3：外部服务、事件、调度、公开看板、迁移包</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout warn" style="margin-top:18px">
+          <strong>销售话术边界</strong>
+          <p>可以讲“路线图方向”，不要讲“下个版本一定交付”。尤其是多租户、分布式、自动降级、工具级审计、完全无人值守，这些要么是架构边界，要么仍在演进。对外材料建议统一写“以实际版本与 POC 为准”。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 08 SALES -->
+    <section class="section" id="sales">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">08 · 销售与方案指南</span>
+          <h2>怎么讲、怎么问、怎么不踩坑</h2>
+          <p class="lede">
+            这一节是给销售和售前的“可执行话术”，但更像一份资格判断清单：先确认客户是否真的适合自托管多 Agent 平台，再谈功能。
+          </p>
+          <div class="audience"><span class="badge sales">销售</span></div>
+        </div>
+
+        <h3>价值主张：按角色说</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>听众</th><th>他们关心什么</th><th>建议表达</th><th>可证明的证据</th></tr></thead>
+            <tbody>
+              <tr><td>老板 / 业务负责人</td><td>降本、提效、可控</td><td>“把重复工作交给可管理的数字同事；数据和流程留在自己手里。”</td><td>专家/团队、Cron、MiniApp、预算与审批</td></tr>
+              <tr><td>IT / 安全负责人</td><td>数据主权、权限、审计、运维</td><td>“自托管、SSO/LDAP、ACL、PII 脱敏、审批、TLS、备份、可升级。”</td><td>auth/ACL/audit/backup/setup 模块与配置</td></tr>
+              <tr><td>业务运营</td><td>报表、台账、跟进、提醒</td><td>“Excel 直接变成可维护的看板；手机打开只读链接就能看。”</td><td>MiniApp 快速创建、数据表、公开链接、看板</td></tr>
+              <tr><td>研发 / 运维</td><td>排障、自动化、代码协作</td><td>“在 IM/终端/IDE 里调用同一个 Agent；ACP 接 Claude Code/OpenCode。”</td><td>ACP、终端、浏览器、Cron、事件</td></tr>
+              <tr><td>最终用户</td><td>好用、记得我、能动手</td><td>“一个记得你偏好的助理，能在微信/飞书里直接帮你做事。”</td><td>记忆、专家、IM、工具、MiniApp</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin-top:28px">常见异议与回答</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>客户问题</th><th>建议回答</th><th>不要这样说</th></tr></thead>
+            <tbody>
+              <tr><td>“数据安全吗？”</td><td>默认自托管，数据、密钥、会话在工作目录；支持 JWT/OIDC/LDAP、ACL、PII 脱敏、审批、审计、TLS。强隔离场景建议每部门/每环境独立实例。</td><td>“绝对安全”“天然多租户隔离”</td></tr>
+              <tr><td>“只能用你们的模型吗？”</td><td>可用 OpenAI 兼容、DashScope、Ollama 及多种预设；每个 Agent 可配 provider。</td><td>“支持所有模型”</td></tr>
+              <tr><td>“部署复杂吗？”</td><td>单进程；一键安装、PyPI、Docker、桌面端；<code>octop init</code> + <code>octop run</code>；可注册 systemd/launchd/Windows 服务。</td><td>“零运维”</td></tr>
+              <tr><td>“能接我们的 IM 吗？”</td><td>内置 10 个通道；也支持插件通道与自定义连接器/MCP。需要平台应用审核与凭证。</td><td>“所有 IM 都开箱即用”</td></tr>
+              <tr><td>“能撑多少人？”</td><td>单进程纵向扩展；小团队 SQLite，较大团队 PostgreSQL；跨节点用“每节点一个实例 + Bridge/外部协调”。</td><td>“可以无限水平扩展”</td></tr>
+              <tr><td>“会不会很贵？”</td><td>有 usage、配额、团队预算、本地模型、上下文/记忆优化；没有自动模型降级，需要按场景估算 token。</td><td>“成本一定比人低”</td></tr>
+              <tr><td>“能做业务系统吗？”</td><td>MiniApp 适合台账/看板/轻量数据维护；复杂审批、实时协同、公开写入不做。</td><td>“可以替代 ERP/CRM”</td></tr>
+              <tr><td>“有审计吗？”</td><td>有管理动作审计、usage、日志；工具调用级审计仍不完整，合规项目需单独评估。</td><td>“全链路审计”</td></tr>
+              <tr><td>“能离线吗？”</td><td>可用 Ollama 本地模型、本地 embedding；但连接器/IM/网页类能力仍依赖网络。</td><td>“完全离线可用”</td></tr>
+              <tr><td>“能定制吗？”</td><td>开源 MIT；连接器/MCP/插件/技能/专家/子代理/存储后端都可扩展。</td><td>“什么都能定制”</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin-top:28px">资格判断（POC 前必问）</h3>
+        <div class="two-col">
+          <div class="card">
+            <h3>好信号</h3>
+            <ul class="checklist">
+              <li>有明确的重复工作或知识查询场景，能量化节省时间</li>
+              <li>愿意提供 LLM API 或本地 GPU/Ollama</li>
+              <li>有 IM/文档/CRM 等可接入系统，且有管理员配合</li>
+              <li>接受“先单节点 POC，再扩团队”的节奏</li>
+              <li>关注数据主权、权限、可运维性</li>
+              <li>有 IT/运维能承担安装、备份、升级</li>
+            </ul>
+          </div>
+          <div class="card danger">
+            <h3>危险信号</h3>
+            <ul class="xlist">
+              <li>要求多租户 SaaS、跨地域 HA、99.99% SLA</li>
+              <li>要求完全无人值守、零审批的高风险操作</li>
+              <li>没有模型预算，也不愿部署本地模型</li>
+              <li>要求“所有系统一键接入”，但不提供账号/接口</li>
+              <li>把 MiniApp 当 ERP/CRM 或复杂工作流引擎</li>
+              <li>需要等保/密评等认证，但不愿走合规评估</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 style="margin-top:28px">建议的 3 个 Demo</h3>
+        <div class="grid g3">
+          <div class="card">
+            <div class="icon">1</div>
+            <h3>5 分钟：IM 里的知识助手</h3>
+            <p>在飞书/钉钉群 @ 专家，问一个知识库问题；展示引用、权限和“不知道就说不知道”。</p>
+            <p class="small muted">证明：多用户 + IM + 知识库 + 权限。</p>
+          </div>
+          <div class="card">
+            <div class="icon">2</div>
+            <h3>10 分钟：Excel → 看板 → 链接</h3>
+            <p>上传一份台账，确认字段，生成看板；发布只读链接，手机打开；用应用内助手问一个汇总问题。</p>
+            <p class="small muted">证明：MiniApp + 数据 + 公开链接 + AI 助手。</p>
+          </div>
+          <div class="card">
+            <div class="icon">3</div>
+            <h3>15 分钟：团队目标 → 任务 → 交付物</h3>
+            <p>设一个目标，主持人拆任务、派给成员；看板上看到任务状态；回填一个文件或 MiniApp 交付物。</p>
+            <p class="small muted">证明：团队 + 任务 + 看板 + 交付物（Beta）。</p>
+          </div>
+        </div>
+
+        <h3 style="margin-top:28px">不要承诺清单</h3>
+        <div class="callout warn">
+          <ul class="xlist" style="margin-bottom:0">
+            <li>不要承诺“完全无人值守”“零人工审批”“100% 准确”。</li>
+            <li>不要承诺多租户隔离、分布式集群、跨地域高可用。</li>
+            <li>不要承诺替代 ERP/CRM/BPM 等权威业务系统。</li>
+            <li>不要承诺所有连接器/IM 开箱即用；它们需要外部账号与授权。</li>
+            <li>不要承诺 MiniApp R2/R3（外部服务、事件、统一调度、公开看板、迁移包、认证链接）。</li>
+            <li>不要承诺自动模型降级、全链路工具审计、无限并发/行数。</li>
+            <li>不要承诺等保/密评/行业认证；需要单独合规评估。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 09 OPS -->
+    <section class="section" id="ops">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">09 · 部署与交付</span>
+          <h2>从安装到可交付：一份落地清单</h2>
+          <p class="lede">
+            智总管的部署形态很轻：一个进程、一个数据目录、一个 LLM provider。真正的交付工作量在账号、权限、连接器、知识库和场景配置上。
+          </p>
+          <div class="audience"><span class="badge sales">销售</span><span class="badge dev">研发</span></div>
+        </div>
+
+        <div class="grid g2">
+          <div class="card">
+            <h3>安装方式</h3>
+            <ul>
+              <li><b>一键脚本</b>：macOS / Linux；Windows PowerShell/cmd；自动准备 Python 3.12 与 venv。</li>
+              <li><b>PyPI</b>：<code>pip install octop</code>；可选 <code>[local-embedding]</code>。</li>
+              <li><b>Docker</b>：<code>docker compose -f docker/docker-compose.yml up -d</code>；生产推荐。</li>
+              <li><b>桌面端</b>：Windows / macOS / Linux；FnOS NAS 包。</li>
+              <li><b>源码</b>：<code>uv sync</code> + <code>make dev</code>。</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>运行前提</h3>
+            <ul>
+              <li>Python 3.12+（安装脚本可代管）。</li>
+              <li>一个可用的 LLM provider（API key 或本地 Ollama）。</li>
+              <li>多核 CPU + 数 GB 内存 + 磁盘（模型缓存、知识库、工作区）。</li>
+              <li>如需浏览器自动化：Playwright Chromium。</li>
+              <li>如需远程桌面/Android：额外系统依赖与权限。</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 style="margin-top:28px">SQLite 还是 PostgreSQL？</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>场景</th><th>建议</th><th>理由</th></tr></thead>
+            <tbody>
+              <tr><td>个人 / 家庭 / 小团队 POC</td><td>SQLite（默认，WAL）</td><td>零依赖、单文件、备份简单</td></tr>
+              <tr><td>较大团队 / 多用户 / 数据量增长</td><td>PostgreSQL</td><td>并发、运维、备份、扩展更稳</td></tr>
+              <tr><td>远程工作区 / 对象存储</td><td>SQLite/PG + COS/S3/OSS/OBS</td><td>控制面与工作区解耦</td></tr>
+              <tr><td>跨节点</td><td>每节点一个智总管 + Bridge/外部协调</td><td>智总管不做分布式集群</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin-top:28px">数据目录与备份</h3>
+        <div class="two-col">
+          <div class="card">
+            <h3>默认目录</h3>
+            <pre><code>~/.octop/
+├── config.json        # 进程配置
+├── env                # dotenv（可选）
+├── octop.db           # SQLite 控制面
+├── secrets/           # JWT / 通道密钥
+├── agents/&lt;id&gt;/       # 每个 Agent 的工作区
+├── plugins/           # 第三方插件
+├── ssl/               # 自签证书（如使用）
+└── logs/              # 运行日志</code></pre>
+          </div>
+          <div class="card">
+            <h3>备份与运维</h3>
+            <ul>
+              <li><code>octop init</code>：初始化 DB、JWT secret、管理员。</li>
+              <li><code>octop run</code>：前台运行 API + Dashboard。</li>
+              <li><code>octop service start</code>：注册 systemd / launchd / Windows 服务。</li>
+              <li><code>octop backup</code>：手动/自动备份；配置保留数量。</li>
+              <li><code>octop update</code>：在线更新。</li>
+              <li>TLS / Let's Encrypt：配置后自动签发。</li>
+              <li>日志轮转 + systemd 资源限制（Linux）。</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 style="margin-top:28px">交付检查清单</h3>
+        <div class="card">
+          <ul class="checklist">
+            <li>操作系统、CPU/内存/磁盘、网络与端口确认</li>
+            <li>安装方式（脚本 / Docker / 桌面端）与数据目录确认</li>
+            <li>LLM provider、模型、API key/本地 Ollama 验证</li>
+            <li>管理员账号、密码策略、验证码、登录锁定</li>
+            <li>SSO / LDAP / 邀请码 / 用户与角色</li>
+            <li>IM 通道应用创建、回调地址、权限与群策略</li>
+            <li>连接器 OAuth/MCP 授权；确认只读/写范围</li>
+            <li>知识库文档、embedding 模型、索引与权限</li>
+            <li>专家/团队/数字员工配置与验收标准</li>
+            <li>MiniApp 数据导入、PII 标记、公开链接策略</li>
+            <li>TLS、备份、日志、监控、升级与回滚方案</li>
+            <li>高风险工具审批、Shell 规则、SSRF/网络策略</li>
+            <li>POC 指标与验收口径（节省时间、命中率、任务完成率等）</li>
+          </ul>
+        </div>
+
+        <div class="callout sales">
+          <strong>销售提示：把“部署”与“场景配置”分开报价/排期</strong>
+          <p>安装本身通常很快；真正耗时的是 IM 应用审核、连接器授权、知识库清洗、权限梳理和 POC 验收。方案里最好把“平台部署”和“场景落地”写成两个阶段，避免客户以为装完就能用。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10 READING -->
+    <section class="section" id="reading">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">10 · 角色阅读路径</span>
+          <h2>同一份文档，三种读法</h2>
+          <p class="lede">如果时间有限，按下面的路径跳读即可。</p>
+        </div>
+        <div class="grid g3">
+          <div class="card accent">
+            <div class="icon">销</div>
+            <h3>销售 / 售前</h3>
+            <ol>
+              <li><a href="#summary">30 秒读懂</a>：一句话价值与适合谁</li>
+              <li><a href="#scenarios">应用场景</a>：选一个最像客户的场景</li>
+              <li><a href="#maturity">成熟度</a>：确认哪些能承诺</li>
+              <li><a href="#sales">销售指南</a>：异议处理与 Demo</li>
+              <li><a href="#ops">部署交付</a>：确认环境与排期</li>
+            </ol>
+            <p class="small muted">不要从技术架构开始讲；先讲客户场景和边界。</p>
+          </div>
+          <div class="card blue">
+            <div class="icon">产</div>
+            <h3>产品经理</h3>
+            <ol>
+              <li><a href="#positioning">定位与边界</a>：产品不是什么</li>
+              <li><a href="#map">功能全景</a>：能力地图</li>
+              <li><a href="#scenarios">应用场景</a>：需求来源</li>
+              <li><a href="#product-arch">产品架构</a>：对象模型与流程</li>
+              <li><a href="#maturity">成熟度与路线图</a>：优先级</li>
+              <li><a href="#appendix">附录</a>：术语与代码索引</li>
+            </ol>
+            <p class="small muted">重点看“边界”和“Beta/未实现”，避免把路线图当现状。</p>
+          </div>
+          <div class="card">
+            <div class="icon">研</div>
+            <h3>研发 / 架构</h3>
+            <ol>
+              <li><a href="#tech-arch">技术架构</a>：运行时与模块</li>
+              <li><a href="#product-arch">产品架构</a>：对象与权限</li>
+              <li><a href="#maturity">成熟度</a>：技术债与约束</li>
+              <li><a href="#ops">部署交付</a>：运行形态</li>
+              <li><a href="#appendix">附录</a>：代码索引与文档</li>
+            </ol>
+            <p class="small muted">先读“单进程/分层/边界”，再看具体模块。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 11 APPENDIX -->
+    <section class="section" id="appendix">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">11 · 附录</span>
+          <h2>术语、代码索引与资料</h2>
+          <p class="lede">给跨角色沟通用的最小词典，以及继续深入的地图。</p>
+        </div>
+
+        <h3>术语表</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>术语</th><th>含义</th><th>容易混淆的点</th></tr></thead>
+            <tbody>
+              <tr><td><b>Agent</b></td><td>可运行的 AI 角色，有工作区、模型、工具、记忆、通道</td><td>不是“模型”；模型只是它的一部分</td></tr>
+              <tr><td><b>Expert</b></td><td>预配置的 Agent 模板/人格</td><td>专家是“角色”，Agent 是“实例”</td></tr>
+              <tr><td><b>Team</b></td><td>主持人 + 成员专家</td><td>不是并行聊天室；有派工、回叫、汇总</td></tr>
+              <tr><td><b>Digital Employee</b></td><td>单专家自治形态</td><td>Beta；不是独立产品线</td></tr>
+              <tr><td><b>Thread</b></td><td>一段会话</td><td>Web/IM/CLI/Cron 共用同一模型</td></tr>
+              <tr><td><b>Workspace</b></td><td>Agent 的文件空间</td><td>与控制面 DB 分离</td></tr>
+              <tr><td><b>Connector</b></td><td>外部系统连接</td><td>不是插件；连接器偏“接系统”，插件偏“扩展平台”</td></tr>
+              <tr><td><b>MCP</b></td><td>Model Context Protocol，工具/资源接入协议</td><td>连接器的一种实现方式</td></tr>
+              <tr><td><b>Skill</b></td><td>技能包/说明/资源</td><td>偏“知识与方法”，不等于代码插件</td></tr>
+              <tr><td><b>Plugin</b></td><td>代码扩展：工具、UI、钩子、通道</td><td>需要信任与权限评估</td></tr>
+              <tr><td><b>MiniApp</b></td><td>数据表 + 单文件 HTML 界面</td><td>不是微信小程序；是平台内交付面</td></tr>
+              <tr><td><b>HITL</b></td><td>Human-in-the-loop，人工审批/中断</td><td>不是“人工客服”</td></tr>
+              <tr><td><b>ACP</b></td><td>Agent Client Protocol</td><td>入站/出站两种方向</td></tr>
+              <tr><td><b>Bridge</b></td><td>智总管 ↔ 智总管 跨实例连接</td><td>不是集群；是联邦/隧道</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin-top:28px">代码索引</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>关注点</th><th>位置</th></tr></thead>
+            <tbody>
+              <tr><td>入口与组合根</td><td><code>src/octop/launch.py</code>、<code>src/octop/infra/server.py</code></td></tr>
+              <tr><td>HTTP / API</td><td><code>src/octop/api/app.py</code>、<code>src/octop/api/routers/</code></td></tr>
+              <tr><td>Agent 运行时 / 专家 / 团队</td><td><code>src/octop/infra/agents/</code></td></tr>
+              <tr><td>IM 网关 / 消息处理</td><td><code>src/octop/infra/gateway/</code></td></tr>
+              <tr><td>数据库 / 迁移</td><td><code>src/octop/infra/db/</code>、<code>migrations/</code></td></tr>
+              <tr><td>连接器 / MCP</td><td><code>src/octop/infra/connectors/</code></td></tr>
+              <tr><td>知识库</td><td><code>src/octop/infra/knowledge/</code></td></tr>
+              <tr><td>Cron / 事件</td><td><code>src/octop/infra/cron/</code>、<code>events/</code></td></tr>
+              <tr><td>MiniApp</td><td><code>src/octop/infra/apps/</code>、<code>docs/miniapp-overview.md</code></td></tr>
+              <tr><td>工作区存储</td><td><code>src/octop/infra/backend/</code></td></tr>
+              <tr><td>认证 / 用户</td><td><code>src/octop/infra/auth/</code>、<code>users/</code>、<code>api/routers/auth*.py</code></td></tr>
+              <tr><td>前端</td><td><code>dashboard/src/</code>（源码）；<code>src/octop/dashboard/</code>（构建产物，勿改）</td></tr>
+              <tr><td>CLI</td><td><code>src/octop/cli/</code></td></tr>
+              <tr><td>测试</td><td><code>tests/unit/</code>、<code>tests/integration/</code>、<code>tests/support/</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin-top:28px">继续阅读</h3>
+        <div class="grid g2">
+          <div class="card">
+            <h3>产品与架构</h3>
+            <ul>
+              <li><code>docs/architecture-overview.md</code>：决策者视角的总览、缺口与路径</li>
+              <li><code>docs/architecture.md</code>：分层、进程、存储、i18n</li>
+              <li><code>docs/miniapp-overview.md</code>：MiniApp 现状、架构与缺口</li>
+              <li><code>docs/expert-teams.md</code>：专家团队模式</li>
+              <li><code>docs/digital-employee-plan.md</code>：数字员工实施计划</li>
+              <li><code>docs/external-events-design.md</code>：外部事件平面</li>
+              <li><code>docs/connectors.md</code>：连接器清单</li>
+              <li><code>docs/acp.md</code>：ACP 集成</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>运维与开发</h3>
+            <ul>
+              <li><code>README.md</code>：安装、配置、CLI、架构、开发命令</li>
+              <li><code>docs/configuration.md</code>：环境变量与 config.json</li>
+              <li><code>docs/api.md</code>：HTTP API</li>
+              <li><code>docs/cli.md</code>：CLI 参考</li>
+              <li><code>docs/ldap.md</code>：LDAP 登录</li>
+              <li><code>docs/bridge.md</code>：跨实例 Bridge</li>
+              <li><code>AGENTS.md</code>：模块边界、改动规则、命令</li>
+              <li><code>CONTRIBUTING.md</code>：分支与发布</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout" style="margin-top:18px">
+          <strong>口径与假设</strong>
+          <p><b>品牌口径：</b>对外品牌 / 产品名称为“智总管”；开源项目名、代码标识、CLI 命令与数据目录仍为 <code>Octop</code> / <code>octop</code> / <code>~/.octop/</code>。本文在产品语境使用“智总管”，在代码与仓库语境保留 Octop。</p>
+          <p>本文基于仓库 <code>v1.0.2</code>（2026-11-13）整理。能力数量为当前仓库实测：30 个连接器、20+ 专家模板、60+ 内置工具位、27 个内置插件、10 个 IM/消息通道、约 60 张控制面表、14 个 Dashboard 页面、60+ API 路由模块。未包含定价、客户案例、合规认证与商业承诺；这些需按实际版本、合同与 POC 单独确认。路线图项不代表交付承诺。</p>
+          <p style="margin-bottom:0">开源仓库：<a href="https://github.com/TencentCloud/Octop">TencentCloud/Octop</a>（MIT） · PyPI：<a href="https://pypi.org/project/octop/">octop</a></p>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="brandline">智总管</div>
+      <div>智总管（开源项目 Octop）· 产品与架构全景 · 销售 / 产品 / 研发共用版 · v1.0.2 · 2026-11-13</div>
+      <div style="margin-top:6px">自托管 · 多用户 · 多 Agent · 从对话到交付</div>
+    </footer>
+  </main>
+</div>
+
+<script>
+  (function () {
+    var progress = document.getElementById("progress");
+    function onScroll() {
+      var doc = document.documentElement;
+      var max = doc.scrollHeight - doc.clientHeight;
+      var ratio = max > 0 ? doc.scrollTop / max : 0;
+      progress.style.width = Math.min(100, Math.max(0, ratio * 100)) + "%";
+    }
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+
+    var links = Array.prototype.slice.call(document.querySelectorAll("#toc a"));
+    var map = {};
+    links.forEach(function (a) {
+      var id = a.getAttribute("href").replace(/^#/, "");
+      var el = document.getElementById(id);
+      if (el) map[id] = a;
+    });
+    if ("IntersectionObserver" in window) {
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          links.forEach(function (a) { a.classList.remove("active"); });
+          var active = map[entry.target.id];
+          if (active) active.classList.add("active");
+        });
+      }, { rootMargin: "-20% 0px -70% 0px", threshold: 0 });
+      Object.keys(map).forEach(function (id) {
+        observer.observe(document.getElementById(id));
+      });
+    } else {
+      if (links[0]) links[0].classList.add("active");
+    }
+  })();
+</script>
+</body>
+</html>

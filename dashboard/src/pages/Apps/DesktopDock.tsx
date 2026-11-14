@@ -87,7 +87,10 @@ export default function DesktopDock({ items }: DesktopDockProps) {
   return (
     <>
       <div className={styles.desktopDock} data-testid="desktop-dock">
-        <div className={styles.desktopDockInner}>
+        <div
+          className={styles.desktopDockInner}
+          data-testid="desktop-dock-surface"
+        >
           {items.map((item, index) => {
             const divider =
               item.kind === "launcher" &&

@@ -228,6 +228,98 @@ describe("DesktopGrid", () => {
     );
   });
 
+  it("moves a window through a compositor transform while dragging", () => {
+    render(<DesktopGrid apps={apps} />);
+    openAppWindow("app_1");
+    const root = screen.getByTestId("desktop-root");
+    Object.defineProperty(root, "clientWidth", {
+      configurable: true,
+      value: 1280,
+    });
+    Object.defineProperty(root, "clientHeight", {
+      configurable: true,
+      value: 800,
+    });
+
+    const win = screen.getByTestId("desktop-window");
+    const header = document.querySelector("[data-titlebar]")!;
+    // jsdom has no PointerEvent constructor; MouseEvent with the pointerdown
+    // type still reaches React's onPointerDown and native pointer listeners.
+    fireEvent(
+      header,
+      new MouseEvent("pointerdown", {
+        bubbles: true,
+        button: 0,
+        clientX: 100,
+        clientY: 100,
+      }),
+    );
+    fireEvent(
+      window,
+      new MouseEvent("pointermove", {
+        bubbles: true,
+        clientX: 160,
+        clientY: 140,
+      }),
+    );
+
+    expect(win).toHaveAttribute("data-dragging", "true");
+    expect(win.style.transform).toContain("translate3d(60px, 40px");
+    expect(win.style.left).toBe("64px");
+
+    fireEvent(window, new MouseEvent("pointerup", { bubbles: true }));
+    expect(win).toHaveAttribute("data-dragging", "false");
+    expect(win.style.transform).toBe("");
+    expect(win.style.left).toBe("124px");
+    expect(win.style.top).toBe("96px");
+  });
+
+  it("scales window content while resizing and commits once", () => {
+    render(<DesktopGrid apps={apps} />);
+    openAppWindow("app_1");
+    const root = screen.getByTestId("desktop-root");
+    Object.defineProperty(root, "clientWidth", {
+      configurable: true,
+      value: 1280,
+    });
+    Object.defineProperty(root, "clientHeight", {
+      configurable: true,
+      value: 800,
+    });
+
+    const win = screen.getByTestId("desktop-window");
+    const content = screen.getByTestId("desktop-window-content");
+    const handle = screen.getByTestId("desktop-window-resize");
+    fireEvent(
+      handle,
+      new MouseEvent("pointerdown", {
+        bubbles: true,
+        button: 0,
+        clientX: 500,
+        clientY: 500,
+      }),
+    );
+    fireEvent(
+      window,
+      new MouseEvent("pointermove", {
+        bubbles: true,
+        clientX: 580,
+        clientY: 560,
+      }),
+    );
+
+    expect(win).toHaveAttribute("data-resizing", "true");
+    expect(win.style.width).toBe("840px");
+    expect(win.style.height).toBe("620px");
+    expect(content.style.width).toBe("758px");
+    expect(content.style.transform).toContain("scale(");
+
+    fireEvent(window, new MouseEvent("pointerup", { bubbles: true }));
+    expect(win).toHaveAttribute("data-resizing", "false");
+    expect(win.style.width).toBe("840px");
+    expect(content.style.transform).toBe("");
+  });
+
   it("reveals the window title bar only from the top edge", () => {
     render(<DesktopGrid apps={apps} />);
     openAppWindow("app_1");
@@ -512,6 +604,18 @@ describe("DesktopGrid", () => {
 
     fireEvent.click(screen.getByTestId("desktop-dock-launcher"));
     expect(screen.getAllByTestId("desktop-icon")).toHaveLength(2);
+  });
+
+  it("limits the dock to ten MiniApp entries", () => {
+    const many = Array.from({ length: 12 }, (_, index) => ({
+      ...base,
+      app_id: `app_${index}`,
+      name: `MiniApp ${index}`,
+    }));
+    render(<DesktopGrid apps={many} />);
+
+    expect(screen.getAllByTestId("desktop-dock-icon")).toHaveLength(10);
+    expect(screen.getAllByTestId("desktop-icon")).toHaveLength(12);
   });
 
   it("closes a running window from the dock context menu", () => {

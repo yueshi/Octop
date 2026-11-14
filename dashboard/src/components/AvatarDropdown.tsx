@@ -18,9 +18,7 @@ import {
   ChevronUp,
   Settings,
   Palette,
-  CircleHelp,
   Github,
-  RefreshCw,
   KeyRound,
   Lock,
   LockOpen,
@@ -45,7 +43,6 @@ import PaletteSwitcher from "./PaletteSwitcher";
 import type { OctopUser } from "../api/modules/auth";
 import { useLayoutMode } from "../context/LayoutModeContext";
 import type { LayoutMode } from "../layouts/layoutModeStorage";
-import { userCan } from "../utils/permissions";
 import feishuIcon from "../assets/channels/feishu.svg";
 import dingtalkIcon from "../assets/channels/dingtalk.svg";
 import wecomIcon from "../assets/channels/wecom.svg";
@@ -55,8 +52,7 @@ import {
 } from "../pages/Admin/Users/ProfileAvatar";
 import styles from "./AvatarDropdown.module.less";
 
-const GITHUB_URL = "https://github.com/TencentCloud/Octop";
-const HELP_FEEDBACK_URL = "https://octop.cloud";
+const GITHUB_URL = "https://github.com/yueshi/OctopOS";
 const APP_OAUTH_KINDS = new Set(["feishu", "dingtalk", "wecom"]);
 
 const PASSWORD_FIELD_ICON_PROPS = {
@@ -371,17 +367,6 @@ export default function AvatarDropdown({
 
       <a
         className={styles.menuItem}
-        href={HELP_FEEDBACK_URL}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={() => setMenuOpen(false)}
-      >
-        <CircleHelp size={16} strokeWidth={1.8} />
-        <span>{t("account.helpFeedback")}</span>
-      </a>
-
-      <a
-        className={styles.menuItem}
         href={GITHUB_URL}
         target="_blank"
         rel="noopener noreferrer"
@@ -411,20 +396,6 @@ export default function AvatarDropdown({
         <KeyRound size={16} strokeWidth={1.8} />
         <span>{t("account.changePassword")}</span>
       </button>
-
-      {userCan(user, "update") && (
-        <button
-          type="button"
-          className={styles.menuItem}
-          onClick={() => {
-            setMenuOpen(false);
-            navigate("/admin/advanced?tab=updates");
-          }}
-        >
-          <RefreshCw size={16} strokeWidth={1.8} />
-          <span>{t("account.checkUpdates")}</span>
-        </button>
-      )}
 
       <Divider className={styles.menuDivider} />
 

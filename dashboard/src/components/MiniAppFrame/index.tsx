@@ -309,8 +309,10 @@ export default function MiniAppFrame({
         height: fill ? "100%" : height,
         minHeight: fill ? 420 : undefined,
         border: fill ? "none" : "1px solid var(--fn-color-brand-border)",
-        borderRadius: fill ? 0 : 8,
-        background: "#fff",
+        // Host desktop windows clip the app layer with a rounded content
+        // wrapper; inherit that radius so the iframe itself is clipped too.
+        borderRadius: fill ? "inherit" : 8,
+        background: fill ? "transparent" : "#fff",
         display: "block",
         ...(fill
           ? { position: "absolute" as const, inset: 0, minHeight: 0 }

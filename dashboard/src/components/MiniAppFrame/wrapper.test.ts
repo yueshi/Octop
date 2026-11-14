@@ -11,6 +11,9 @@ describe("buildWrapperDoc", () => {
       "iframe { position: fixed; inset: 0; width: 100%; height: 100%;",
     );
     expect(doc).toMatch(/html,\s*body\s*\{[^}]*height:\s*100%/);
+    // A white wrapper base leaks through rounded window corners/seams; the
+    // app document paints its own themed background instead.
+    expect(doc).toContain("background: transparent");
   });
 
   it("denies the app frame any navigation", () => {

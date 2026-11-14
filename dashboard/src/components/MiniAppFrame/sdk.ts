@@ -265,13 +265,38 @@ export function hasEmbeddedFrame(html: string): boolean {
   return /<\s*(iframe|frame|object|embed|portal)\b/i.test(html);
 }
 
+/**
+ * Host-level presentation reset for every MiniApp document.
+ *
+ * Generated apps often theme `body` but leave the root scroll container and
+ * native scrollbars unthemed. Inside a dark desktop window that shows up as a
+ * white strip on the right/bottom edge and white rubber-band gaps while
+ * scrolling. Keep the scrollbars transparent on the app background, and stop
+ * overscroll from revealing the iframe's default white canvas.
+ */
+const APP_HOST_STYLE = `<style>
+  html, body { overscroll-behavior: none; }
+  html {
+    background: var(--bg, #fff);
+    scrollbar-color: rgb(148 163 184 / 55%) var(--bg, transparent);
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg, transparent); }
+  ::-webkit-scrollbar-corner { background: var(--bg, #fff); }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(148 163 184 / 55%);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: rgb(148 163 184 / 70%); }
+</style>`;
+
 export function buildSrcDoc(html: string): string {
   // Old apps may predate the write-time rule; never run one whose static HTML
   // would create a fresh realm before the freeze can protect it.
   if (hasEmbeddedFrame(html)) {
-    return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${APP_CSP}"></head><body><p>This MiniApp embeds a frame and cannot be displayed.</p></body></html>`;
+    return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${APP_CSP}">${APP_HOST_STYLE}</head><body><p>This MiniApp embeds a frame and cannot be displayed.</p></body></html>`;
   }
-  const head = `<meta http-equiv="Content-Security-Policy" content="${APP_CSP}"><script>${APP_SDK}</script>`;
+  const head = `<meta http-equiv="Content-Security-Policy" content="${APP_CSP}"><script>${APP_SDK}</script>${APP_HOST_STYLE}`;
   // Pull the first <html ...> tag out so the freeze script can precede every
   // app script while keeping lang/class/style on the root element.
   const htmlMatch = /<html\b([^>]*)>/i.exec(html);

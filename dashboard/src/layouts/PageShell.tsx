@@ -29,6 +29,10 @@ export interface PathTabsConfig {
 interface PageShellProps {
   title: string;
   subtitle?: string;
+  /** Leading control rendered before the title (e.g. a back button). */
+  leading?: ReactNode;
+  /** Inline badge rendered after the title. */
+  titleSuffix?: ReactNode;
   /** Right-aligned action buttons shown alongside the title. */
   actions?: React.ReactNode;
   /**
@@ -98,6 +102,8 @@ function PathTabsSegmented({
 function PageShell({
   title,
   subtitle,
+  leading,
+  titleSuffix,
   actions,
   pathTabs,
   agentScoped,
@@ -159,18 +165,29 @@ function PageShell({
           paddingRight: titleRowEndPadding(outerPad),
         }}
       >
-        <div>
-          <Title
-            level={4}
+        <div style={{ minWidth: 0 }}>
+          <div
             style={{
-              margin: 0,
-              lineHeight: "28px",
-              fontSize: 20,
-              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              minWidth: 0,
             }}
           >
-            {title}
-          </Title>
+            {leading}
+            <Title
+              level={4}
+              style={{
+                margin: 0,
+                lineHeight: "28px",
+                fontSize: 20,
+                fontWeight: 600,
+              }}
+            >
+              {title}
+            </Title>
+            {titleSuffix}
+          </div>
           {subtitle && (
             <Text
               type="secondary"

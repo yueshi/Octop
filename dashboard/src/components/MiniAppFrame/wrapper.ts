@@ -39,8 +39,8 @@ export function buildWrapperDoc(appHtml: string): string {
 <meta http-equiv="Content-Security-Policy" content="${WRAPPER_CSP}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; background: #fff; }
-  iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+  html, body { margin: 0; padding: 0; height: 100%; background: transparent; }
+  iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: transparent; }
 </style>
 </head>
 <body>

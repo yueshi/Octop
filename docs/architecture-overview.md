@@ -485,6 +485,7 @@ Super-agent 提供这层的设计模式（`docs/superagent-borrowing-design.md`�
 
 | 问题 | 文档 |
 |---|---|
+| 智总管产品/架构全景（销售、产品、研发） | `docs/octop-product-architecture.html` |
 | 技术细节（分层、进程、存储、i18n） | `docs/architecture.md` |
 | 模块边界、改动规则、硬性禁令 | `AGENTS.md` §5 |
 | 单进程决策 | `docs/adr/001-single-process-model.md` |

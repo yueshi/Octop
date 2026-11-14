@@ -25,6 +25,7 @@ import {
 import type { UploadFile } from "antd";
 import {
   AppWindow,
+  ArchiveRestore,
   Bot,
   ChevronLeft,
   Clock,
@@ -33,8 +34,10 @@ import {
   Maximize2,
   MessageSquareText,
   MoreHorizontal,
+  Pencil,
   Plus,
   Table2,
+  Trash2,
   Undo2,
   User,
 } from "lucide-react";
@@ -75,6 +78,7 @@ import {
 import { apiErrorMessage, parseApiError } from "../../utils/apiError";
 import { formatServerDateTime } from "../../utils/formatMessageTime";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
+import { useIsMobile } from "../../hooks/useIsMobile";
 import { usePreviewImage } from "../../hooks/usePreviewImage";
 import { useAgent } from "../../context/AgentContext";
 import styles from "./index.module.less";
@@ -176,6 +180,7 @@ export default function AppsPage() {
   const location = useLocation();
   const { boardId: routeBoardId } = useParams();
   const timeZone = useServerTimezone();
+  const isMobile = useIsMobile();
   const { agents } = useAgent();
 
   const [apps, setApps] = useState<AppSummary[]>([]);
@@ -753,26 +758,43 @@ export default function AppsPage() {
   const boardMenu = {
     items: [
       {
+        key: "new",
+        icon: <Plus size={14} />,
+        label: t("apps.board.new", "New board"),
+      },
+      {
         key: "rename",
+        icon: <Pencil size={14} />,
         label: t("apps.board.rename", "Rename board"),
         disabled: !board,
       },
       {
-        key: "restore",
-        label: t("apps.restoreBackup", "Restore backup"),
-      },
-      { type: "divider" as const },
-      {
         key: "delete",
+        icon: <Trash2 size={14} />,
         label: t("apps.board.delete", "Delete board"),
         danger: true,
         disabled: !board,
       },
+      { type: "divider" as const },
+      {
+        key: "arrange",
+        icon: <Grid2x2 size={14} />,
+        label: t("apps.board.arrange", "Auto-arrange"),
+        disabled: items.length === 0,
+      },
+      {
+        key: "undo",
+        icon: <Undo2 size={14} />,
+        label: t("apps.board.undo", "Undo the last layout change"),
+        disabled: undoDepth === 0,
+      },
     ],
     onClick: ({ key }: { key: string }) => {
-      if (key === "rename") openRenameBoard();
+      if (key === "new") openCreateBoard();
+      else if (key === "rename") openRenameBoard();
       else if (key === "delete") confirmDeleteBoard();
-      else if (key === "restore") openRestore();
+      else if (key === "arrange") arrangeBoard();
+      else if (key === "undo") undoLayout();
     },
   };
 
@@ -787,115 +809,103 @@ export default function AppsPage() {
       title={t("apps.title", "Workbench")}
       subtitle={t("apps.subtitle", "MiniApps built by your agents")}
       actions={
-        <Space wrap>
-          <Segmented
-            value={viewMode}
-            onChange={(value) => changeViewMode(value as ViewMode)}
-            options={[
-              {
-                label: t("apps.viewMode.board", "Board"),
-                value: "board",
-              },
-              {
-                label: t("apps.viewMode.desktop", "Desktop"),
-                value: "desktop",
-              },
-            ]}
-          />
-          {boardDetailVisible && (
-            <Tooltip title={t("apps.board.allBoards", "All boards")}>
-              <Button
-                aria-label={t("apps.board.allBoards", "All boards")}
-                icon={<ChevronLeft size={16} />}
-                onClick={openBoardGallery}
-              />
-            </Tooltip>
-          )}
-          {viewMode === "board" && boardDetailVisible && boards.length > 0 && (
-            <Select
-              aria-label={t("apps.board.select", "Select board")}
-              value={activeId ?? undefined}
-              style={{ minWidth: 160, maxWidth: 240 }}
-              options={boards.map((item) => ({
-                value: item.board_id,
-                label: item.name,
-              }))}
-              onChange={selectBoard}
+        <Space wrap size={12} align="center">
+          {!routeBoardId && (
+            <Segmented
+              value={viewMode}
+              onChange={(value) => changeViewMode(value as ViewMode)}
+              options={[
+                {
+                  label: t("apps.viewMode.board", "Board"),
+                  value: "board",
+                },
+                {
+                  label: t("apps.viewMode.desktop", "Desktop"),
+                  value: "desktop",
+                },
+              ]}
             />
           )}
-          {viewMode === "board" && (
-            <Tooltip title={t("apps.board.new", "New board")}>
-              <Button
-                aria-label={t("apps.board.new", "New board")}
-                icon={<Plus size={16} />}
-                onClick={openCreateBoard}
-              />
-            </Tooltip>
-          )}
           {viewMode === "board" && boardDetailVisible && (
-            <Dropdown menu={boardMenu} trigger={["click"]}>
-              <Button
-                aria-label={t("apps.board.menu", "Board actions")}
-                icon={<MoreHorizontal size={16} />}
-              />
-            </Dropdown>
-          )}
-          {viewMode === "board" && boardDetailVisible && (
-            <Button
-              icon={<LayoutGrid size={16} />}
-              onClick={() => setCatalogOpen(true)}
-            >
-              {t("apps.all.title", "All MiniApps")}
-            </Button>
-          )}
-          <Button type="primary" onClick={() => setCreateOpen(true)}>
-            {t("apps.create.button", "Create")}
-          </Button>
-          {viewMode === "board" && boardDetailVisible && (
-            <>
-              <Tooltip
-                title={t(
-                  "apps.board.arrangeHint",
-                  "Pack cells at their current sizes; undo from the toolbar",
-                )}
-              >
+            <Space.Compact>
+              <Tooltip title={t("apps.board.allBoards", "All boards")}>
                 <Button
-                  icon={<Grid2x2 size={16} />}
-                  disabled={items.length === 0}
-                  onClick={arrangeBoard}
-                >
-                  {t("apps.board.arrange", "Auto-arrange")}
-                </Button>
-              </Tooltip>
-              <Tooltip
-                title={t("apps.board.undo", "Undo the last layout change")}
-              >
-                <Button
-                  aria-label={t(
-                    "apps.board.undo",
-                    "Undo the last layout change",
-                  )}
-                  icon={<Undo2 size={16} />}
-                  disabled={undoDepth === 0}
-                  onClick={undoLayout}
+                  aria-label={t("apps.board.allBoards", "All boards")}
+                  icon={<ChevronLeft size={16} />}
+                  onClick={openBoardGallery}
                 />
               </Tooltip>
+              {boards.length > 0 && (
+                <Select
+                  aria-label={t("apps.board.select", "Switch board")}
+                  value={activeId ?? undefined}
+                  style={{
+                    minWidth: isMobile ? 120 : 160,
+                    maxWidth: isMobile ? 160 : 240,
+                  }}
+                  options={boards.map((item) => ({
+                    value: item.board_id,
+                    label: item.name,
+                  }))}
+                  onChange={selectBoard}
+                />
+              )}
+            </Space.Compact>
+          )}
+          {viewMode === "board" && boardDetailVisible && (
+            <Space size={6} align="center">
               {saving && (
                 <Text className={styles.savingHint}>
                   {t("apps.board.saving", "Saving…")}
                 </Text>
               )}
-              <Tooltip title={t("apps.board.presentHint", "Open in a new tab")}>
+              <Tooltip
+                title={t(
+                  "apps.board.presentHint",
+                  "Open fullscreen in a new tab",
+                )}
+              >
                 <Button
                   icon={<Maximize2 size={16} />}
+                  aria-label={t("apps.board.present", "Present")}
                   disabled={items.length === 0}
                   onClick={openPresent}
                 >
-                  {t("apps.board.present", "Present")}
+                  {isMobile ? null : t("apps.board.present", "Present")}
                 </Button>
               </Tooltip>
-            </>
+              <Dropdown menu={boardMenu} trigger={["click"]}>
+                <Button
+                  type="text"
+                  aria-label={t("apps.board.menu", "Board actions")}
+                  icon={<MoreHorizontal size={16} />}
+                />
+              </Dropdown>
+            </Space>
           )}
+          {viewMode === "board" && !boardDetailVisible && (
+            <Button
+              icon={<ArchiveRestore size={16} />}
+              aria-label={t("apps.restoreBackup", "Restore backup")}
+              onClick={openRestore}
+            >
+              {isMobile ? null : t("apps.restoreBackup", "Restore backup")}
+            </Button>
+          )}
+          <Space.Compact>
+            {viewMode === "board" && boardDetailVisible && (
+              <Button
+                icon={<LayoutGrid size={16} />}
+                aria-label={t("apps.all.title", "Add MiniApps")}
+                onClick={() => setCatalogOpen(true)}
+              >
+                {isMobile ? null : t("apps.all.title", "Add MiniApps")}
+              </Button>
+            )}
+            <Button type="primary" onClick={() => setCreateOpen(true)}>
+              {t("apps.create.button", "Create MiniApp")}
+            </Button>
+          </Space.Compact>
         </Space>
       }
     >
@@ -933,7 +943,7 @@ export default function AppsPage() {
           >
             <Space>
               <Button type="primary" onClick={() => setCreateOpen(true)}>
-                {t("apps.create.button", "Create")}
+                {t("apps.create.button", "Create MiniApp")}
               </Button>
               <Button
                 icon={<MessageSquareText size={16} />}
@@ -983,11 +993,24 @@ export default function AppsPage() {
       )}
 
       <Drawer
-        title={t("apps.all.title", "All MiniApps")}
+        title={t("apps.all.title", "Add MiniApps")}
         open={catalogOpen}
         onClose={() => setCatalogOpen(false)}
         width="min(560px, 100vw)"
         styles={{ body: { padding: 12 } }}
+        extra={
+          <Button
+            type="text"
+            size="small"
+            icon={<ArchiveRestore size={14} />}
+            onClick={() => {
+              setCatalogOpen(false);
+              openRestore();
+            }}
+          >
+            {t("apps.restoreBackup", "Restore backup")}
+          </Button>
+        }
       >
         <div className={styles.list}>
           {apps.map((app) => {

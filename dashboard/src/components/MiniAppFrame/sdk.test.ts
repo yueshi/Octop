@@ -68,4 +68,13 @@ describe("buildSrcDoc", () => {
       doc.indexOf('<script id="early">'),
     );
   });
+
+  it("normalizes app scrollbars and overscroll", () => {
+    const doc = buildSrcDoc("<html><head></head><body></body></html>");
+
+    expect(doc).toContain("overscroll-behavior: none");
+    expect(doc).toContain("::-webkit-scrollbar-track");
+    expect(doc).toContain("background: var(--bg");
+    expect(doc).toContain("scrollbar-color");
+  });
 });

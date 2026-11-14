@@ -1912,7 +1912,6 @@
       "errorHint": "该网站可能禁止嵌入，可在系统浏览器中打开。"
     },
     "desktop": {
-      "hint": "单击图标选中并查看专家操作，双击打开；聚焦后按回车也可以打开。",
       "open": "打开",
       "fullscreen": "全屏",
       "exitFullscreen": "退出全屏",
@@ -2058,7 +2057,7 @@
       "newHint": "从空白画布开始，把小程序固定进来。"
     },
     "board": {
-      "empty": "看板上还没有小程序。点右上角「全部小程序」挑几个加进来。",
+      "empty": "看板上还没有小程序。点右上角「添加已有小程序」挑几个加进来。",
       "add": "加入看板",
       "remove": "移出看板",
       "defaultName": "我的看板",
@@ -2073,9 +2072,9 @@
       "nameLabel": "看板名称",
       "nameRequired": "请输入看板名称",
       "descriptionLabel": "描述",
-      "select": "选择看板",
-      "present": "全屏展示",
-      "presentHint": "在新标签页打开",
+      "select": "切换看板",
+      "present": "演示",
+      "presentHint": "在新标签页全屏打开",
       "back": "返回工作台",
       "saving": "保存中…",
       "saveFailed": "看板保存失败",
@@ -2104,7 +2103,7 @@
       "menu": "看板操作"
     },
     "all": {
-      "title": "全部小程序"
+      "title": "添加已有小程序"
     },
     "empty": "还没有小程序。在对话里让专家帮你做一个吧。",
     "emptyHint": "例如：“做一个读书清单，包含书名、作者和状态”",
@@ -2128,6 +2127,7 @@
     "deleteTitle": "删除这个小程序？",
     "deleteConfirm": "将删除小程序、它的界面和全部数据，且无法恢复。",
     "share": "分享",
+    "shareAndPublish": "分享与发布",
     "shareTitle": "分享“{{name}}”",
     "shareHint": "协作者可以查看；可编辑数据的协作者还可以追加记录。",
     "shareUser": "用户名",
@@ -2143,6 +2143,7 @@
     "viewOnly": "仅查看",
     "editData": "可追加记录",
     "editStructure": "所有者",
+    "permissionAdmin": "管理员",
     "iframeTitle": "小程序内容",
     "loadHtmlFailed": "小程序界面加载失败",
     "noInterface": "未生成界面",
@@ -2276,7 +2277,7 @@
       "cardOpenSidePanel": "侧栏打开",
       "cardDetail": "详情页",
       "cardNoHtml": "界面还没有生成",
-      "button": "创建",
+      "button": "创建小程序",
       "title": "创建小程序",
       "modeMarket": "云端市场",
       "marketTitle": "云端模板市场",
@@ -4689,7 +4690,6 @@
     "languageHint": "选择界面显示语言。",
     "themeLight": "浅色",
     "themeDark": "深色",
-    "helpFeedback": "帮助与反馈",
     "helpBuilding": "正在建设中",
     "projectUrl": "项目地址",
     "checkUpdates": "检查更新",

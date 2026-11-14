@@ -755,9 +755,11 @@
   position: absolute;
   inset: 0 0 auto;
   z-index: 6;
-  display: flex;
+  display: grid;
+  /* Equal side tracks keep the expert switcher at the exact window center
+     regardless of how wide the brand or the action buttons are. */
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
   height: 38px;
   padding: 0 18px;
@@ -770,13 +772,19 @@
 }
 
 .desktopMenuBrand {
+  grid-column: 1;
+  justify-self: start;
+  min-width: 0;
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
 .desktopMenuActions {
   display: flex;
+  grid-column: 3;
+  justify-self: end;
   align-items: center;
+  justify-content: flex-end;
   gap: 12px;
   min-width: 0;
 }
@@ -1216,7 +1224,8 @@
 
 .desktopSpaces {
   display: flex;
-  flex: 1;
+  grid-column: 2;
+  justify-self: center;
   align-items: center;
   justify-content: center;
   gap: 4px;
@@ -1442,14 +1451,6 @@
 .desktopSpaceOptionCheck {
   flex: none;
   color: #8ab4ff;
-}
-
-.desktopHint {
-  overflow: hidden;
-  color: rgb(255 255 255 / 82%);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .desktopMenuButton {
@@ -1788,6 +1789,23 @@
     0 1px 4px rgb(0 0 0 / 22%);
 }
 
+/* Drag preview uses a compositor transform instead of moving left/top. The
+   whole window (including the iframe) moves as one layer, so the iframe does
+   not repaint and expose its white backing at the bottom/right edge. */
+.desktopWindowDragging {
+  animation: none;
+  backface-visibility: hidden;
+  will-change: transform;
+
+  .desktopWindowBody {
+    pointer-events: none;
+  }
+
+  .desktopWindowTitleBar {
+    cursor: grabbing;
+  }
+}
+
 .desktopWindowMaximized {
   border: 0;
   border-radius: 0;
@@ -1964,6 +1982,31 @@
   min-height: 0;
   overflow: hidden;
   background: transparent;
+}
+
+.desktopWindowContent {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 11px;
+}
+
+.desktopWindowMaximized .desktopWindowContent {
+  border-radius: 0;
+}
+
+/* Resizing keeps the content at its start size and scales that layer to the
+   new window box. The iframe reflows once on release, not on every move. */
+.desktopWindowResizing {
+  animation: none;
+
+  .desktopWindowBody {
+    pointer-events: none;
+  }
+
+  .desktopWindowContent {
+    will-change: transform;
+  }
 }
 
 .desktopWindowResize {
@@ -3954,10 +3997,6 @@
     grid-template-rows: none;
     justify-content: stretch;
     direction: ltr;
-  }
-
-  .desktopHint {
-    display: none;
   }
 
   .desktopMenuButton span {
